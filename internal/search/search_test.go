@@ -275,3 +275,15 @@ func TestKeywordOnlyWithoutEmbedder(t *testing.T) {
 		t.Errorf("backfill without embedder: %v", err)
 	}
 }
+
+func TestEmbeddingPurposes(t *testing.T) {
+	f := newFixture(t)
+	f.item(t, domain.KindDocument, "Auth", "oauth login")
+	if _, err := f.ix.Search(context.Background(), Query{Text: "oauth"}); err != nil {
+		t.Fatal(err)
+	}
+	got := f.emb.Purposes()
+	if len(got) != 2 || got[0] != embed.Document || got[1] != embed.Query {
+		t.Errorf("purposes = %v; want indexing as Document, then the query as Query", got)
+	}
+}

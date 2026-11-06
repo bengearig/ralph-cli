@@ -34,6 +34,9 @@ func TestDefaults(t *testing.T) {
 	if cfg.Harness.Default != HarnessClaudeCode || cfg.PR.Provider != PRBitbucketCloud {
 		t.Errorf("unexpected harness/provider: %q %q", cfg.Harness.Default, cfg.PR.Provider)
 	}
+	if cfg.Embeddings.Ollama.QueryPrefix != "auto" || cfg.Embeddings.Ollama.DocumentPrefix != "auto" {
+		t.Errorf("prefix defaults = %q, %q", cfg.Embeddings.Ollama.QueryPrefix, cfg.Embeddings.Ollama.DocumentPrefix)
+	}
 	if cfg.Loop.StallThreshold != 3 || !cfg.Loop.CommitPerTask || !cfg.PR.Draft {
 		t.Errorf("unexpected loop/pr defaults: %+v %+v", cfg.Loop, cfg.PR)
 	}

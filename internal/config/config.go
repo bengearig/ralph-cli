@@ -83,8 +83,10 @@ type ChunkConfig struct {
 }
 
 type OllamaConfig struct {
-	BaseURL string `koanf:"base_url"`
-	Model   string `koanf:"model"`
+	BaseURL        string `koanf:"base_url"`
+	Model          string `koanf:"model"`
+	QueryPrefix    string `koanf:"query_prefix"`
+	DocumentPrefix string `koanf:"document_prefix"`
 }
 
 type SearchConfig struct {

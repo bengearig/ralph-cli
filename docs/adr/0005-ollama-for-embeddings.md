@@ -1,6 +1,6 @@
 # 5. Ollama for embeddings, degrading gracefully
 
-- Status: Accepted
+- Status: Accepted; refined by [12. Embedding task prefixes](0012-embedding-task-prefixes.md)
 - Date: 2026-11-06
 
 ## Context

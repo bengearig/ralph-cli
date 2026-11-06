@@ -20,8 +20,8 @@ best-matching chunk.
 **Document.** Durable written knowledge: `brief`, `architecture`, `design`, `decision`, `reference`, or `note`. A
 document belongs either to the whole project or to one initiative.
 
-**Embedding.** A vector representing a chunk's meaning, produced by the configured model. Embeddings from different
-models are never compared.
+**Embedding.** A vector representing a chunk's meaning, produced by the configured model. Each stored vector records
+its model identity (the model plus any document prefix), and vectors with different identities are never compared.
 
 **Harness.** The agent runtime that ralph drives, such as Claude Code. It is configured per step.
 
@@ -39,7 +39,7 @@ request. Its status is derived from its tasks.
 
 **Project.** A repository initialized with `ralph init`, identified by its `.ralph/` directory.
 
-**Stale chunk.** A chunk without an embedding for the configured model. Stale chunks are found by keyword search
+**Stale chunk.** A chunk without an embedding for the configured model identity. Stale chunks are found by keyword search
 only, until `ralph index` embeds them.
 
 **Stall.** A task whose failure count has reached `loop.stall_threshold`. A stalled task is blocked rather than

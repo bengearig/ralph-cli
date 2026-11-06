@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bengearig/ralph/internal/config"
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/embed/fake"
 	"github.com/bengearig/ralph/internal/search"
@@ -323,5 +324,28 @@ func TestStatusAndMilestoneDerivation(t *testing.T) {
 		if got := MilestoneStatus(c.tasks); got != c.want {
 			t.Errorf("MilestoneStatus(%v) = %s, want %s", c.tasks, got, c.want)
 		}
+	}
+}
+
+func TestNewEmbedderFromConfig(t *testing.T) {
+	cfg, err := config.Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	emb, err := NewEmbedder(cfg.Embeddings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if emb.Model() != `ollama/nomic-embed-text document_prefix="search_document: "` {
+		t.Errorf("default model identity = %q", emb.Model())
+	}
+	cfg.Embeddings.Ollama.DocumentPrefix = ""
+	emb, _ = NewEmbedder(cfg.Embeddings)
+	if emb.Model() != "ollama/nomic-embed-text" {
+		t.Errorf("explicitly empty prefix = %q", emb.Model())
+	}
+	cfg.Embeddings.Provider = config.EmbeddingsNone
+	if emb, err := NewEmbedder(cfg.Embeddings); emb != nil || err != nil {
+		t.Errorf("none = %v, %v", emb, err)
 	}
 }

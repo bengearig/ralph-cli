@@ -6,6 +6,7 @@ import (
 	"context"
 	"hash/fnv"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 	"unicode"
@@ -18,9 +19,10 @@ type Embedder struct {
 	Dims int
 	Name string
 
-	mu    sync.Mutex
-	err   error
-	calls int
+	mu       sync.Mutex
+	err      error
+	calls    int
+	purposes []embed.Purpose
 }
 
 var _ embed.Embedder = (*Embedder)(nil)
@@ -45,10 +47,18 @@ func (e *Embedder) Calls() int {
 	return e.calls
 }
 
-// Embed returns one normalized vector per text.
-func (e *Embedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+// Purposes returns the purpose of each Embed call, in order.
+func (e *Embedder) Purposes() []embed.Purpose {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return slices.Clone(e.purposes)
+}
+
+// Embed returns one normalized vector per text, regardless of purpose.
+func (e *Embedder) Embed(_ context.Context, purpose embed.Purpose, texts []string) ([][]float32, error) {
 	e.mu.Lock()
 	e.calls++
+	e.purposes = append(e.purposes, purpose)
 	err := e.err
 	e.mu.Unlock()
 	if err != nil {

@@ -34,8 +34,8 @@ func TestEmbedSuccess(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(embedResponse{Embeddings: [][]float32{{1, 0}, {0, 1}}})
 	})
-	c := New(srv.URL+"/", "nomic-embed-text", time.Second)
-	vecs, err := c.Embed(context.Background(), []string{"a", "b"})
+	c := New(Config{BaseURL: srv.URL + "/", Model: "nomic-embed-text", Timeout: time.Second})
+	vecs, err := c.Embed(context.Background(), embed.Document, []string{"a", "b"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestEmbedSuccess(t *testing.T) {
 	if c.Model() != "ollama/nomic-embed-text" {
 		t.Errorf("Model = %q", c.Model())
 	}
-	if v, err := c.Embed(context.Background(), nil); v != nil || err != nil {
+	if v, err := c.Embed(context.Background(), embed.Query, nil); v != nil || err != nil {
 		t.Error("empty input should be a no-op")
 	}
 }
@@ -99,8 +99,8 @@ func TestEmbedErrors(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			srv := server(t, tc.handler)
-			c := New(srv.URL, "nomic-embed-text", 100*time.Millisecond)
-			_, err := c.Embed(context.Background(), []string{"a", "b"})
+			c := New(Config{BaseURL: srv.URL, Model: "nomic-embed-text", Timeout: 100 * time.Millisecond})
+			_, err := c.Embed(context.Background(), embed.Document, []string{"a", "b"})
 			if err == nil {
 				t.Fatal("expected error")
 			}
@@ -118,7 +118,7 @@ func TestEmbedConnectionRefused(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	url := srv.URL
 	srv.Close()
-	_, err := New(url, "m", time.Second).Embed(context.Background(), []string{"a"})
+	_, err := New(Config{BaseURL: url, Model: "m", Timeout: time.Second}).Embed(context.Background(), embed.Document, []string{"a"})
 	if !errors.Is(err, embed.ErrUnavailable) {
 		t.Errorf("err = %v", err)
 	}
@@ -138,9 +138,84 @@ func TestHasModel(t *testing.T) {
 		"mxbai-embed-large":       false,
 		"llama3.1":                false,
 	} {
-		got, err := New(srv.URL, model, time.Second).HasModel(context.Background())
+		got, err := New(Config{BaseURL: srv.URL, Model: model, Timeout: time.Second}).HasModel(context.Background())
 		if err != nil || got != want {
 			t.Errorf("HasModel(%s) = %v, %v; want %v", model, got, err, want)
 		}
+	}
+}
+
+func TestResolvePrefixes(t *testing.T) {
+	cases := []struct {
+		model, query, doc  string
+		wantQuery, wantDoc string
+	}{
+		{"nomic-embed-text", Auto, Auto, "search_query: ", "search_document: "},
+		{"nomic-embed-text:latest", Auto, Auto, "search_query: ", "search_document: "},
+		{"library/nomic-embed-text:v1.5", Auto, Auto, "search_query: ", "search_document: "},
+		{"mxbai-embed-large", Auto, Auto, "", ""},
+		{"nomic-embed-text", "", "", "", ""},
+		{"nomic-embed-text", "q: ", Auto, "q: ", "search_document: "},
+		{"other", "query: ", "passage: ", "query: ", "passage: "},
+	}
+	for _, c := range cases {
+		q, d := ResolvePrefixes(c.model, c.query, c.doc)
+		if q != c.wantQuery || d != c.wantDoc {
+			t.Errorf("ResolvePrefixes(%q, %q, %q) = %q, %q; want %q, %q", c.model, c.query, c.doc, q, d, c.wantQuery, c.wantDoc)
+		}
+	}
+}
+
+func TestEmbedAppliesPrefixByPurpose(t *testing.T) {
+	var inputs [][]string
+	srv := server(t, func(w http.ResponseWriter, r *http.Request) {
+		var req embedRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		inputs = append(inputs, req.Input)
+		vecs := make([][]float32, len(req.Input))
+		for i := range vecs {
+			vecs[i] = []float32{1}
+		}
+		json.NewEncoder(w).Encode(embedResponse{Embeddings: vecs})
+	})
+	c := New(Config{BaseURL: srv.URL, Model: "nomic-embed-text", QueryPrefix: Auto, DocumentPrefix: Auto, Timeout: time.Second})
+	texts := []string{"alpha", "beta"}
+	if _, err := c.Embed(context.Background(), embed.Document, texts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Embed(context.Background(), embed.Query, []string{"gamma"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Embed(context.Background(), embed.Purpose(99), []string{"x"}); err == nil {
+		t.Error("unknown purpose should fail")
+	}
+	want := [][]string{{"search_document: alpha", "search_document: beta"}, {"search_query: gamma"}}
+	if len(inputs) != len(want) {
+		t.Fatalf("requests = %v", inputs)
+	}
+	for i := range want {
+		if strings.Join(inputs[i], "|") != strings.Join(want[i], "|") {
+			t.Errorf("request %d input = %q, want %q", i, inputs[i], want[i])
+		}
+	}
+	if texts[0] != "alpha" {
+		t.Error("caller's slice was modified")
+	}
+}
+
+func TestModelIdentityIncludesDocumentPrefix(t *testing.T) {
+	plain := New(Config{Model: "nomic-embed-text"})
+	auto := New(Config{Model: "nomic-embed-text", QueryPrefix: Auto, DocumentPrefix: Auto})
+	queryOnly := New(Config{Model: "nomic-embed-text", QueryPrefix: Auto})
+	if plain.Model() != "ollama/nomic-embed-text" {
+		t.Errorf("plain = %q", plain.Model())
+	}
+	if auto.Model() != `ollama/nomic-embed-text document_prefix="search_document: "` {
+		t.Errorf("auto = %q", auto.Model())
+	}
+	if queryOnly.Model() != plain.Model() {
+		t.Error("the query prefix does not change stored vectors, so it must not change the identity")
 	}
 }

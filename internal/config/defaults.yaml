@@ -25,6 +25,12 @@ embeddings:
   ollama:
     base_url: http://localhost:11434
     model: nomic-embed-text
+    # Text prepended to search queries and to stored content before embedding.
+    # "auto" uses the prefixes the model's authors specify (none for unknown
+    # models); any other value, including "", is used as-is. Changing
+    # document_prefix makes stored embeddings stale until `ralph index` runs.
+    query_prefix: auto
+    document_prefix: auto
 
 search:
   # Default number of results.

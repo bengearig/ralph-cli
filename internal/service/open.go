@@ -18,7 +18,13 @@ func NewEmbedder(c config.EmbeddingsConfig) (embed.Embedder, error) {
 	case config.EmbeddingsNone:
 		return nil, nil
 	case config.EmbeddingsOllama:
-		return ollama.New(c.Ollama.BaseURL, c.Ollama.Model, c.Timeout), nil
+		return ollama.New(ollama.Config{
+			BaseURL:        c.Ollama.BaseURL,
+			Model:          c.Ollama.Model,
+			QueryPrefix:    c.Ollama.QueryPrefix,
+			DocumentPrefix: c.Ollama.DocumentPrefix,
+			Timeout:        c.Timeout,
+		}), nil
 	}
 	return nil, fmt.Errorf("unknown embeddings provider %q", c.Provider)
 }

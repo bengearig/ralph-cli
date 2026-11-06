@@ -117,7 +117,7 @@ func (ix *Index) embedChunks(ctx context.Context, chunks []store.Chunk) error {
 	}
 	ectx, cancel := ix.embedCtx(ctx)
 	defer cancel()
-	vecs, err := ix.Embedder.Embed(ectx, texts)
+	vecs, err := ix.Embedder.Embed(ectx, embed.Document, texts)
 	if err != nil {
 		return err
 	}
@@ -248,7 +248,7 @@ func (ix *Index) vectorSearch(ctx context.Context, q Query, filter store.ChunkFi
 	}
 	ectx, cancel := ix.embedCtx(ctx)
 	defer cancel()
-	vecs, err := ix.Embedder.Embed(ectx, []string{q.Text})
+	vecs, err := ix.Embedder.Embed(ectx, embed.Query, []string{q.Text})
 	if err != nil {
 		return Result{}, fmt.Sprintf("could not embed query (%v); using keyword search", err), nil
 	}

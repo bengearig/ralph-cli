@@ -12,34 +12,92 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/bengearig/ralph/internal/embed"
 )
 
+// Auto selects the prefix a known model expects, or none for other models.
+const Auto = "auto"
+
+// knownPrefixes maps model base names to the task prefixes their authors
+// require for retrieval.
+var knownPrefixes = map[string]struct{ query, document string }{
+	"nomic-embed-text": {query: "search_query: ", document: "search_document: "},
+}
+
+// Config describes an Ollama embedding client.
+type Config struct {
+	BaseURL string
+	Model   string
+	// QueryPrefix and DocumentPrefix are prepended to inputs by purpose.
+	// Auto resolves them from the model; any other value, including "", is
+	// used literally.
+	QueryPrefix    string
+	DocumentPrefix string
+	// Timeout bounds each request.
+	Timeout time.Duration
+}
+
 // Client calls Ollama's embedding API.
 type Client struct {
-	baseURL string
-	model   string
-	http    *http.Client
+	baseURL     string
+	model       string
+	queryPrefix string
+	docPrefix   string
+	http        *http.Client
 }
 
 var _ embed.Embedder = (*Client)(nil)
 
-// New returns a client for the server at baseURL using model. Timeout bounds
-// each request.
-func New(baseURL, model string, timeout time.Duration) *Client {
+// New returns a client for cfg, resolving Auto prefixes.
+func New(cfg Config) *Client {
+	query, doc := ResolvePrefixes(cfg.Model, cfg.QueryPrefix, cfg.DocumentPrefix)
 	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		model:   model,
-		http:    &http.Client{Timeout: timeout},
+		baseURL:     strings.TrimRight(cfg.BaseURL, "/"),
+		model:       cfg.Model,
+		queryPrefix: query,
+		docPrefix:   doc,
+		http:        &http.Client{Timeout: cfg.Timeout},
 	}
 }
 
-// Model returns the namespaced model name, so vectors from other providers
-// serving a same-named model are never mixed.
-func (c *Client) Model() string { return "ollama/" + c.model }
+// ResolvePrefixes returns the effective query and document prefixes for
+// model, replacing each Auto with the model's known prefix or "".
+func ResolvePrefixes(model, query, document string) (string, string) {
+	known := knownPrefixes[baseName(model)]
+	if query == Auto {
+		query = known.query
+	}
+	if document == Auto {
+		document = known.document
+	}
+	return query, document
+}
+
+// baseName strips a registry namespace and tag: "library/nomic-embed-text:v1.5"
+// becomes "nomic-embed-text".
+func baseName(model string) string {
+	if i := strings.LastIndex(model, "/"); i >= 0 {
+		model = model[i+1:]
+	}
+	if i := strings.Index(model, ":"); i >= 0 {
+		model = model[:i]
+	}
+	return model
+}
+
+// Model identifies the vector space of stored embeddings. The document prefix
+// is part of it, because changing the prefix changes every stored vector.
+func (c *Client) Model() string {
+	id := "ollama/" + c.model
+	if c.docPrefix != "" {
+		id += " document_prefix=" + strconv.Quote(c.docPrefix)
+	}
+	return id
+}
 
 type embedRequest struct {
 	Model string   `json:"model"`
@@ -54,13 +112,30 @@ type errorResponse struct {
 	Error string `json:"error"`
 }
 
-// Embed embeds texts in one request. Connection failures wrap
-// embed.ErrUnavailable; a missing model is reported with a pull hint.
-func (c *Client) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+// Embed embeds texts in one request, each prefixed for purpose. Connection
+// failures wrap embed.ErrUnavailable; a missing model is reported with a pull
+// hint.
+func (c *Client) Embed(ctx context.Context, purpose embed.Purpose, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, nil
 	}
-	body, err := json.Marshal(embedRequest{Model: c.model, Input: texts})
+	var prefix string
+	switch purpose {
+	case embed.Document:
+		prefix = c.docPrefix
+	case embed.Query:
+		prefix = c.queryPrefix
+	default:
+		return nil, fmt.Errorf("ollama: unknown embedding purpose %d", purpose)
+	}
+	input := texts
+	if prefix != "" {
+		input = make([]string, len(texts))
+		for i, t := range texts {
+			input[i] = prefix + t
+		}
+	}
+	body, err := json.Marshal(embedRequest{Model: c.model, Input: input})
 	if err != nil {
 		return nil, err
 	}

@@ -230,7 +230,7 @@ func (a *app) initHints(ctx context.Context, cfg *config.Config) []string {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	c := ollama.New(cfg.Embeddings.Ollama.BaseURL, cfg.Embeddings.Ollama.Model, 3*time.Second)
+	c := ollama.New(ollama.Config{BaseURL: cfg.Embeddings.Ollama.BaseURL, Model: cfg.Embeddings.Ollama.Model, Timeout: 3 * time.Second})
 	ok, err := c.HasModel(ctx)
 	switch {
 	case err != nil:

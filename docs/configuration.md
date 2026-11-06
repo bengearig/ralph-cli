@@ -70,9 +70,18 @@ ralph config steps      # effective harness and model per step
 | `embeddings.chunk.overlap_chars` | `200` | Overlap between windows of an oversized section. Must be less than `max_chars`. |
 | `embeddings.ollama.base_url` | `http://localhost:11434` | Ollama server. |
 | `embeddings.ollama.model` | `nomic-embed-text` | Embedding model. Install it with `ollama pull <model>`. |
+| `embeddings.ollama.query_prefix` | `auto` | Text prepended to search queries before embedding. |
+| `embeddings.ollama.document_prefix` | `auto` | Text prepended to stored content before embedding. |
 
-Changing the model makes every chunk stale. Run `ralph index` to re-embed. Changing chunk sizes takes effect for new
-writes; run `ralph index --rebuild` to apply it to everything.
+Some embedding models are trained with task prefixes and retrieve noticeably better with them. With `auto`, ralph
+uses the prefixes the model's authors specify: `search_query: ` and `search_document: ` for `nomic-embed-text`
+(any tag). Models it does not know get no prefix. Any other value, including `""`, is used as-is, so you can set the
+prefixes for another model or turn them off.
+
+Stored vectors belong to a model identity made of the model name and the document prefix. Changing either one
+makes every chunk stale. Search then falls back to keywords, with a warning, until `ralph index` re-embeds. The
+query prefix is applied only at search time, so changing it needs no reindex. Changing chunk sizes takes effect for
+new writes; run `ralph index --rebuild` to apply it to everything.
 
 ### `search`
 
