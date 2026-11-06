@@ -1,0 +1,395 @@
+package sqlite
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"strings"
+
+	"github.com/bengearig/ralph/internal/domain"
+	"github.com/bengearig/ralph/internal/store"
+)
+
+type scanner interface{ Scan(dest ...any) error }
+
+// ---- initiatives ----
+
+const initiativeCols = `id, slug, title, brief, created_at, updated_at`
+
+func scanInitiative(sc scanner) (domain.Initiative, error) {
+	var i domain.Initiative
+	var created, updated string
+	if err := sc.Scan(&i.ID, &i.Slug, &i.Title, &i.Brief, &created, &updated); err != nil {
+		return i, err
+	}
+	var err error
+	if i.CreatedAt, err = parseTime(created); err != nil {
+		return i, err
+	}
+	i.UpdatedAt, err = parseTime(updated)
+	return i, err
+}
+
+func (s *Store) CreateInitiative(ctx context.Context, i *domain.Initiative) error {
+	now := s.now()
+	res, err := s.q.ExecContext(ctx,
+		`INSERT INTO initiatives (slug, title, brief, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		i.Slug, i.Title, i.Brief, formatTime(now), formatTime(now))
+	if err != nil {
+		return mapErr(err, "creating initiative "+i.Slug)
+	}
+	if i.ID, err = res.LastInsertId(); err != nil {
+		return err
+	}
+	i.CreatedAt, i.UpdatedAt = now, now
+	return nil
+}
+
+func (s *Store) GetInitiative(ctx context.Context, id int64) (domain.Initiative, error) {
+	i, err := scanInitiative(s.q.QueryRowContext(ctx, `SELECT `+initiativeCols+` FROM initiatives WHERE id = ?`, id))
+	return i, mapErr(err, domain.FormatID(domain.KindInitiative, id))
+}
+
+func (s *Store) ListInitiatives(ctx context.Context) ([]domain.Initiative, error) {
+	rows, err := s.q.QueryContext(ctx, `SELECT `+initiativeCols+` FROM initiatives ORDER BY id`)
+	if err != nil {
+		return nil, mapErr(err, "listing initiatives")
+	}
+	return collect(rows, scanInitiative)
+}
+
+func (s *Store) UpdateInitiative(ctx context.Context, i *domain.Initiative) error {
+	now := s.now()
+	res, err := s.q.ExecContext(ctx,
+		`UPDATE initiatives SET slug = ?, title = ?, brief = ?, updated_at = ? WHERE id = ?`,
+		i.Slug, i.Title, i.Brief, formatTime(now), i.ID)
+	what := domain.FormatID(domain.KindInitiative, i.ID)
+	if err != nil {
+		return mapErr(err, "updating "+what)
+	}
+	if err := checkAffected(res, what); err != nil {
+		return err
+	}
+	i.UpdatedAt = now
+	return nil
+}
+
+// ---- milestones ----
+
+const milestoneCols = `id, initiative_id, slug, title, description, position, created_at, updated_at`
+
+func scanMilestone(sc scanner) (domain.Milestone, error) {
+	var m domain.Milestone
+	var created, updated string
+	if err := sc.Scan(&m.ID, &m.InitiativeID, &m.Slug, &m.Title, &m.Description, &m.Position, &created, &updated); err != nil {
+		return m, err
+	}
+	var err error
+	if m.CreatedAt, err = parseTime(created); err != nil {
+		return m, err
+	}
+	m.UpdatedAt, err = parseTime(updated)
+	return m, err
+}
+
+func (s *Store) CreateMilestone(ctx context.Context, m *domain.Milestone) error {
+	return s.inTx(ctx, func(tx *Store) error {
+		if m.Position <= 0 {
+			if err := tx.q.QueryRowContext(ctx,
+				`SELECT COALESCE(MAX(position), 0) + 1 FROM milestones WHERE initiative_id = ?`, m.InitiativeID,
+			).Scan(&m.Position); err != nil {
+				return err
+			}
+		}
+		now := tx.now()
+		res, err := tx.q.ExecContext(ctx,
+			`INSERT INTO milestones (initiative_id, slug, title, description, position, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			m.InitiativeID, m.Slug, m.Title, m.Description, m.Position, formatTime(now), formatTime(now))
+		if err != nil {
+			return mapErr(err, "creating milestone "+m.Slug)
+		}
+		if m.ID, err = res.LastInsertId(); err != nil {
+			return err
+		}
+		m.CreatedAt, m.UpdatedAt = now, now
+		return nil
+	})
+}
+
+func (s *Store) GetMilestone(ctx context.Context, id int64) (domain.Milestone, error) {
+	m, err := scanMilestone(s.q.QueryRowContext(ctx, `SELECT `+milestoneCols+` FROM milestones WHERE id = ?`, id))
+	return m, mapErr(err, domain.FormatID(domain.KindMilestone, id))
+}
+
+func (s *Store) ListMilestones(ctx context.Context, initiativeID int64) ([]domain.Milestone, error) {
+	q := `SELECT ` + milestoneCols + ` FROM milestones`
+	var args []any
+	if initiativeID != 0 {
+		q += ` WHERE initiative_id = ?`
+		args = append(args, initiativeID)
+	}
+	q += ` ORDER BY initiative_id, position, id`
+	rows, err := s.q.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, mapErr(err, "listing milestones")
+	}
+	return collect(rows, scanMilestone)
+}
+
+func (s *Store) UpdateMilestone(ctx context.Context, m *domain.Milestone) error {
+	now := s.now()
+	res, err := s.q.ExecContext(ctx,
+		`UPDATE milestones SET slug = ?, title = ?, description = ?, position = ?, updated_at = ? WHERE id = ?`,
+		m.Slug, m.Title, m.Description, m.Position, formatTime(now), m.ID)
+	what := domain.FormatID(domain.KindMilestone, m.ID)
+	if err != nil {
+		return mapErr(err, "updating "+what)
+	}
+	if err := checkAffected(res, what); err != nil {
+		return err
+	}
+	m.UpdatedAt = now
+	return nil
+}
+
+// ---- tasks ----
+
+const taskCols = `t.id, t.milestone_id, t.title, t.description, t.acceptance_criteria, t.status, t.position,
+	t.failure_count, t.blocked_reason, t.created_at, t.updated_at`
+
+func scanTask(sc scanner) (domain.Task, error) {
+	var t domain.Task
+	var status, created, updated string
+	if err := sc.Scan(&t.ID, &t.MilestoneID, &t.Title, &t.Description, &t.AcceptanceCriteria, &status, &t.Position,
+		&t.FailureCount, &t.BlockedReason, &created, &updated); err != nil {
+		return t, err
+	}
+	t.Status = domain.Status(status)
+	var err error
+	if t.CreatedAt, err = parseTime(created); err != nil {
+		return t, err
+	}
+	t.UpdatedAt, err = parseTime(updated)
+	return t, err
+}
+
+func (s *Store) CreateTask(ctx context.Context, t *domain.Task) error {
+	return s.inTx(ctx, func(tx *Store) error {
+		if t.Position <= 0 {
+			if err := tx.q.QueryRowContext(ctx,
+				`SELECT COALESCE(MAX(position), 0) + 1 FROM tasks WHERE milestone_id = ?`, t.MilestoneID,
+			).Scan(&t.Position); err != nil {
+				return err
+			}
+		}
+		now := tx.now()
+		res, err := tx.q.ExecContext(ctx,
+			`INSERT INTO tasks (milestone_id, title, description, acceptance_criteria, status, position,
+			                    failure_count, blocked_reason, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			t.MilestoneID, t.Title, t.Description, t.AcceptanceCriteria, string(t.Status), t.Position,
+			t.FailureCount, t.BlockedReason, formatTime(now), formatTime(now))
+		if err != nil {
+			return mapErr(err, "creating task")
+		}
+		if t.ID, err = res.LastInsertId(); err != nil {
+			return err
+		}
+		t.CreatedAt, t.UpdatedAt = now, now
+		return nil
+	})
+}
+
+func (s *Store) GetTask(ctx context.Context, id int64) (domain.Task, error) {
+	t, err := scanTask(s.q.QueryRowContext(ctx, `SELECT `+taskCols+` FROM tasks t WHERE t.id = ?`, id))
+	return t, mapErr(err, domain.FormatID(domain.KindTask, id))
+}
+
+func (s *Store) ListTasks(ctx context.Context, f store.TaskFilter) ([]domain.Task, error) {
+	var where []string
+	var args []any
+	if f.MilestoneID != 0 {
+		where = append(where, `t.milestone_id = ?`)
+		args = append(args, f.MilestoneID)
+	}
+	if f.InitiativeID != 0 {
+		where = append(where, `m.initiative_id = ?`)
+		args = append(args, f.InitiativeID)
+	}
+	if len(f.Statuses) > 0 {
+		where = append(where, `t.status IN (`+placeholders(len(f.Statuses))+`)`)
+		for _, st := range f.Statuses {
+			args = append(args, string(st))
+		}
+	}
+	q := `SELECT ` + taskCols + ` FROM tasks t JOIN milestones m ON m.id = t.milestone_id`
+	if len(where) > 0 {
+		q += ` WHERE ` + strings.Join(where, ` AND `)
+	}
+	q += ` ORDER BY m.initiative_id, m.position, m.id, t.position, t.id`
+	rows, err := s.q.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, mapErr(err, "listing tasks")
+	}
+	return collect(rows, scanTask)
+}
+
+func (s *Store) UpdateTask(ctx context.Context, t *domain.Task) error {
+	now := s.now()
+	res, err := s.q.ExecContext(ctx,
+		`UPDATE tasks SET title = ?, description = ?, acceptance_criteria = ?, status = ?, position = ?,
+		                  failure_count = ?, blocked_reason = ?, updated_at = ?
+		 WHERE id = ?`,
+		t.Title, t.Description, t.AcceptanceCriteria, string(t.Status), t.Position,
+		t.FailureCount, t.BlockedReason, formatTime(now), t.ID)
+	what := domain.FormatID(domain.KindTask, t.ID)
+	if err != nil {
+		return mapErr(err, "updating "+what)
+	}
+	if err := checkAffected(res, what); err != nil {
+		return err
+	}
+	t.UpdatedAt = now
+	return nil
+}
+
+func (s *Store) AddTaskNote(ctx context.Context, n *domain.TaskNote) error {
+	now := s.now()
+	res, err := s.q.ExecContext(ctx,
+		`INSERT INTO task_notes (task_id, kind, body, created_at) VALUES (?, ?, ?, ?)`,
+		n.TaskID, string(n.Kind), n.Body, formatTime(now))
+	if err != nil {
+		return mapErr(err, "adding note to "+domain.FormatID(domain.KindTask, n.TaskID))
+	}
+	if n.ID, err = res.LastInsertId(); err != nil {
+		return err
+	}
+	n.CreatedAt = now
+	return nil
+}
+
+func (s *Store) ListTaskNotes(ctx context.Context, taskID int64) ([]domain.TaskNote, error) {
+	rows, err := s.q.QueryContext(ctx,
+		`SELECT id, task_id, kind, body, created_at FROM task_notes WHERE task_id = ? ORDER BY id`, taskID)
+	if err != nil {
+		return nil, mapErr(err, "listing notes")
+	}
+	return collect(rows, func(sc scanner) (domain.TaskNote, error) {
+		var n domain.TaskNote
+		var kind, created string
+		if err := sc.Scan(&n.ID, &n.TaskID, &kind, &n.Body, &created); err != nil {
+			return n, err
+		}
+		n.Kind = domain.NoteKind(kind)
+		var err error
+		n.CreatedAt, err = parseTime(created)
+		return n, err
+	})
+}
+
+// ---- documents ----
+
+const documentCols = `id, initiative_id, kind, slug, title, body, created_at, updated_at`
+
+func scanDocument(sc scanner) (domain.Document, error) {
+	var d domain.Document
+	var initiative sql.NullInt64
+	var kind, created, updated string
+	if err := sc.Scan(&d.ID, &initiative, &kind, &d.Slug, &d.Title, &d.Body, &created, &updated); err != nil {
+		return d, err
+	}
+	if initiative.Valid {
+		v := initiative.Int64
+		d.InitiativeID = &v
+	}
+	d.Kind = domain.DocKind(kind)
+	var err error
+	if d.CreatedAt, err = parseTime(created); err != nil {
+		return d, err
+	}
+	d.UpdatedAt, err = parseTime(updated)
+	return d, err
+}
+
+func nullID(p *int64) sql.NullInt64 {
+	if p == nil {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: *p, Valid: true}
+}
+
+func (s *Store) CreateDocument(ctx context.Context, d *domain.Document) error {
+	now := s.now()
+	res, err := s.q.ExecContext(ctx,
+		`INSERT INTO documents (initiative_id, kind, slug, title, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		nullID(d.InitiativeID), string(d.Kind), d.Slug, d.Title, d.Body, formatTime(now), formatTime(now))
+	if err != nil {
+		return mapErr(err, "creating document "+d.Slug)
+	}
+	if d.ID, err = res.LastInsertId(); err != nil {
+		return err
+	}
+	d.CreatedAt, d.UpdatedAt = now, now
+	return nil
+}
+
+func (s *Store) GetDocument(ctx context.Context, id int64) (domain.Document, error) {
+	d, err := scanDocument(s.q.QueryRowContext(ctx, `SELECT `+documentCols+` FROM documents WHERE id = ?`, id))
+	return d, mapErr(err, domain.FormatID(domain.KindDocument, id))
+}
+
+func (s *Store) ListDocuments(ctx context.Context, f store.DocumentFilter) ([]domain.Document, error) {
+	var where []string
+	var args []any
+	switch {
+	case f.ProjectOnly:
+		where = append(where, `initiative_id IS NULL`)
+	case f.InitiativeID != 0:
+		where = append(where, `initiative_id = ?`)
+		args = append(args, f.InitiativeID)
+	}
+	if f.Kind != "" {
+		where = append(where, `kind = ?`)
+		args = append(args, string(f.Kind))
+	}
+	q := `SELECT ` + documentCols + ` FROM documents`
+	if len(where) > 0 {
+		q += ` WHERE ` + strings.Join(where, ` AND `)
+	}
+	q += ` ORDER BY IFNULL(initiative_id, 0), id`
+	rows, err := s.q.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, mapErr(err, "listing documents")
+	}
+	return collect(rows, scanDocument)
+}
+
+func (s *Store) UpdateDocument(ctx context.Context, d *domain.Document) error {
+	now := s.now()
+	res, err := s.q.ExecContext(ctx,
+		`UPDATE documents SET kind = ?, slug = ?, title = ?, body = ?, updated_at = ? WHERE id = ?`,
+		string(d.Kind), d.Slug, d.Title, d.Body, formatTime(now), d.ID)
+	what := domain.FormatID(domain.KindDocument, d.ID)
+	if err != nil {
+		return mapErr(err, "updating "+what)
+	}
+	if err := checkAffected(res, what); err != nil {
+		return err
+	}
+	d.UpdatedAt = now
+	return nil
+}
+
+func collect[T any](rows *sql.Rows, scan func(scanner) (T, error)) ([]T, error) {
+	defer rows.Close()
+	var out []T
+	for rows.Next() {
+		v, err := scan(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scanning row: %w", err)
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
