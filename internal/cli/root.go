@@ -77,6 +77,8 @@ open a pull request, and hand off to humans for review.`,
 		a.newIndexCommand(),
 		a.newStatusCommand(),
 		a.newMCPCommand(),
+		a.newLoopCommand(),
+		a.newPRCommand(),
 		a.newConfigCommand(),
 		a.newVersionCommand(),
 	)
