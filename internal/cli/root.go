@@ -5,8 +5,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 
 	"github.com/spf13/cobra"
+
+	"github.com/bengearig/ralph/internal/config"
+	"github.com/bengearig/ralph/internal/project"
 )
 
 // Streams are the standard streams commands read from and write to.
@@ -26,6 +30,11 @@ type app struct {
 
 	root    *cobra.Command
 	closers []func() error
+
+	proj    *project.Project
+	projErr error
+	cfg     *config.Loaded
+	log     *slog.Logger
 }
 
 // Execute runs the ralph command tree with the given arguments.
@@ -57,6 +66,7 @@ open a pull request, and hand off to humans for review.`,
 	pf.BoolVar(&a.jsonOut, "json", false, "write machine-readable JSON output")
 
 	cmd.AddCommand(
+		a.newConfigCommand(),
 		a.newVersionCommand(),
 	)
 	return cmd
