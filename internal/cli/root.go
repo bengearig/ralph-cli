@@ -68,6 +68,7 @@ open a pull request, and hand off to humans for review.`,
 	pf.BoolVar(&a.jsonOut, "json", false, "write machine-readable JSON output")
 
 	cmd.AddCommand(
+		a.newInitCommand(),
 		a.newInitiativeCommand(),
 		a.newMilestoneCommand(),
 		a.newTaskCommand(),

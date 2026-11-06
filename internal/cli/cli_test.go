@@ -14,14 +14,14 @@ import (
 	"github.com/bengearig/ralph/internal/project"
 )
 
-// harness runs ralph commands against a temporary project with embeddings
+// testEnv runs ralph commands against a temporary project with embeddings
 // disabled, isolated from the user's global config.
-type harness struct {
+type testEnv struct {
 	t   *testing.T
 	dir string
 }
 
-func newHarness(t *testing.T, initProject bool) *harness {
+func newTestEnv(t *testing.T, initProject bool) *testEnv {
 	t.Helper()
 	dir := t.TempDir()
 	if initProject {
@@ -32,10 +32,10 @@ func newHarness(t *testing.T, initProject bool) *harness {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "xdg"))
 	t.Setenv("HOME", dir)
 	t.Setenv("RALPH_EMBEDDINGS__PROVIDER", "none")
-	return &harness{t: t, dir: dir}
+	return &testEnv{t: t, dir: dir}
 }
 
-func (h *harness) run(stdin string, args ...string) (string, string, error) {
+func (h *testEnv) run(stdin string, args ...string) (string, string, error) {
 	h.t.Helper()
 	var out, errOut bytes.Buffer
 	full := append([]string{"--project-dir", h.dir}, args...)
@@ -43,7 +43,7 @@ func (h *harness) run(stdin string, args ...string) (string, string, error) {
 	return out.String(), errOut.String(), err
 }
 
-func (h *harness) ok(args ...string) string {
+func (h *testEnv) ok(args ...string) string {
 	h.t.Helper()
 	out, errOut, err := h.run("", args...)
 	if err != nil {
@@ -52,7 +52,7 @@ func (h *harness) ok(args ...string) string {
 	return out
 }
 
-func (h *harness) json(v any, args ...string) {
+func (h *testEnv) json(v any, args ...string) {
 	h.t.Helper()
 	out := h.ok(append([]string{"--json"}, args...)...)
 	if err := json.Unmarshal([]byte(out), v); err != nil {
@@ -61,7 +61,7 @@ func (h *harness) json(v any, args ...string) {
 }
 
 func TestWorkflowThroughCLI(t *testing.T) {
-	h := newHarness(t, true)
+	h := newTestEnv(t, true)
 	var i struct{ ID string }
 	h.json(&i, "initiative", "create", "--title", "Customer SSO", "--brief", "Okta login for customers")
 	if i.ID != "I-1" {
@@ -110,7 +110,7 @@ func TestWorkflowThroughCLI(t *testing.T) {
 }
 
 func TestInputErrors(t *testing.T) {
-	h := newHarness(t, true)
+	h := newTestEnv(t, true)
 	cases := [][]string{
 		{"task", "show", "M-1"},
 		{"task", "status", "T-1", "WAITING"},
@@ -129,7 +129,7 @@ func TestInputErrors(t *testing.T) {
 }
 
 func TestOutsideProject(t *testing.T) {
-	h := newHarness(t, false)
+	h := newTestEnv(t, false)
 	_, _, err := h.run("", "status")
 	if !errors.Is(err, project.ErrNotFound) {
 		t.Errorf("err = %v", err)
@@ -140,7 +140,7 @@ func TestOutsideProject(t *testing.T) {
 }
 
 func TestConfigLayersVisible(t *testing.T) {
-	h := newHarness(t, true)
+	h := newTestEnv(t, true)
 	if err := os.WriteFile(filepath.Join(h.dir, ".ralph", "config.yaml"), []byte("search:\n  limit: 3\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -160,5 +160,38 @@ func TestConfigLayersVisible(t *testing.T) {
 	}
 	if !got["project"] || !got["environment"] || !got["flags"] || got["global"] {
 		t.Errorf("layers = %+v", layers)
+	}
+}
+
+func TestInit(t *testing.T) {
+	h := newTestEnv(t, false)
+	var res struct {
+		Root    string
+		Changes []struct{ Path, Action string }
+	}
+	h.json(&res, "init", "--ralph-command", "/bin/ralph")
+	if res.Root != h.dir {
+		t.Errorf("root = %q", res.Root)
+	}
+	for _, p := range []string{".ralph/config.yaml", ".ralph/ralph.db", ".gitignore", ".mcp.json", "CLAUDE.md", ".claude/commands/ralph/receive.md"} {
+		if _, err := os.Stat(filepath.Join(h.dir, p)); err != nil {
+			t.Errorf("%s: %v", p, err)
+		}
+	}
+	gi, _ := os.ReadFile(filepath.Join(h.dir, ".gitignore"))
+	if !strings.Contains(string(gi), "/.ralph/ralph.db*") {
+		t.Errorf(".gitignore = %q", gi)
+	}
+
+	h.json(&res, "init")
+	for _, c := range res.Changes {
+		if c.Action != "unchanged" && c.Path != ".mcp.json" {
+			t.Errorf("rerun changed %s: %s", c.Path, c.Action)
+		}
+	}
+	h.ok("initiative", "create", "--title", "works after init")
+
+	if _, _, err := h.run("", "init", "--no-harness", "--force"); err != nil {
+		t.Errorf("forced rerun: %v", err)
 	}
 }
