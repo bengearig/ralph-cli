@@ -28,14 +28,7 @@ func (a *app) newSearchCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			l, err := a.loadConfig()
-			if err != nil {
-				return err
-			}
-			if !cmd.Flags().Changed("limit") {
-				limit = l.Config.Search.Limit
-			}
-			if limit < 1 {
+			if cmd.Flags().Changed("limit") && limit < 1 {
 				return fmt.Errorf("--limit must be at least 1")
 			}
 			svc, err := a.service(cmd.Context())

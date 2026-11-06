@@ -24,12 +24,15 @@ type Service struct {
 	// failed iterations a task is blocked instead of returned to TODO.
 	// Zero disables it.
 	stallThreshold int
+	searchLimit    int
 }
 
 // Options configures a Service.
 type Options struct {
 	StallThreshold int
-	Log            *slog.Logger
+	// SearchLimit is the result count when a search does not specify one.
+	SearchLimit int
+	Log         *slog.Logger
 }
 
 // New returns a Service. The index must share the store.
@@ -38,7 +41,11 @@ func New(st store.Store, ix *search.Index, opts Options) *Service {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Service{store: st, index: ix, log: log, stallThreshold: opts.StallThreshold}
+	limit := opts.SearchLimit
+	if limit < 1 {
+		limit = 10
+	}
+	return &Service{store: st, index: ix, log: log, stallThreshold: opts.StallThreshold, searchLimit: limit}
 }
 
 // Store exposes the underlying store for read-only orchestration such as

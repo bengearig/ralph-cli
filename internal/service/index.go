@@ -177,6 +177,9 @@ func (s *Service) Search(ctx context.Context, in SearchInput) (SearchView, error
 	if s.index == nil {
 		return SearchView{}, fmt.Errorf("search index is not configured")
 	}
+	if in.Limit < 1 {
+		in.Limit = s.searchLimit
+	}
 	res, err := s.index.Search(ctx, search.Query{
 		Text: in.Query, Kinds: in.Kinds, InitiativeID: in.InitiativeID, Limit: in.Limit,
 	})

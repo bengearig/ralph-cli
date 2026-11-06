@@ -42,6 +42,6 @@ func Open(ctx context.Context, cfg *config.Config, root string, log *slog.Logger
 		Timeout:  cfg.Embeddings.Timeout,
 		Log:      log,
 	}
-	svc := New(st, ix, Options{StallThreshold: cfg.Loop.StallThreshold, Log: log})
+	svc := New(st, ix, Options{StallThreshold: cfg.Loop.StallThreshold, SearchLimit: cfg.Search.Limit, Log: log})
 	return svc, st.Close, nil
 }
