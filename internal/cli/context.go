@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"os"
 
 	"github.com/bengearig/ralph/internal/config"
 	"github.com/bengearig/ralph/internal/project"
+	"github.com/bengearig/ralph/internal/service"
 )
 
 // findProject locates the project from --project-dir or the working
@@ -88,4 +90,27 @@ func newLogger(s Streams, c config.LogConfig) *slog.Logger {
 		return slog.New(slog.NewJSONHandler(s.Err, opts))
 	}
 	return slog.New(slog.NewTextHandler(s.Err, opts))
+}
+
+// service opens the project's store and search index, closing them when the
+// command finishes.
+func (a *app) service(ctx context.Context) (*service.Service, error) {
+	if a.svc != nil {
+		return a.svc, nil
+	}
+	p, err := a.findProject()
+	if err != nil {
+		return nil, err
+	}
+	l, err := a.loadConfig()
+	if err != nil {
+		return nil, err
+	}
+	svc, closeFn, err := service.Open(ctx, l.Config, p.Root, a.logger())
+	if err != nil {
+		return nil, err
+	}
+	a.closers = append(a.closers, closeFn)
+	a.svc = svc
+	return svc, nil
 }

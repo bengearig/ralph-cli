@@ -11,6 +11,7 @@ import (
 
 	"github.com/bengearig/ralph/internal/config"
 	"github.com/bengearig/ralph/internal/project"
+	"github.com/bengearig/ralph/internal/service"
 )
 
 // Streams are the standard streams commands read from and write to.
@@ -35,6 +36,7 @@ type app struct {
 	projErr error
 	cfg     *config.Loaded
 	log     *slog.Logger
+	svc     *service.Service
 }
 
 // Execute runs the ralph command tree with the given arguments.
@@ -66,6 +68,13 @@ open a pull request, and hand off to humans for review.`,
 	pf.BoolVar(&a.jsonOut, "json", false, "write machine-readable JSON output")
 
 	cmd.AddCommand(
+		a.newInitiativeCommand(),
+		a.newMilestoneCommand(),
+		a.newTaskCommand(),
+		a.newDocCommand(),
+		a.newSearchCommand(),
+		a.newIndexCommand(),
+		a.newStatusCommand(),
 		a.newConfigCommand(),
 		a.newVersionCommand(),
 	)

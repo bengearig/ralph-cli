@@ -1,0 +1,206 @@
+package service
+
+import (
+	"time"
+
+	"github.com/bengearig/ralph/internal/domain"
+)
+
+// Views are the wire shapes shared by CLI JSON output and MCP tool results.
+// IDs use display form (T-12) so agents and humans quote the same strings.
+
+type InitiativeView struct {
+	ID           string `json:"id"`
+	Slug         string `json:"slug"`
+	Title        string `json:"title"`
+	Brief        string `json:"brief"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+	IndexWarning string `json:"index_warning,omitempty"`
+}
+
+type MilestoneView struct {
+	ID           string         `json:"id"`
+	InitiativeID string         `json:"initiative_id"`
+	Slug         string         `json:"slug"`
+	Title        string         `json:"title"`
+	Description  string         `json:"description"`
+	Position     int            `json:"position"`
+	Status       string         `json:"status"`
+	TaskCounts   map[string]int `json:"task_counts"`
+	CreatedAt    string         `json:"created_at"`
+	UpdatedAt    string         `json:"updated_at"`
+	IndexWarning string         `json:"index_warning,omitempty"`
+}
+
+type TaskView struct {
+	ID                 string     `json:"id"`
+	MilestoneID        string     `json:"milestone_id"`
+	Title              string     `json:"title"`
+	Description        string     `json:"description"`
+	AcceptanceCriteria string     `json:"acceptance_criteria"`
+	Status             string     `json:"status"`
+	AllowedNext        []string   `json:"allowed_next"`
+	Position           int        `json:"position"`
+	FailureCount       int        `json:"failure_count"`
+	BlockedReason      string     `json:"blocked_reason,omitempty"`
+	Notes              []NoteView `json:"notes,omitempty"`
+	CreatedAt          string     `json:"created_at"`
+	UpdatedAt          string     `json:"updated_at"`
+	IndexWarning       string     `json:"index_warning,omitempty"`
+}
+
+type NoteView struct {
+	Kind      string `json:"kind"`
+	Body      string `json:"body"`
+	CreatedAt string `json:"created_at"`
+}
+
+type DocumentView struct {
+	ID           string `json:"id"`
+	InitiativeID string `json:"initiative_id,omitempty"`
+	Kind         string `json:"kind"`
+	Slug         string `json:"slug"`
+	Title        string `json:"title"`
+	Body         string `json:"body,omitempty"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+	IndexWarning string `json:"index_warning,omitempty"`
+}
+
+type SearchView struct {
+	Mode     string    `json:"mode"`
+	Hits     []HitView `json:"hits"`
+	Warnings []string  `json:"warnings,omitempty"`
+}
+
+type HitView struct {
+	ID           string  `json:"id"`
+	Kind         string  `json:"kind"`
+	Title        string  `json:"title"`
+	InitiativeID string  `json:"initiative_id,omitempty"`
+	Score        float64 `json:"score"`
+	Snippet      string  `json:"snippet"`
+}
+
+type StatusView struct {
+	Initiatives []InitiativeStatus `json:"initiatives"`
+}
+
+type InitiativeStatus struct {
+	ID         string          `json:"id"`
+	Title      string          `json:"title"`
+	TaskCounts map[string]int  `json:"task_counts"`
+	Milestones []MilestoneView `json:"milestones"`
+	Documents  int             `json:"documents"`
+}
+
+func ts(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+
+func initiativeView(i domain.Initiative) InitiativeView {
+	return InitiativeView{
+		ID:        domain.FormatID(domain.KindInitiative, i.ID),
+		Slug:      i.Slug,
+		Title:     i.Title,
+		Brief:     i.Brief,
+		CreatedAt: ts(i.CreatedAt),
+		UpdatedAt: ts(i.UpdatedAt),
+	}
+}
+
+func milestoneView(m domain.Milestone, tasks []domain.Task) MilestoneView {
+	counts := map[string]int{}
+	for _, t := range tasks {
+		counts[string(t.Status)]++
+	}
+	return MilestoneView{
+		ID:           domain.FormatID(domain.KindMilestone, m.ID),
+		InitiativeID: domain.FormatID(domain.KindInitiative, m.InitiativeID),
+		Slug:         m.Slug,
+		Title:        m.Title,
+		Description:  m.Description,
+		Position:     m.Position,
+		Status:       MilestoneStatus(tasks),
+		TaskCounts:   counts,
+		CreatedAt:    ts(m.CreatedAt),
+		UpdatedAt:    ts(m.UpdatedAt),
+	}
+}
+
+func taskView(t domain.Task, notes []domain.TaskNote) TaskView {
+	next := make([]string, 0, 4)
+	for _, s := range t.Status.AllowedNext() {
+		next = append(next, string(s))
+	}
+	v := TaskView{
+		ID:                 domain.FormatID(domain.KindTask, t.ID),
+		MilestoneID:        domain.FormatID(domain.KindMilestone, t.MilestoneID),
+		Title:              t.Title,
+		Description:        t.Description,
+		AcceptanceCriteria: t.AcceptanceCriteria,
+		Status:             string(t.Status),
+		AllowedNext:        next,
+		Position:           t.Position,
+		FailureCount:       t.FailureCount,
+		BlockedReason:      t.BlockedReason,
+		CreatedAt:          ts(t.CreatedAt),
+		UpdatedAt:          ts(t.UpdatedAt),
+	}
+	for _, n := range notes {
+		v.Notes = append(v.Notes, NoteView{Kind: string(n.Kind), Body: n.Body, CreatedAt: ts(n.CreatedAt)})
+	}
+	return v
+}
+
+func documentView(d domain.Document, withBody bool) DocumentView {
+	v := DocumentView{
+		ID:        domain.FormatID(domain.KindDocument, d.ID),
+		Kind:      string(d.Kind),
+		Slug:      d.Slug,
+		Title:     d.Title,
+		CreatedAt: ts(d.CreatedAt),
+		UpdatedAt: ts(d.UpdatedAt),
+	}
+	if d.InitiativeID != nil {
+		v.InitiativeID = domain.FormatID(domain.KindInitiative, *d.InitiativeID)
+	}
+	if withBody {
+		v.Body = d.Body
+	}
+	return v
+}
+
+// Derived milestone statuses.
+const (
+	MilestoneEmpty        = "EMPTY"
+	MilestoneArticulating = "ARTICULATING"
+	MilestoneReady        = "READY"
+	MilestoneInProgress   = "IN_PROGRESS"
+	MilestoneBlocked      = "BLOCKED"
+	MilestoneDone         = "DONE"
+	MilestoneCancelled    = "CANCELLED"
+)
+
+// MilestoneStatus derives a milestone's status from its tasks.
+func MilestoneStatus(tasks []domain.Task) string {
+	if len(tasks) == 0 {
+		return MilestoneEmpty
+	}
+	c := map[domain.Status]int{}
+	for _, t := range tasks {
+		c[t.Status]++
+	}
+	switch {
+	case c[domain.StatusCancelled] == len(tasks):
+		return MilestoneCancelled
+	case c[domain.StatusDone]+c[domain.StatusCancelled] == len(tasks):
+		return MilestoneDone
+	case c[domain.StatusBlocked] > 0:
+		return MilestoneBlocked
+	case c[domain.StatusInProgress] > 0 || c[domain.StatusDone] > 0:
+		return MilestoneInProgress
+	case c[domain.StatusProposed] > 0:
+		return MilestoneArticulating
+	}
+	return MilestoneReady
+}

@@ -104,7 +104,7 @@ func (ix *Index) Index(ctx context.Context, it Item) (IndexResult, error) {
 	if err := ix.embedChunks(ctx, pending); err != nil {
 		res.Stale = len(pending)
 		res.Warning = fmt.Sprintf("saved, but %d chunk(s) could not be embedded and will use keyword search until `ralph index` succeeds: %v", len(pending), err)
-		ix.logger().Warn("embedding failed; chunks left stale",
+		ix.logger().Debug("embedding failed; chunks left stale",
 			"owner", domain.FormatID(it.Owner.Kind, it.Owner.ID), "chunks", len(pending), "err", err)
 	}
 	return res, nil
