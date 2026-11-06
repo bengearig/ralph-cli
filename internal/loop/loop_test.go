@@ -10,7 +10,6 @@ import (
 
 	"github.com/bengearig/ralph/internal/config"
 	"github.com/bengearig/ralph/internal/domain"
-	"github.com/bengearig/ralph/internal/errs"
 	"github.com/bengearig/ralph/internal/search"
 	"github.com/bengearig/ralph/internal/service"
 	"github.com/bengearig/ralph/internal/store/sqlite"
@@ -89,9 +88,6 @@ func TestPlan(t *testing.T) {
 			t.Errorf("prompt lacks %q:\n%s", want, plan.FirstPrompt)
 		}
 	}
-	if err := Run(context.Background(), plan); !errors.Is(err, errs.ErrNotImplemented) {
-		t.Errorf("Run = %v", err)
-	}
 }
 
 func TestPlanCustomPromptTemplate(t *testing.T) {
@@ -128,7 +124,7 @@ func TestNothingToLoop(t *testing.T) {
 	if len(plan.Tasks) != 0 || plan.FirstPrompt != "" {
 		t.Errorf("plan = %+v", plan)
 	}
-	if err := Run(ctx, plan); !errors.Is(err, ErrNothingToLoop) {
+	if _, err := (Runner{Service: p.Service, Config: p.Config, Root: p.Root}).Run(ctx, plan); !errors.Is(err, ErrNothingToLoop) {
 		t.Errorf("Run = %v", err)
 	}
 }

@@ -102,6 +102,7 @@ type ClaudeCodeConfig struct {
 	Binary         string   `koanf:"binary"`
 	Model          string   `koanf:"model"`
 	PermissionMode string   `koanf:"permission_mode"`
+	MaxBudgetUSD   float64  `koanf:"max_budget_usd"`
 	ExtraArgs      []string `koanf:"extra_args"`
 }
 
@@ -122,6 +123,7 @@ type LoopConfig struct {
 	StallThreshold int    `koanf:"stall_threshold"`
 	BranchTemplate string `koanf:"branch_template"`
 	CommitPerTask  bool   `koanf:"commit_per_task"`
+	CommitTemplate string `koanf:"commit_template"`
 	PromptTemplate string `koanf:"prompt_template"`
 }
 
@@ -249,6 +251,9 @@ func (c *Config) Validate() error {
 	if strings.TrimSpace(c.Harness.ClaudeCode.Binary) == "" {
 		bad("harness.claude_code.binary", "must not be empty")
 	}
+	if c.Harness.ClaudeCode.MaxBudgetUSD < 0 {
+		bad("harness.claude_code.max_budget_usd", "must not be negative")
+	}
 	for _, step := range Steps() {
 		sc, _ := c.Steps.Step(step)
 		if sc.Harness != "" {
@@ -266,6 +271,12 @@ func (c *Config) Validate() error {
 		bad("loop.branch_template", "must not be empty")
 	} else if _, err := template.New("branch").Option("missingkey=error").Parse(c.Loop.BranchTemplate); err != nil {
 		bad("loop.branch_template", "%v", err)
+	}
+
+	if strings.TrimSpace(c.Loop.CommitTemplate) == "" {
+		bad("loop.commit_template", "must not be empty")
+	} else if _, err := template.New("commit").Option("missingkey=error").Parse(c.Loop.CommitTemplate); err != nil {
+		bad("loop.commit_template", "%v", err)
 	}
 
 	oneOf("pr.provider", c.PR.Provider, knownPRProviders)

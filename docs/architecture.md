@@ -10,6 +10,7 @@ flowchart TD
     MCP["mcpserver<br/>(MCP tools over stdio)"] --> SVC
     LOOP["loop<br/>(plan / run)"] --> SVC
     LOOP --> H
+    LOOP --> GIT["git"]
     CLI --> LOOP
     CLI --> PR["pr<br/>(provider registry)"]
     CLI --> H["harness<br/>(harness registry)"]
@@ -40,8 +41,9 @@ flowchart TD
 | `internal/search` | Markdown-aware chunking, incremental (re)embedding, backfill, and ranking with keyword fallback. |
 | `internal/service` | Use cases shared by the CLI and MCP: validation, slug allocation, status transitions, the Stall Statute, indexing on write, and JSON views. |
 | `internal/mcpserver` | MCP tools as thin adapters over `service`, built with the official Go SDK. |
-| `internal/harness` | The harness interface, installer interface, and registry. `harness/claudecode` builds `claude` invocations and installs the Claude Code wiring. |
-| `internal/loop` | Builds a loop plan for a milestone (branch, ordered tasks, command, prompt). Execution is stubbed. |
+| `internal/harness` | The harness interface, installer interface, and registry. `harness/claudecode` runs headless `claude` sessions, parsing their stream-json output, and installs the Claude Code wiring. |
+| `internal/loop` | Plans a milestone's loop (branch, ordered tasks, command, prompt) and runs it: project lock, branch preparation, one harness session per task, commits, stashing unfinished work, and stop conditions. |
+| `internal/git` | The git commands the loop needs, run through the `git` CLI, always excluding `.ralph/`. |
 | `internal/pr` | The pull-request provider interface, registry, and milestone request builder. `pr/bitbucketcloud` validates its configuration; creation is stubbed. |
 | `internal/errs` | Sentinel errors shared across packages. |
 | `internal/version` | Build version, from `-ldflags` or the Go toolchain's VCS stamp. |

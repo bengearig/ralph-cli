@@ -3,6 +3,13 @@ package errs
 
 import "errors"
 
-// ErrNotImplemented marks a capability whose interface exists but whose
-// behavior has not been built yet. The CLI maps it to a distinct exit code.
-var ErrNotImplemented = errors.New("not implemented")
+var (
+	// ErrNotImplemented marks a capability whose interface exists but whose
+	// behavior has not been built yet. The CLI maps it to a distinct exit code.
+	ErrNotImplemented = errors.New("not implemented")
+
+	// ErrNeedsHuman means work stopped because the remaining tasks need a
+	// person: they are blocked, need re-articulation, or the iteration budget
+	// ran out. The CLI maps it to a distinct exit code.
+	ErrNeedsHuman = errors.New("needs a human")
+)

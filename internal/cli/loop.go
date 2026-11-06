@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/bengearig/ralph/internal/config"
 	"github.com/bengearig/ralph/internal/domain"
+	"github.com/bengearig/ralph/internal/harness"
 	"github.com/bengearig/ralph/internal/loop"
 )
 
@@ -15,11 +18,15 @@ func (a *app) newLoopCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "loop",
 		Short: "Run the RALPH loop over a milestone's TODO tasks",
-		Long: `Runs one fresh, headless harness session per task until the milestone's tasks
-are done, a task stalls, or loop.max_iterations is reached. Work happens on the
-milestone's branch (loop.branch_template).
+		Long: `Runs one fresh, headless harness session per task on the milestone's branch
+(loop.branch_template), committing each task that reaches DONE. BLOCKED and
+PROPOSED tasks are skipped. The loop stops when nothing loopable remains or
+loop.max_iterations is reached.
 
-Execution is not implemented yet; --dry-run shows exactly what would run.`,
+Exit codes: 0 when the milestone is done, 3 when tasks need a person
+(BLOCKED, PROPOSED, or the iteration limit), 1 on errors. An interrupted run
+leaves its task IN_PROGRESS; rerun to resume it. Progress goes to stderr and
+full transcripts to .ralph/runs/.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mID, err := parseIDArg(domain.KindMilestone, milestone)
@@ -42,16 +49,37 @@ Execution is not implemented yet; --dry-run shows exactly what would run.`,
 			if err != nil {
 				return err
 			}
-			if !dryRun {
-				for _, w := range plan.Warnings {
-					a.warn(w)
+			if dryRun {
+				if a.jsonOut {
+					return a.writeJSON(plan)
 				}
-				return loop.Run(cmd.Context(), plan)
+				return a.printPlan(plan, showPrompt)
 			}
+			for _, w := range plan.Warnings {
+				a.warn(w)
+			}
+			h, res, err := harness.ForStep(l.Config, config.StepLoop)
+			if err != nil {
+				return err
+			}
+			if res.Harness == config.HarnessClaudeCode && l.Config.Harness.ClaudeCode.PermissionMode == "bypassPermissions" {
+				a.warn("harness.claude_code.permission_mode is bypassPermissions: the agent can run anything unprompted; use only in a sandbox")
+			}
+			out, runErr := loop.Runner{Service: svc, Config: l.Config, Root: p.Root, Harness: h, Out: a.streams.Err}.Run(cmd.Context(), plan)
 			if a.jsonOut {
-				return a.writeJSON(plan)
+				if err := a.writeJSON(out); err != nil {
+					return errors.Join(runErr, err)
+				}
+				return runErr
 			}
-			return a.printPlan(plan, showPrompt)
+			if out.Iterations > 0 {
+				if err := a.printf("%s: %s after %d iteration(s); %d done, %d commit(s), %d blocked, %d proposed, %s\n",
+					out.Milestone, out.StopReason, out.Iterations, len(out.Done), len(out.Commits),
+					len(out.Blocked), len(out.Proposed), loop.FormatCost(out.CostUSD)); err != nil {
+					return errors.Join(runErr, err)
+				}
+			}
+			return runErr
 		},
 	}
 	cmd.Flags().StringVar(&milestone, "milestone", "", "milestone ID, e.g. M-1 (required)")

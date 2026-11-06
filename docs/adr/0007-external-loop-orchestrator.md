@@ -1,6 +1,6 @@
 # 7. The loop is an external orchestrator with fresh context per iteration
 
-- Status: Accepted
+- Status: Accepted; execution implemented per [13. Loop execution policy](0013-loop-execution-policy.md)
 - Date: 2026-11-06
 
 ## Context

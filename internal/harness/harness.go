@@ -5,12 +5,19 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/bengearig/ralph/internal/config"
 )
+
+// ErrToolsUnavailable means the session could not reach ralph's MCP server,
+// so the agent could neither read its task nor report a status.
+var ErrToolsUnavailable = errors.New("ralph tools unavailable in the harness session")
 
 // Request is one headless harness invocation.
 type Request struct {
@@ -18,12 +25,44 @@ type Request struct {
 	Model   string
 	Prompt  string
 	WorkDir string
+	// Transcript receives the harness's raw output; nil discards it.
+	Transcript io.Writer
+	// OnEvent receives progress as it happens; nil ignores it.
+	OnEvent func(Event)
 }
 
-// Result is the outcome of a harness invocation.
+// EventKind classifies progress events.
+type EventKind int
+
+const (
+	// EventText is something the agent said.
+	EventText EventKind = iota
+	// EventTool is a tool the agent called.
+	EventTool
+	// EventInfo is a note from the harness adapter itself.
+	EventInfo
+)
+
+// Event is one line of progress.
+type Event struct {
+	Kind EventKind
+	Text string
+}
+
+// Result is the outcome of a session that ran.
 type Result struct {
-	ExitCode int
-	Output   string
+	ExitCode  int
+	SessionID string
+	// Completed reports whether the harness emitted a final result.
+	Completed bool
+	IsError   bool
+	// Subtype is the harness's result classification, such as "success" or
+	// "error_max_budget_usd".
+	Subtype  string
+	Summary  string
+	CostUSD  float64
+	Turns    int
+	Duration time.Duration
 }
 
 // Harness runs an agent non-interactively.
@@ -32,6 +71,9 @@ type Harness interface {
 	// Command returns the argv that Run would execute. The prompt is
 	// delivered on stdin, so it is not part of the argv.
 	Command(req Request) []string
+	// Run executes one session. It returns an error only when the session
+	// could not do any work: it failed to start, the context was cancelled,
+	// or ErrToolsUnavailable. Failures inside a session are in the Result.
 	Run(ctx context.Context, req Request) (Result, error)
 }
 

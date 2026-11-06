@@ -74,11 +74,11 @@ unless --force is given.`,
 			}
 			changes = append(changes, c)
 
-			if c, ok, err := ensureGitignore(root, dbPath); err != nil {
+			c, err = ensureGitignore(root, dbPath)
+			if err != nil {
 				return err
-			} else if ok {
-				changes = append(changes, c)
 			}
+			changes = append(changes, c)
 
 			if !noHarness {
 				h, err := harness.New(cfg.Harness.Default, cfg)
@@ -184,27 +184,37 @@ func writeIfAbsent(root, p string, content []byte, force bool) (harness.Change, 
 	return c, os.WriteFile(p, content, 0o644)
 }
 
-// ensureGitignore ignores the database and its WAL files. Databases stored
-// outside the project need no entry.
-func ensureGitignore(root, dbPath string) (harness.Change, bool, error) {
-	r, err := filepath.Rel(root, dbPath)
-	if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
-		return harness.Change{}, false, nil
+// ensureGitignore ignores ralph's local files: the database and its WAL
+// files (when stored inside the project), loop run logs, and the loop lock.
+func ensureGitignore(root, dbPath string) (harness.Change, error) {
+	patterns := []string{
+		"/" + project.DirName + "/runs/",
+		"/" + project.DirName + "/loop.lock",
 	}
-	pattern := "/" + filepath.ToSlash(r) + "*"
+	if r, err := filepath.Rel(root, dbPath); err == nil && r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+		patterns = append([]string{"/" + filepath.ToSlash(r) + "*"}, patterns...)
+	}
 	p := filepath.Join(root, ".gitignore")
 	c := harness.Change{Path: ".gitignore"}
 
 	data, err := os.ReadFile(p)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return c, true, err
+		return c, err
 	}
+	present := map[string]bool{}
 	sc := bufio.NewScanner(strings.NewReader(string(data)))
 	for sc.Scan() {
-		if strings.TrimSpace(sc.Text()) == pattern {
-			c.Action = harness.Unchanged
-			return c, true, nil
+		present[strings.TrimSpace(sc.Text())] = true
+	}
+	var missing []string
+	for _, pat := range patterns {
+		if !present[pat] {
+			missing = append(missing, pat)
 		}
+	}
+	if len(missing) == 0 {
+		c.Action = harness.Unchanged
+		return c, nil
 	}
 	c.Action = harness.Updated
 	if data == nil {
@@ -216,10 +226,10 @@ func ensureGitignore(root, dbPath string) (harness.Change, bool, error) {
 	}
 	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return c, true, err
+		return c, err
 	}
-	_, werr := fmt.Fprintf(f, "%s# ralph database (local to each clone)\n%s\n", prefix, pattern)
-	return c, true, errors.Join(werr, f.Close())
+	_, werr := fmt.Fprintf(f, "%s# ralph local files (database, loop logs, loop lock)\n%s\n", prefix, strings.Join(missing, "\n"))
+	return c, errors.Join(werr, f.Close())
 }
 
 // initHints checks the embedding provider so problems surface at setup time

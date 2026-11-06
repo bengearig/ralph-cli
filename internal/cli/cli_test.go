@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/bengearig/ralph/internal/domain"
+	"github.com/bengearig/ralph/internal/errs"
 	"github.com/bengearig/ralph/internal/project"
 )
 
@@ -179,8 +181,10 @@ func TestInit(t *testing.T) {
 		}
 	}
 	gi, _ := os.ReadFile(filepath.Join(h.dir, ".gitignore"))
-	if !strings.Contains(string(gi), "/.ralph/ralph.db*") {
-		t.Errorf(".gitignore = %q", gi)
+	for _, pat := range []string{"/.ralph/ralph.db*\n", "/.ralph/runs/\n", "/.ralph/loop.lock\n"} {
+		if !strings.Contains(string(gi), pat) {
+			t.Errorf(".gitignore lacks %q: %q", pat, gi)
+		}
 	}
 
 	h.json(&res, "init")
@@ -193,5 +197,92 @@ func TestInit(t *testing.T) {
 
 	if _, _, err := h.run("", "init", "--no-harness", "--force"); err != nil {
 		t.Errorf("forced rerun: %v", err)
+	}
+}
+
+func TestInitAddsMissingGitignorePatterns(t *testing.T) {
+	h := newTestEnv(t, false)
+	gi := filepath.Join(h.dir, ".gitignore")
+	if err := os.WriteFile(gi, []byte("bin/\n# ralph database (local to each clone)\n/.ralph/ralph.db*"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.ok("init", "--no-harness")
+	data, _ := os.ReadFile(gi)
+	got := string(data)
+	if strings.Count(got, "/.ralph/ralph.db*") != 1 || !strings.Contains(got, "ralph.db*\n# ralph local files") ||
+		!strings.HasSuffix(got, "/.ralph/runs/\n/.ralph/loop.lock\n") {
+		t.Errorf(".gitignore = %q", got)
+	}
+}
+
+func TestLoopCommand(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	h := newTestEnv(t, false)
+	for k, v := range map[string]string{
+		"GIT_CONFIG_NOSYSTEM": "1",
+		"GIT_AUTHOR_NAME":     "Ralph Test", "GIT_AUTHOR_EMAIL": "ralph@example.com",
+		"GIT_COMMITTER_NAME": "Ralph Test", "GIT_COMMITTER_EMAIL": "ralph@example.com",
+	} {
+		t.Setenv(k, v)
+	}
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = h.dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "--quiet", "--initial-branch=main")
+	h.ok("init", "--no-harness")
+	run("add", ".")
+	run("commit", "--quiet", "-m", "initial")
+
+	// A claude stand-in that connects to ralph but never sets a status, so
+	// every session counts as a failed iteration.
+	bin := filepath.Join(t.TempDir(), "claude")
+	script := "#!/bin/sh\ncat >/dev/null\n" +
+		"printf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"mcp_servers\":[{\"name\":\"ralph\",\"status\":\"connected\"}]}'\n" +
+		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"looked around\",\"num_turns\":2}'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RALPH_HARNESS__CLAUDE_CODE__BINARY", bin)
+	t.Setenv("RALPH_LOOP__STALL_THRESHOLD", "2")
+
+	h.ok("initiative", "create", "--title", "SSO")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Login")
+	h.ok("task", "create", "--milestone", "M-1", "--title", "Route", "--description", "d", "--criteria", "c")
+	h.ok("task", "status", "T-1", "TODO")
+
+	out, errOut, err := h.run("", "loop", "--milestone", "M-1")
+	if !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("err = %v\nstderr: %s", err, errOut)
+	}
+	if !strings.Contains(out, "M-1: needs_human after 2 iteration(s)") {
+		t.Errorf("stdout = %q", out)
+	}
+	for _, want := range []string{"creating ralph/login from main", "▶ [1/50] T-1 Route", "✗ T-1 BLOCKED: Stall Statute"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, errOut)
+		}
+	}
+	var task struct {
+		Status        string
+		BlockedReason string `json:"blocked_reason"`
+	}
+	h.json(&task, "task", "show", "T-1")
+	if task.Status != "BLOCKED" || !strings.Contains(task.BlockedReason, "looked around") {
+		t.Errorf("task = %+v", task)
+	}
+	logs, _ := filepath.Glob(filepath.Join(h.dir, ".ralph", "runs", "M-1", "*.jsonl"))
+	if len(logs) != 2 {
+		t.Errorf("transcripts = %v", logs)
+	}
+	status := exec.Command("git", "status", "--porcelain")
+	status.Dir = h.dir
+	if st, _ := status.Output(); len(st) != 0 {
+		t.Errorf("ralph's own files should be git-ignored: %q", st)
 	}
 }

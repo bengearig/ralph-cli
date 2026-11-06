@@ -1,0 +1,485 @@
+package loop
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/bengearig/ralph/internal/config"
+	"github.com/bengearig/ralph/internal/domain"
+	"github.com/bengearig/ralph/internal/errs"
+	"github.com/bengearig/ralph/internal/harness"
+	"github.com/bengearig/ralph/internal/project"
+	"github.com/bengearig/ralph/internal/search"
+	"github.com/bengearig/ralph/internal/service"
+	"github.com/bengearig/ralph/internal/store/sqlite"
+
+	_ "github.com/bengearig/ralph/internal/harness/claudecode"
+)
+
+// fakeHarness runs a scripted function per session instead of an agent.
+type fakeHarness struct {
+	calls  int
+	script func(call int, task int64, req harness.Request) (harness.Result, error)
+}
+
+var taskInPrompt = regexp.MustCompile(`Your task: T-(\d+)`)
+
+func (h *fakeHarness) Name() string                     { return "fake" }
+func (h *fakeHarness) Command(harness.Request) []string { return []string{"fake"} }
+func (h *fakeHarness) Run(ctx context.Context, req harness.Request) (harness.Result, error) {
+	h.calls++
+	m := taskInPrompt.FindStringSubmatch(req.Prompt)
+	if m == nil {
+		return harness.Result{}, fmt.Errorf("prompt names no task")
+	}
+	var id int64
+	fmt.Sscan(m[1], &id)
+	fmt.Fprintln(req.Transcript, `{"type":"result","subtype":"success"}`)
+	req.OnEvent(harness.Event{Kind: harness.EventTool, Text: "Edit work.txt"})
+	return h.script(h.calls, id, req)
+}
+
+type runEnv struct {
+	root string
+	svc  *service.Service
+	cfg  *config.Config
+	mID  int64
+	out  bytes.Buffer
+}
+
+func gitCmd(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// newRunEnv creates a git repository with a ralph project, one milestone,
+// and a TODO task per title.
+func newRunEnv(t *testing.T, titles ...string) *runEnv {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	for _, k := range []string{"GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"} {
+		t.Setenv(k, "Ralph Test")
+	}
+	for _, k := range []string{"GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"} {
+		t.Setenv(k, "ralph@example.com")
+	}
+
+	root := t.TempDir()
+	gitCmd(t, root, "init", "--quiet", "--initial-branch=main")
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, root, "add", ".")
+	gitCmd(t, root, "commit", "--quiet", "-m", "initial")
+
+	ctx := context.Background()
+	st, err := sqlite.Open(ctx, filepath.Join(root, project.DirName, "ralph.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	cfg, err := config.Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Loop.StallThreshold = 2
+	cfg.Loop.MaxIterations = 10
+	svc := service.New(st, &search.Index{Store: st, Chunker: search.Chunker{MaxChars: 500}}, service.Options{StallThreshold: cfg.Loop.StallThreshold})
+
+	i, _ := svc.CreateInitiative(ctx, service.InitiativeInput{Title: "SSO"})
+	iID, _ := domain.ParseID(domain.KindInitiative, i.ID)
+	m, _ := svc.CreateMilestone(ctx, service.MilestoneInput{InitiativeID: iID, Title: "OIDC login"})
+	mID, _ := domain.ParseID(domain.KindMilestone, m.ID)
+	for _, title := range titles {
+		tv, err := svc.CreateTask(ctx, service.TaskInput{MilestoneID: mID, Title: title, Description: "do " + title, AcceptanceCriteria: title + " works"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := domain.ParseID(domain.KindTask, tv.ID)
+		if _, err := svc.SetTaskStatus(ctx, id, domain.StatusTodo, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return &runEnv{root: root, svc: svc, cfg: cfg, mID: mID}
+}
+
+func (e *runEnv) run(t *testing.T, ctx context.Context, h harness.Harness) (Outcome, error) {
+	t.Helper()
+	plan, err := Planner{Service: e.svc, Config: e.cfg, Root: e.root}.Plan(ctx, e.mID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Runner{Service: e.svc, Config: e.cfg, Root: e.root, Harness: h, Out: &e.out}.Run(ctx, plan)
+}
+
+func (e *runEnv) status(t *testing.T, id int64) service.TaskView {
+	t.Helper()
+	v, err := e.svc.GetTask(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+// complete simulates an agent finishing task id: it edits a file and marks
+// the task DONE through the service, as the MCP tool would.
+func (e *runEnv) complete(id int64) (harness.Result, error) {
+	name := fmt.Sprintf("task-%d.txt", id)
+	if err := os.WriteFile(filepath.Join(e.root, name), []byte("done\n"), 0o644); err != nil {
+		return harness.Result{}, err
+	}
+	_, err := e.svc.SetTaskStatus(context.Background(), id, domain.StatusDone, "criteria verified")
+	return harness.Result{Completed: true, Subtype: "success", Turns: 3, CostUSD: 0.5}, err
+}
+
+func TestRunCompletesMilestone(t *testing.T) {
+	e := newRunEnv(t, "first", "second")
+	h := &fakeHarness{script: func(_ int, id int64, req harness.Request) (harness.Result, error) {
+		if e.status(t, id).Status != "IN_PROGRESS" {
+			t.Errorf("T-%d should be IN_PROGRESS during its session", id)
+		}
+		return e.complete(id)
+	}}
+	out, err := e.run(t, context.Background(), h)
+	if err != nil {
+		t.Fatalf("Run: %v\n%s", err, e.out.String())
+	}
+	if out.StopReason != StopCompleted || out.Iterations != 2 || len(out.Done) != 2 || len(out.Commits) != 2 || out.CostUSD != 1 {
+		t.Errorf("outcome = %+v", out)
+	}
+	if b := gitCmd(t, e.root, "branch", "--show-current"); b != "ralph/oidc-login" {
+		t.Errorf("branch = %q", b)
+	}
+	if log := gitCmd(t, e.root, "log", "--format=%s", "main..HEAD"); log != "T-2: second\nT-1: first" {
+		t.Errorf("commits = %q", log)
+	}
+	if files := gitCmd(t, e.root, "show", "--name-only", "--format=", "HEAD"); files != "task-2.txt" {
+		t.Errorf("last commit files = %q", files)
+	}
+	if st := gitCmd(t, e.root, "status", "--porcelain", "--", ".", ":(exclude).ralph"); st != "" {
+		t.Errorf("tree not clean outside .ralph: %q", st)
+	}
+	if tracked := gitCmd(t, e.root, "ls-files", ".ralph"); tracked != "" {
+		t.Errorf(".ralph files were committed: %q", tracked)
+	}
+	logs, _ := filepath.Glob(filepath.Join(e.root, ".ralph", "runs", "M-1", "*"))
+	if len(logs) != 4 {
+		t.Errorf("run logs = %v", logs)
+	}
+	prompts, _ := filepath.Glob(filepath.Join(e.root, ".ralph", "runs", "M-1", "*-001-T-1.prompt.md"))
+	if len(prompts) != 1 {
+		t.Errorf("prompt log missing: %v", logs)
+	}
+	feed := e.out.String()
+	for _, want := range []string{"creating ralph/oidc-login from main", "▶ [1/10] T-1 first", "· Edit work.txt", "✓ T-1 DONE", "committed", "next: ralph pr create --milestone M-1"} {
+		if !strings.Contains(feed, want) {
+			t.Errorf("feed lacks %q:\n%s", want, feed)
+		}
+	}
+}
+
+func TestRunSkipsBlockedAndStopsForHuman(t *testing.T) {
+	e := newRunEnv(t, "flaky", "fine")
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) {
+		if id == 1 {
+			return harness.Result{Completed: true, IsError: true, Subtype: "error_max_turns", Summary: "ran out of turns"}, nil
+		}
+		return e.complete(id)
+	}}
+	out, err := e.run(t, context.Background(), h)
+	if !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("err = %v\n%s", err, e.out.String())
+	}
+	if h.calls != 3 {
+		t.Errorf("sessions = %d; want two failed attempts at T-1 then T-2", h.calls)
+	}
+	t1 := e.status(t, 1)
+	if t1.Status != "BLOCKED" || !strings.Contains(t1.BlockedReason, "Stall Statute") || !strings.Contains(t1.BlockedReason, "error_max_turns: ran out of turns") {
+		t.Errorf("T-1 = %+v", t1)
+	}
+	if e.status(t, 2).Status != "DONE" {
+		t.Error("T-2 should have been worked after T-1 was blocked")
+	}
+	if out.StopReason != StopNeedsHuman || len(out.Blocked) != 1 || out.Blocked[0].ID != "T-1" || len(out.Commits) != 1 {
+		t.Errorf("outcome = %+v", out)
+	}
+	if !strings.Contains(e.out.String(), "↺ T-1 not finished (failure 1 of 2)") || !strings.Contains(e.out.String(), "✗ T-1 BLOCKED") {
+		t.Errorf("feed:\n%s", e.out.String())
+	}
+}
+
+func TestRunAgentKickbacks(t *testing.T) {
+	e := newRunEnv(t, "unclear", "blocked")
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) {
+		to, reason := domain.StatusProposed, "acceptance criteria contradict the design"
+		if id == 2 {
+			to, reason = domain.StatusBlocked, "needs production credentials"
+		}
+		_, err := e.svc.SetTaskStatus(context.Background(), id, to, reason)
+		return harness.Result{Completed: true}, err
+	}}
+	out, err := e.run(t, context.Background(), h)
+	if !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(out.Proposed) != 1 || len(out.Blocked) != 1 || out.Blocked[0].Reason != "needs production credentials" || len(out.Commits) != 0 {
+		t.Errorf("outcome = %+v", out)
+	}
+}
+
+func TestRunIterationLimit(t *testing.T) {
+	e := newRunEnv(t, "a", "b", "c")
+	e.cfg.Loop.MaxIterations = 2
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+	out, err := e.run(t, context.Background(), h)
+	if !errors.Is(err, errs.ErrNeedsHuman) || !strings.Contains(err.Error(), "T-3 still loopable") {
+		t.Fatalf("err = %v", err)
+	}
+	if out.StopReason != StopIterationLimit || out.Iterations != 2 {
+		t.Errorf("outcome = %+v", out)
+	}
+	// Rerunning continues where it stopped.
+	out, err = e.run(t, context.Background(), h)
+	if err != nil || out.StopReason != StopCompleted || len(out.Done) != 1 {
+		t.Errorf("rerun = %+v, %v", out, err)
+	}
+}
+
+func TestRunDirtyTree(t *testing.T) {
+	e := newRunEnv(t, "a")
+	os.WriteFile(filepath.Join(e.root, "README.md"), []byte("local edit\n"), 0o644)
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+	_, err := e.run(t, context.Background(), h)
+	if err == nil || !strings.Contains(err.Error(), "uncommitted changes") || !strings.Contains(err.Error(), "README.md") {
+		t.Fatalf("err = %v", err)
+	}
+	if h.calls != 0 || e.status(t, 1).Status != "TODO" {
+		t.Error("nothing should run on a dirty tree that needs a branch switch")
+	}
+
+	gitCmd(t, e.root, "stash", "--quiet")
+	gitCmd(t, e.root, "switch", "--quiet", "-c", "ralph/oidc-login")
+	gitCmd(t, e.root, "stash", "pop", "--quiet")
+	out, err := e.run(t, context.Background(), h)
+	if err != nil || len(out.Commits) != 1 {
+		t.Fatalf("on the milestone branch a dirty tree is resumed work: %+v, %v", out, err)
+	}
+	if files := gitCmd(t, e.root, "show", "--name-only", "--format=", "HEAD"); !strings.Contains(files, "README.md") {
+		t.Errorf("leftover work should be committed with the task: %q", files)
+	}
+}
+
+func TestRunResumesInProgressTask(t *testing.T) {
+	e := newRunEnv(t, "a")
+	e.svc.SetTaskStatus(context.Background(), 1, domain.StatusInProgress, "")
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+	if _, err := e.run(t, context.Background(), h); err != nil {
+		t.Fatal(err)
+	}
+	if notes := e.status(t, 1).Notes; len(notes) != 1 {
+		t.Errorf("resumed task should not be re-transitioned; notes = %+v", notes)
+	}
+}
+
+func TestRunInterruptedLeavesTaskInProgress(t *testing.T) {
+	e := newRunEnv(t, "a")
+	ctx, cancel := context.WithCancel(context.Background())
+	h := &fakeHarness{script: func(int, int64, harness.Request) (harness.Result, error) {
+		cancel()
+		return harness.Result{}, ctx.Err()
+	}}
+	out, err := e.run(t, ctx, h)
+	if !errors.Is(err, context.Canceled) || out.StopReason != StopInterrupted {
+		t.Fatalf("out = %+v, err = %v", out, err)
+	}
+	if v := e.status(t, 1); v.Status != "IN_PROGRESS" || v.FailureCount != 0 {
+		t.Errorf("task = %+v", v)
+	}
+	if !strings.Contains(e.out.String(), "T-1 left IN_PROGRESS, rerun to resume") {
+		t.Errorf("feed:\n%s", e.out.String())
+	}
+}
+
+func TestRunToolsUnavailableCountsNoFailure(t *testing.T) {
+	e := newRunEnv(t, "a")
+	h := &fakeHarness{script: func(int, int64, harness.Request) (harness.Result, error) {
+		return harness.Result{}, fmt.Errorf("%w: not approved", harness.ErrToolsUnavailable)
+	}}
+	_, err := e.run(t, context.Background(), h)
+	if !errors.Is(err, harness.ErrToolsUnavailable) {
+		t.Fatalf("err = %v", err)
+	}
+	if v := e.status(t, 1); v.Status != "IN_PROGRESS" || v.FailureCount != 0 {
+		t.Errorf("task = %+v", v)
+	}
+}
+
+func TestRunLockContention(t *testing.T) {
+	e := newRunEnv(t, "a")
+	lock, err := acquireLock(filepath.Join(e.root, ".ralph", "loop.lock"), "milestone M-9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+	_, err = e.run(t, context.Background(), h)
+	if !errors.Is(err, ErrLoopRunning) || !strings.Contains(err.Error(), "milestone M-9") {
+		t.Fatalf("err = %v", err)
+	}
+	if err := lock.release(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.run(t, context.Background(), h); err != nil {
+		t.Errorf("after release: %v", err)
+	}
+}
+
+func TestRunWithoutCommits(t *testing.T) {
+	e := newRunEnv(t, "a")
+	e.cfg.Loop.CommitPerTask = false
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+	out, err := e.run(t, context.Background(), h)
+	if err != nil || len(out.Commits) != 0 {
+		t.Fatalf("out = %+v, err = %v", out, err)
+	}
+	if st := gitCmd(t, e.root, "status", "--porcelain"); !strings.Contains(st, "task-1.txt") {
+		t.Errorf("work should be left uncommitted: %q", st)
+	}
+}
+
+func TestRunCommitTemplateAndBaseFallback(t *testing.T) {
+	e := newRunEnv(t, "a")
+	e.cfg.Loop.CommitTemplate = "feat({{.Milestone.Slug}}): {{.Task.Title}} [{{.Task.ID}}]"
+	e.cfg.PR.BaseBranch = "develop"
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+	if _, err := e.run(t, context.Background(), h); err == nil || !strings.Contains(err.Error(), `base branch "develop" not found`) {
+		t.Fatalf("missing base: %v", err)
+	}
+	gitCmd(t, e.root, "branch", "develop")
+	if _, err := e.run(t, context.Background(), h); err != nil {
+		t.Fatal(err)
+	}
+	if msg := gitCmd(t, e.root, "log", "-1", "--format=%s"); msg != "feat(oidc-login): a [T-1]" {
+		t.Errorf("message = %q", msg)
+	}
+}
+
+func TestSessionReason(t *testing.T) {
+	cases := []struct {
+		res  harness.Result
+		want string
+	}{
+		{harness.Result{ExitCode: 1, Summary: "auth\nfailed"}, "session ended without a final result (exit code 1): auth failed"},
+		{harness.Result{Completed: true, IsError: true, Subtype: "error_max_budget_usd"}, "session ended with error_max_budget_usd"},
+		{harness.Result{Completed: true, Summary: "I think it works"}, "session finished without setting a task status: I think it works"},
+	}
+	for _, c := range cases {
+		if got := sessionReason(c.res); got != c.want {
+			t.Errorf("sessionReason(%+v) = %q, want %q", c.res, got, c.want)
+		}
+	}
+	long := sessionReason(harness.Result{Completed: true, Summary: strings.Repeat("x", 1000)})
+	if n := len([]rune(long)); n > 400 {
+		t.Errorf("reason too long: %d runes", n)
+	}
+}
+
+func TestLockReleasedForNextHolder(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "loop.lock")
+	a, err := acquireLock(p, "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := acquireLock(p, "second"); !errors.Is(err, ErrLoopRunning) || !strings.Contains(err.Error(), "first") {
+		t.Errorf("contention = %v", err)
+	}
+	a.release()
+	b, err := acquireLock(p, "second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.release()
+}
+
+func TestRunStashesUnfinishedWorkBeforeNextTask(t *testing.T) {
+	e := newRunEnv(t, "blocked", "fine")
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) {
+		if id == 1 {
+			os.WriteFile(filepath.Join(e.root, "partial.txt"), []byte("half done\n"), 0o644)
+			_, err := e.svc.SetTaskStatus(context.Background(), id, domain.StatusBlocked, "needs a decision")
+			return harness.Result{Completed: true}, err
+		}
+		if _, err := os.Stat(filepath.Join(e.root, "partial.txt")); err == nil {
+			t.Error("T-1's partial work was still in the tree when T-2 started")
+		}
+		return e.complete(id)
+	}}
+	out, err := e.run(t, context.Background(), h)
+	if !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(out.Stashes) != 1 || out.Stashes[0] != "ralph: T-1 BLOCKED, unfinished work" {
+		t.Errorf("stashes = %v", out.Stashes)
+	}
+	if files := gitCmd(t, e.root, "show", "--name-only", "--format=", "HEAD"); files != "task-2.txt" {
+		t.Errorf("T-2's commit should contain only its own work: %q", files)
+	}
+	if list := gitCmd(t, e.root, "stash", "list"); !strings.Contains(list, "ralph: T-1 BLOCKED, unfinished work") {
+		t.Errorf("stash list = %q", list)
+	}
+}
+
+func TestRunKeepsWorkForRetryOfSameTask(t *testing.T) {
+	e := newRunEnv(t, "a")
+	h := &fakeHarness{script: func(call int, id int64, _ harness.Request) (harness.Result, error) {
+		if call == 1 {
+			os.WriteFile(filepath.Join(e.root, "progress.txt"), []byte("step 1\n"), 0o644)
+			return harness.Result{Completed: true}, nil
+		}
+		if _, err := os.Stat(filepath.Join(e.root, "progress.txt")); err != nil {
+			t.Error("a retry of the same task should see its earlier work")
+		}
+		return e.complete(id)
+	}}
+	out, err := e.run(t, context.Background(), h)
+	if err != nil || len(out.Stashes) != 0 {
+		t.Fatalf("out = %+v, err = %v", out, err)
+	}
+	if files := gitCmd(t, e.root, "show", "--name-only", "--format=", "HEAD"); !strings.Contains(files, "progress.txt") {
+		t.Errorf("commit files = %q", files)
+	}
+}
+
+func TestRunReportsLeftoverAtEnd(t *testing.T) {
+	e := newRunEnv(t, "a")
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) {
+		os.WriteFile(filepath.Join(e.root, "partial.txt"), []byte("x\n"), 0o644)
+		_, err := e.svc.SetTaskStatus(context.Background(), id, domain.StatusBlocked, "stuck")
+		return harness.Result{Completed: true}, err
+	}}
+	if _, err := e.run(t, context.Background(), h); !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(e.out.String(), "uncommitted changes from T-1 (BLOCKED) are left in the working tree") {
+		t.Errorf("feed:\n%s", e.out.String())
+	}
+}

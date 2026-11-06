@@ -173,9 +173,9 @@ func TestInstallRejectsMalformedJSON(t *testing.T) {
 }
 
 func TestCommand(t *testing.T) {
-	h := New(config.ClaudeCodeConfig{Binary: "/usr/bin/claude", Model: "sonnet", PermissionMode: "acceptEdits", ExtraArgs: []string{"--max-turns", "40"}})
+	h := New(config.ClaudeCodeConfig{Binary: "/usr/bin/claude", Model: "sonnet", PermissionMode: "auto", MaxBudgetUSD: 1.25, ExtraArgs: []string{"--max-turns", "40"}})
 	got := strings.Join(h.Command(harness.Request{}), " ")
-	want := "/usr/bin/claude --print --output-format stream-json --verbose --model sonnet --permission-mode acceptEdits --max-turns 40"
+	want := "/usr/bin/claude --print --output-format stream-json --verbose --permission-prompts none --model sonnet --permission-mode auto --max-budget-usd 1.25 --max-turns 40"
 	if got != want {
 		t.Errorf("argv = %q", got)
 	}
@@ -184,7 +184,7 @@ func TestCommand(t *testing.T) {
 		t.Errorf("request model should win: %q", got)
 	}
 	bare := strings.Join(New(config.ClaudeCodeConfig{Binary: "claude"}).Command(harness.Request{}), " ")
-	if bare != "claude --print --output-format stream-json --verbose" {
+	if bare != "claude --print --output-format stream-json --verbose --permission-prompts none" {
 		t.Errorf("bare argv = %q", bare)
 	}
 }

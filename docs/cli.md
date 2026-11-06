@@ -12,7 +12,8 @@ Every command accepts these global flags:
 IDs can be given in display form (`T-12`, case-insensitive) or as bare numbers (`12`). Commands that take text
 accept `--<field>-file <path>` or `--file <path>`; `-` reads stdin.
 
-Exit codes: `0` success, `1` error, `2` the requested capability is not implemented yet.
+Exit codes: `0` success, `1` error, `2` the requested capability is not implemented yet, `3` the loop stopped
+because remaining tasks need a person.
 
 `ralph <command> --help` is the authoritative reference; this page gives an overview.
 
@@ -61,7 +62,7 @@ Exit codes: `0` success, `1` error, `2` the requested capability is not implemen
 | Command | Purpose |
 |---|---|
 | `ralph loop --milestone <id> --dry-run [--show-prompt]` | Print the loop plan: branch, harness and model, exact command, ordered tasks, policy, and optionally the first prompt. |
-| `ralph loop --milestone <id>` | Run the loop. *Not implemented yet (exit code 2).* |
+| `ralph loop --milestone <id>` | Run the loop: one fresh harness session per task on the milestone's branch, committing each `DONE` task. The progress feed goes to stderr, transcripts to `.ralph/runs/`. See [the loop](loop.md). |
 | `ralph pr create --milestone <id> --dry-run` | Print the pull request that would be opened and any provider configuration problems. |
 | `ralph pr create --milestone <id>` | Open the pull request. *Not implemented yet (exit code 2).* |
 

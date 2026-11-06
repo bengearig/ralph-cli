@@ -15,6 +15,7 @@ import (
 const (
 	exitError          = 1
 	exitNotImplemented = 2
+	exitNeedsHuman     = 3
 )
 
 func main() {
@@ -25,8 +26,11 @@ func main() {
 		return
 	}
 	fmt.Fprintln(os.Stderr, "ralph:", err)
-	if errors.Is(err, errs.ErrNotImplemented) {
+	switch {
+	case errors.Is(err, errs.ErrNotImplemented):
 		os.Exit(exitNotImplemented)
+	case errors.Is(err, errs.ErrNeedsHuman):
+		os.Exit(exitNeedsHuman)
 	}
 	os.Exit(exitError)
 }

@@ -1,6 +1,5 @@
-// Package loop plans and (eventually) runs the RALPH loop: one fresh harness
-// invocation per task until a milestone's tasks are done, a task stalls, or
-// the iteration budget is spent.
+// Package loop plans and runs the RALPH loop: one fresh harness session per
+// task until nothing loopable remains or the iteration budget is spent.
 package loop
 
 import (
@@ -16,7 +15,6 @@ import (
 
 	"github.com/bengearig/ralph/internal/config"
 	"github.com/bengearig/ralph/internal/domain"
-	"github.com/bengearig/ralph/internal/errs"
 	"github.com/bengearig/ralph/internal/harness"
 	"github.com/bengearig/ralph/internal/service"
 )
@@ -141,7 +139,7 @@ func (p Planner) Plan(ctx context.Context, milestoneID int64) (Plan, error) {
 		if err != nil {
 			return Plan{}, err
 		}
-		tmpl, err := p.promptTemplate()
+		tmpl, err := promptTemplate(p.Config, p.Root)
 		if err != nil {
 			return Plan{}, err
 		}
@@ -163,13 +161,13 @@ func (p Planner) Plan(ctx context.Context, milestoneID int64) (Plan, error) {
 	return plan, nil
 }
 
-func (p Planner) promptTemplate() (string, error) {
-	path := p.Config.Loop.PromptTemplate
+func promptTemplate(cfg *config.Config, root string) (string, error) {
+	path := cfg.Loop.PromptTemplate
 	if path == "" {
 		return defaultPrompt, nil
 	}
 	if !filepath.IsAbs(path) {
-		path = filepath.Join(p.Root, path)
+		path = filepath.Join(root, path)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -236,12 +234,4 @@ func validateBranch(name string) error {
 		}
 	}
 	return nil
-}
-
-// Run executes a plan. Execution is not built yet; see docs/loop.md.
-func Run(_ context.Context, plan Plan) error {
-	if len(plan.Tasks) == 0 {
-		return fmt.Errorf("%w: %s has no IN_PROGRESS or TODO tasks", ErrNothingToLoop, plan.Milestone.ID)
-	}
-	return fmt.Errorf("loop execution: %w (use --dry-run to inspect the plan)", errs.ErrNotImplemented)
 }

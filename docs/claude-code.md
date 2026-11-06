@@ -4,7 +4,7 @@ Claude Code is the first supported harness (`harness.default: claude_code`). It 
 
 - **Interactively**, for Receive and Articulate, in your own `claude` session, through the MCP tools and slash
   commands that `ralph init` installs.
-- **Headlessly**, for the Loop, as one `claude --print` session per task, started by `ralph loop`. *Planned.*
+- **Headlessly**, for the Loop, as one `claude --print` session per task, started by `ralph loop`.
 
 ## What `ralph init` installs
 
@@ -16,6 +16,7 @@ Claude Code is the first supported harness (`harness.default: claude_code`). It 
 | `CLAUDE.md` | A RALPH section between `<!-- ralph:begin -->` and `<!-- ralph:end -->`. Text outside the markers is left alone; the section is replaced on rerun. | Yes |
 | `.ralph/config.yaml` | Project config template, every setting commented out. | Yes |
 | `.ralph/ralph.db` | The store. | No, it is git-ignored. |
+| `.gitignore` | Ignores the database, `.ralph/runs/` (loop transcripts), and `.ralph/loop.lock`. | Yes |
 
 Rerunning `ralph init` is safe:
 
@@ -33,6 +34,9 @@ If `ralph` is not on your `PATH`, or you want to pin a build, pass `--ralph-comm
 Claude Code asks you to approve project-scoped MCP servers from `.mcp.json` the first time you start `claude` in the
 repository. Approve `ralph`. You can check the server with `claude mcp list` or `/mcp` inside a session.
 
+Do this before the first `ralph loop`: headless sessions cannot show the approval prompt, so the loop stops with
+instructions if the server is not approved.
+
 ## Workflow
 
 1. **Receive.** Run `/ralph:receive <paste or dictate the instructions>`. The agent searches for related work,
@@ -41,7 +45,8 @@ repository. Approve `ralph`. You can check the server with `claude mcp list` or 
 2. **Articulate.** Run `/ralph:articulate I-1`. Together you write architecture and design documents, split the work
    into milestones, and propose tasks. As each task becomes fully specified, the agent promotes it to `TODO`.
 3. **Check.** Run `/ralph:status`, or `ralph status` in a terminal.
-4. **Loop.** Run `ralph loop --milestone M-1`. Today only `--dry-run` works; see [the loop](loop.md).
+4. **Loop.** Run `ralph loop --milestone M-1` in a terminal. Preview it first with `--dry-run --show-prompt`; see
+   [the loop](loop.md).
 5. **Pull request.** Run `ralph pr create --milestone M-1`. Planned.
 
 ## Headless invocation
@@ -49,10 +54,15 @@ repository. Approve `ralph`. You can check the server with `claude mcp list` or 
 For the loop step, the Claude Code harness builds:
 
 ```
-<harness.claude_code.binary> --print --output-format stream-json --verbose
+<harness.claude_code.binary> --print --output-format stream-json --verbose --permission-prompts none
     [--model <steps.loop.model or harness.claude_code.model>]
-    [--permission-mode <harness.claude_code.permission_mode>]
+    [--permission-mode <harness.claude_code.permission_mode>]      # default: auto
+    [--max-budget-usd <harness.claude_code.max_budget_usd>]        # when above 0
     [<harness.claude_code.extra_args>...]
 ```
 
 The iteration prompt is passed on stdin. `ralph loop --dry-run` prints the exact command for your configuration.
+
+On Linux and macOS each session runs in its own process group. Stopping the loop (Ctrl-C) interrupts the session
+and everything it started, and kills it if it has not exited within a grace period. When a session ends, anything it
+left running is stopped too. On Windows, stopping kills the session process only.

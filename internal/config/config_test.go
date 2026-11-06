@@ -37,6 +37,12 @@ func TestDefaults(t *testing.T) {
 	if cfg.Embeddings.Ollama.QueryPrefix != "auto" || cfg.Embeddings.Ollama.DocumentPrefix != "auto" {
 		t.Errorf("prefix defaults = %q, %q", cfg.Embeddings.Ollama.QueryPrefix, cfg.Embeddings.Ollama.DocumentPrefix)
 	}
+	if cfg.Harness.ClaudeCode.PermissionMode != "auto" || cfg.Harness.ClaudeCode.MaxBudgetUSD != 0 {
+		t.Errorf("claude_code defaults = %+v", cfg.Harness.ClaudeCode)
+	}
+	if cfg.Loop.CommitTemplate != "{{.Task.ID}}: {{.Task.Title}}" {
+		t.Errorf("commit_template = %q", cfg.Loop.CommitTemplate)
+	}
 	if cfg.Loop.StallThreshold != 3 || !cfg.Loop.CommitPerTask || !cfg.PR.Draft {
 		t.Errorf("unexpected loop/pr defaults: %+v %+v", cfg.Loop, cfg.PR)
 	}
@@ -174,6 +180,8 @@ func TestValidateReportsAllProblems(t *testing.T) {
 	cfg.Loop.BranchTemplate = "ralph/{{.Milestone"
 	cfg.PR.Provider = "github"
 	cfg.PR.BaseBranch = " "
+	cfg.Harness.ClaudeCode.MaxBudgetUSD = -1
+	cfg.Loop.CommitTemplate = "{{.Task"
 
 	err = cfg.Validate()
 	if err == nil {
@@ -182,11 +190,29 @@ func TestValidateReportsAllProblems(t *testing.T) {
 	for _, key := range []string{
 		"log.level", "embeddings.provider", "embeddings.timeout", "embeddings.chunk.overlap_chars",
 		"search.limit", "steps.loop.harness", "loop.stall_threshold", "loop.branch_template",
-		"pr.provider", "pr.base_branch",
+		"pr.provider", "pr.base_branch", "harness.claude_code.max_budget_usd", "loop.commit_template",
 	} {
 		if !strings.Contains(err.Error(), key+":") {
 			t.Errorf("missing problem for %s in:\n%v", key, err)
 		}
+	}
+}
+
+func TestBlankCommitTemplate(t *testing.T) {
+	cfg, _ := Defaults()
+	cfg.Loop.CommitTemplate = "  "
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "loop.commit_template: must not be empty") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestBudgetFromEnv(t *testing.T) {
+	l, err := Load(Sources{Environ: []string{"RALPH_HARNESS__CLAUDE_CODE__MAX_BUDGET_USD=1.5"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Config.Harness.ClaudeCode.MaxBudgetUSD != 1.5 {
+		t.Errorf("max_budget_usd = %v", l.Config.Harness.ClaudeCode.MaxBudgetUSD)
 	}
 }
 

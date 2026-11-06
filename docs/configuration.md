@@ -96,7 +96,8 @@ new writes; run `ralph index --rebuild` to apply it to everything.
 | `harness.default` | `claude_code` | Harness used by every step unless the step overrides it. |
 | `harness.claude_code.binary` | `claude` | The Claude Code executable. |
 | `harness.claude_code.model` | `""` | Model passed as `--model`; empty uses Claude Code's default. |
-| `harness.claude_code.permission_mode` | `""` | Passed as `--permission-mode` when set. |
+| `harness.claude_code.permission_mode` | `auto` | Passed as `--permission-mode` to headless loop sessions; empty omits it. Loop sessions also get `--permission-prompts none`, so anything that would prompt is denied. `bypassPermissions` makes `ralph loop` print a warning. |
+| `harness.claude_code.max_budget_usd` | `0` | Spending cap per loop session in USD, passed as `--max-budget-usd`; `0` means no cap. A session that hits it counts as a failed iteration. |
 | `harness.claude_code.extra_args` | `[]` | Appended to every invocation. |
 
 ### `steps`
@@ -122,7 +123,8 @@ commands, so their overrides take effect once ralph launches those sessions itse
 | `loop.max_iterations` | `50` | Hard cap on iterations in one loop run. |
 | `loop.stall_threshold` | `3` | Stall Statute: consecutive failed iterations before a task is blocked automatically. This also applies to status changes made through MCP or the CLI. |
 | `loop.branch_template` | `ralph/{{.Milestone.Slug}}` | Go `text/template` for the milestone branch. Fields: `.Initiative` and `.Milestone`, each with `.ID`, `.Slug`, and `.Title`. The result must be a valid git branch name. |
-| `loop.commit_per_task` | `true` | Commit after each completed task. |
+| `loop.commit_per_task` | `true` | Commit after each completed task. Changes under `.ralph/` are never committed. |
+| `loop.commit_template` | `{{.Task.ID}}: {{.Task.Title}}` | Go `text/template` for those commit messages. Fields: `.Task` (the task view, such as `.ID` and `.Title`), `.Initiative`, and `.Milestone`. |
 | `loop.prompt_template` | `""` | Path (relative to the project root) to a custom iteration prompt. Empty uses the built-in [`prompt.md`](../internal/loop/prompt.md). |
 
 ### `pr`

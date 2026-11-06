@@ -43,8 +43,12 @@ harness:
     binary: claude
     # Empty uses the harness's own default model.
     model: ""
-    # Passed as --permission-mode when non-empty.
-    permission_mode: ""
+    # Passed as --permission-mode to headless loop runs. Loop runs also pass
+    # --permission-prompts none, so anything that would prompt is denied.
+    permission_mode: auto
+    # Spending cap per loop iteration in USD, passed as --max-budget-usd.
+    # 0 means no cap. A session that hits the cap counts as a failed iteration.
+    max_budget_usd: 0
     # Appended verbatim to every invocation.
     extra_args: []
 
@@ -73,6 +77,9 @@ loop:
   branch_template: "ralph/{{.Milestone.Slug}}"
   # Commit after each completed task.
   commit_per_task: true
+  # Go text/template for those commits; fields: .Task (.ID, .Title, ...),
+  # .Initiative and .Milestone (each with .ID, .Slug, .Title).
+  commit_template: "{{.Task.ID}}: {{.Task.Title}}"
   # Path to a custom iteration prompt template; empty uses the built-in one.
   prompt_template: ""
 

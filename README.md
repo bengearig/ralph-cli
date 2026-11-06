@@ -7,8 +7,8 @@ ralph keeps a per-project, searchable store of initiatives, documents, milestone
 to your agent harness (Claude Code first) over MCP, so that you and the agent can turn incoming instructions into a
 written plan. An agent can then loop over the plan, and the work reaches humans as a pull request.
 
-> **Status: skeleton.** The store, semantic search, MCP server, Claude Code integration, and configuration work.
-> Loop execution and pull-request creation are planned; their `--dry-run` modes show exactly what they will do. See
+> **Status: early.** The store, semantic search, MCP server, Claude Code integration, configuration, and the loop
+> work. Pull-request creation is planned; `ralph pr create --dry-run` shows what it will send. See
 > [docs/roadmap.md](docs/roadmap.md).
 
 ## Install
@@ -51,6 +51,7 @@ And in a terminal:
 ralph status
 ralph search "how do we handle auth tokens"
 ralph loop --milestone M-1 --dry-run --show-prompt
+ralph loop --milestone M-1      # after approving the MCP server in `claude` once
 ```
 
 ## Documentation
