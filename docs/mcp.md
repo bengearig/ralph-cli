@@ -17,6 +17,9 @@ therefore launch it from the repository; Claude Code does this for project-scope
 - **Errors.** Domain errors are returned as tool results with `isError: true` and actionable text, not as protocol
   errors. Examples are an unknown ID, a forbidden transition, or a duplicate slug. This lets the agent read the error
   and correct itself.
+- **Git records.** Milestone and task results include the git state the loop recorded, with full commit hashes,
+  and omit those fields when nothing is recorded. No tool sets them. See
+  [Git records](data-model.md#git-records).
 - **Index warnings.** Write results include `index_warning` when the entity was saved but could not be embedded.
 - **Annotations.** Read tools are marked read-only. No tool is destructive, and none reaches outside the project.
 - **Logging.** Logs go to stderr only.
@@ -41,8 +44,8 @@ The authoritative list, with schemas, is whatever `tools/list` returns. The regi
 |---|---|
 | `milestone_create` | Add a milestone to an initiative. |
 | `milestone_list` | Milestones with derived status and task counts, optionally for one initiative. |
-| `milestone_get` | A milestone with its tasks in loop order. |
-| `milestone_update` | Edit title, description, or position. |
+| `milestone_get` | A milestone with its tasks in loop order, and its recorded `branch`, `base_commit`, and `head_commit` when the loop has recorded them. |
+| `milestone_update` | Edit title, description, or position. The recorded git state cannot be changed. |
 
 ### Tasks
 
@@ -50,7 +53,7 @@ The authoritative list, with schemas, is whatever `tools/list` returns. The regi
 |---|---|
 | `task_create` | Propose a task; it always starts `PROPOSED`. |
 | `task_list` | Tasks in loop order, filtered by milestone, initiative, or statuses. |
-| `task_get` | A task with notes and `allowed_next` statuses. |
+| `task_get` | A task with notes and `allowed_next` statuses, and its `commit` when the loop committed it. |
 | `task_update` | Edit text or position. Terminal tasks cannot be edited. |
 | `task_set_status` | Move a task; enforces the guards and the Stall Statute, and records the reason as a note. |
 | `task_add_note` | Append a `NOTE`, `ITERATION`, or `KICKBACK` note. |

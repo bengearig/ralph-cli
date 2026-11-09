@@ -11,7 +11,7 @@
 ## Reference
 
 - [Architecture](architecture.md): packages, layering, and the main flows.
-- [Data model](data-model.md): entities, the task state machine, and the search index.
+- [Data model](data-model.md): entities, the git state the loop records, the task state machine, and the search index.
 - [Configuration](configuration.md): layers, environment variables, and every setting.
 - [CLI](cli.md): commands and flags.
 - [MCP server](mcp.md): the tools an agent harness uses.

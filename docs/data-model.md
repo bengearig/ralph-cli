@@ -40,6 +40,14 @@ A milestone's status is **derived** from its tasks and never stored:
 
 The rows are checked top to bottom; the first match wins.
 
+The loop records the milestone's git state as it works (see [Git records](#git-records)):
+
+| Field | Meaning |
+|---|---|
+| `branch` | The branch the loop works on. Once recorded, it is used instead of `loop.branch_template`. |
+| `base_commit` | The commit the branch started from: the base branch's tip when the loop created it, or its merge base with `pr.base_branch` when the loop adopted an existing branch. Stays empty if an adopted branch has no base branch or no history in common with it. |
+| `head_commit` | The branch tip as the loop last left it, updated after every iteration. |
+
 ### Task (`T-n`)
 
 Receive creates tasks as `PROPOSED` with only a title and perhaps a summary. Articulate fills in the description
@@ -52,6 +60,7 @@ and acceptance criteria and promotes them to `TODO`.
 | `position` | Loop order within the milestone. New tasks go last unless a position is given. |
 | `failure_count` | Consecutive failed iterations; reset when the task reaches `DONE`. |
 | `blocked_reason` | Why the task is `BLOCKED`; cleared when it leaves `BLOCKED`. |
+| `commit` | The commit the loop made when the task reached `DONE`. Empty when the loop made none, for example with `loop.commit_per_task: false` or nothing to commit. See [Git records](#git-records). |
 
 `DONE` and `CANCELLED` tasks cannot be edited. A task past `PROPOSED` must keep a non-empty description and
 acceptance criteria.
@@ -66,6 +75,21 @@ note kind follows from the transition: kickbacks (to `BLOCKED`, or back to `PROP
 
 Kinds are `brief`, `architecture`, `design`, `decision`, `reference`, and `note`. A document with no initiative is
 project-wide. Slugs are unique within their scope; the project scope counts as its own scope.
+
+## Git records
+
+The milestone `branch`, `base_commit` and `head_commit` fields and the task `commit` field record what the loop did
+in git. The loop page describes when each one is written: at
+[branch preparation](loop.md#before-the-first-session) and after [each iteration](loop.md#each-iteration).
+
+- Commits are stored as full object names (40 hex characters, or 64 in a SHA-256 repository), never abbreviated.
+  `ralph milestone show` and `ralph task show` shorten them for display; `--json` and the MCP tools return them in
+  full.
+- An empty value means nothing has been recorded. Views omit empty fields from JSON.
+- Only the loop writes these fields. A later reconcile step is planned to write them too. They have their own store
+  and service methods: milestone and task edits through the CLI or MCP never change them, and no command or tool
+  sets them directly. Recording them does not change `updated_at`.
+- In the schema, the task field is the column `tasks.commit_hash`, because `COMMIT` is an SQL keyword.
 
 ## Task state machine
 

@@ -16,7 +16,7 @@
 
 | Item | Source |
 |---|---|
-| Branch | `loop.branch_template`, rendered with the initiative and milestone, then checked against git's ref-name rules. |
+| Branch | The milestone's recorded `branch`, if any. Otherwise `loop.branch_template`, rendered with the initiative and milestone, then checked against git's ref-name rules. Planning makes no git calls, so a recorded branch that no longer exists is only noticed when the loop runs. |
 | Base branch | `pr.base_branch`. |
 | Harness and model | `steps.loop`, falling back to `harness.default` and that harness's model. |
 | Command | The harness's headless argv. The prompt goes on stdin. |
@@ -65,12 +65,26 @@ flowchart TD
    can only serve one loop. A second `ralph loop` fails and names the PID and milestone holding the lock. The
    operating system releases the lock if ralph dies.
 2. **Branch.** The loop then checks out the milestone branch:
+   - The branch is the milestone's recorded `branch` when it has one, so changing `loop.branch_template`, or a
+     milestone title it uses, does not move work to a new branch. If the recorded branch no longer exists, the feed
+     warns (`! recorded branch <old> not found; using <new> from loop.branch_template`), and the loop uses the name
+     from the template and records it afresh. Without a recorded branch, the name comes from the template.
    - If it is already checked out, the loop continues even with uncommitted changes. Those are the previous run's
      unfinished work.
    - If it needs to switch branches, a dirty working tree is refused, listing the changed paths.
    - If the branch exists, the loop switches to it.
    - Otherwise it creates the branch from `pr.base_branch`, falling back to `origin/<base>`, without tracking.
-3. **Ignored paths.** Changes under `.ralph/` are never counted, staged, or stashed.
+3. **Record.** The loop then records the milestone's git state (see [Git records](data-model.md#git-records)):
+   - **It created the branch.** It records the branch, and records the commit it started from as both
+     `base_commit` and `head_commit`.
+   - **The branch already existed and the milestone has no record** (trust on first use). It records the branch,
+     the current tip as `head_commit`, and the merge base with `pr.base_branch` (or `origin/<base>`) as
+     `base_commit`. If the base branch can't be found, or the two share no history, the feed warns and
+     `base_commit` stays empty. Tasks finished before the record existed keep an empty `commit`.
+   - **The milestone is already recorded.** The record is left as it is.
+
+   `--dry-run` records nothing.
+4. **Ignored paths.** Changes under `.ralph/` are never counted, staged, or stashed.
 
 ### Each iteration
 
@@ -93,6 +107,15 @@ flowchart TD
    | still `IN_PROGRESS` | The session ended without reporting. Move the task to `TODO` with a reason describing the session's exit, result type, and final message. |
 
    The Stall Statute applies to both failure paths: the failure that reaches `loop.stall_threshold` blocks the task.
+6. ralph records the iteration in git terms. When it committed a `DONE` task, the task's `commit` is set to that
+   commit's full hash. Whatever the outcome, the milestone's `head_commit` is then set to the current `HEAD`, so it
+   also follows commits an agent made itself and runs with `loop.commit_per_task: false`. When a session error, a
+   commit failure, or an interruption ends the run mid-iteration, the head is still recorded before the loop
+   exits. If that recording fails, the feed says so and the original error is reported.
+
+The `Ralph-Task` trailer lets ralph match commits to tasks even after a rebase or amend rewrites history, and after a
+squash whose message keeps the trailers. It is controlled by [`loop.commit_trailer`](configuration.md#loop), and
+`--dry-run` shows the setting on its policy line. See [ADR 0016](adr/0016-record-the-loops-git-state.md).
 
 ### Stopping
 
@@ -106,9 +129,9 @@ flowchart TD
 | Harness could not start, or a git failure | `1` | stays `IN_PROGRESS`; see the message |
 | A `DONE` task's commit failed (for example, a hook rejected it) | `1` | stays `DONE`; commit by hand, then rerun |
 
-When it stops, the loop prints a one-line summary on stdout (`--json` prints the full outcome), and the feed on
-stderr explains what needs attention. Unfinished changes from the last task are left in the working tree, and the
-feed says so.
+When it stops, the loop prints a one-line summary on stdout (`--json` prints the full outcome, with full commit
+hashes), and the feed on stderr explains what needs attention. Unfinished changes from the last task are left in the
+working tree, and the feed says so.
 
 ### Requirements
 

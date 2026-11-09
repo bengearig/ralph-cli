@@ -15,6 +15,9 @@ accept `--<field>-file <path>` or `--file <path>`; `-` reads stdin.
 Exit codes: `0` success, `1` error, `2` the requested capability is not implemented yet, `3` the loop stopped
 because remaining tasks need a person.
 
+Commit hashes recorded by the loop are shown shortened in text output and in full with `--json`. See
+[Git records](data-model.md#git-records).
+
 `ralph <command> --help` is the authoritative reference; this page gives an overview.
 
 ## Setup
@@ -32,10 +35,10 @@ because remaining tasks need a person.
 | `ralph initiative create --title <t> [--brief <text> \| --brief-file <path>] [--slug <s>]` | Record received instructions. |
 | `ralph initiative list` / `show <id>` / `update <id> [--title] [--brief \| --brief-file]` | Browse and edit. `show` includes the milestone table. |
 | `ralph milestone create --initiative <id> --title <t> [--description] [--position] [--slug]` | Add a milestone. |
-| `ralph milestone list [--initiative <id>]` / `show <id>` / `update <id> ...` | Browse and edit. `show` includes tasks in loop order. |
+| `ralph milestone list [--initiative <id>]` / `show <id>` / `update <id> ...` | Browse and edit. `show` includes tasks in loop order, and a `branch:` line with the base and head commits once the loop has recorded them. `update` never changes the recorded git state. |
 | `ralph task create --milestone <id> --title <t> [--description] [--criteria] [--position]` | Propose a task (status `PROPOSED`). |
 | `ralph task list [--milestone] [--initiative] [--status S,...]` | List tasks in loop order. |
-| `ralph task show <id>` | Show a task with its notes and allowed next statuses. |
+| `ralph task show <id>` | Show a task with its notes and allowed next statuses, and a `commit:` line once the loop has committed it. |
 | `ralph task update <id> [--title] [--description] [--criteria] [--position]` | Edit a task. |
 | `ralph task status <id> <STATUS> [--reason <text>]` | Move a task. Help text lists the allowed moves. |
 | `ralph task note <id> <text...> [--kind NOTE\|ITERATION\|KICKBACK]` | Add a note. |
@@ -65,6 +68,9 @@ because remaining tasks need a person.
 | `ralph loop --milestone <id>` | Run the loop: one fresh harness session per task on the milestone's branch, committing each `DONE` task. The progress feed goes to stderr, transcripts to `.ralph/runs/`. See [the loop](loop.md). |
 | `ralph pr create --milestone <id> --dry-run` | Print the pull request that would be opened and any provider configuration problems. |
 | `ralph pr create --milestone <id>` | Open the pull request. *Not implemented yet (exit code 2).* |
+
+`ralph pr create` takes its source branch from the milestone's recorded branch, the one the loop worked on, and
+derives it from `loop.branch_template` only when none is recorded.
 
 ## Example session
 
