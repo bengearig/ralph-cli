@@ -32,19 +32,26 @@ Receive instructions → Articulate a solution → Loop over tasks → Pull requ
   instead of guessing. IDs look like I-1, M-2, T-3, D-4.
 - Search before writing new documents or tasks, to build on what already exists.`
 
+// Options configures tool behavior that comes from ralph's config.
+type Options struct {
+	// ConfirmOutline is receive.confirm_outline: whether Receive asks before creating a new initiative's outline.
+	ConfirmOutline bool
+}
+
 // New builds an MCP server over svc.
-func New(svc *service.Service, version string, log *slog.Logger) *mcp.Server {
+func New(svc *service.Service, version string, log *slog.Logger, opts Options) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: Name, Title: "RALPH workflow store", Version: version}, &mcp.ServerOptions{
 		Instructions: instructions,
 		Logger:       log,
 	})
-	t := &tools{svc: svc}
+	t := &tools{svc: svc, confirmOutline: opts.ConfirmOutline}
 	t.register(s)
 	return s
 }
 
 type tools struct {
-	svc *service.Service
+	svc            *service.Service
+	confirmOutline bool
 }
 
 // toolError rewrites service errors into guidance an agent can act on.
@@ -80,7 +87,8 @@ func write(title string) *mcp.ToolAnnotations {
 
 func (t *tools) register(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_create", Annotations: write("Create initiative"),
-		Description: "Record a newly received set of instructions as an initiative. Put the instructions verbatim in brief."}, t.initiativeCreate)
+		Description: "Record a newly received set of instructions as an initiative. Put the instructions verbatim in brief. " +
+			"The result's confirm_outline says whether Receive must ask the user before creating the outline."}, t.initiativeCreate)
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_list", Annotations: readOnly("List initiatives"),
 		Description: "List all initiatives."}, t.initiativeList)
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_get", Annotations: readOnly("Get initiative"),

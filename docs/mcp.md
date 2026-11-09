@@ -30,7 +30,7 @@ The authoritative list, with schemas, is whatever `tools/list` returns. The regi
 
 | Tool | Purpose |
 |---|---|
-| `initiative_create` | Record received instructions; the brief is stored verbatim. |
+| `initiative_create` | Record received instructions; the brief is stored verbatim. The result also carries `confirm_outline`, the effective `receive.confirm_outline` read when the server starts: whether Receive must ask the user before creating the outline. |
 | `initiative_list` | All initiatives. |
 | `initiative_get` | One initiative with its brief. |
 | `initiative_update` | Edit title or brief; omitted fields are unchanged. |

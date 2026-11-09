@@ -65,9 +65,19 @@ func (h *testEnv) json(v any, args ...string) {
 func TestWorkflowThroughCLI(t *testing.T) {
 	h := newTestEnv(t, true)
 	var i struct{ ID string }
-	h.json(&i, "initiative", "create", "--title", "Customer SSO", "--brief", "Okta login for customers")
+	out := h.ok("--json", "initiative", "create", "--title", "Customer SSO", "--brief", "Okta login for customers")
+	if err := json.Unmarshal([]byte(out), &i); err != nil {
+		t.Fatalf("decoding %q: %v", out, err)
+	}
 	if i.ID != "I-1" {
 		t.Fatalf("initiative id = %q", i.ID)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(out), &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fields["confirm_outline"]; ok {
+		t.Errorf("CLI initiative create JSON has MCP-only confirm_outline: %s", out)
 	}
 	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Callback")
 	h.ok("task", "create", "--milestone", "M-1", "--title", "Route", "--description", "Add route", "--criteria", "Tests pass")

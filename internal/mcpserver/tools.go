@@ -19,9 +19,18 @@ type initiativeCreateIn struct {
 	Slug  string `json:"slug,omitempty" jsonschema:"optional slug; derived from title when omitted"`
 }
 
-func (t *tools) initiativeCreate(ctx context.Context, _ *mcp.CallToolRequest, in initiativeCreateIn) (*mcp.CallToolResult, service.InitiativeView, error) {
+// initiativeCreateOut adds MCP-only guidance to the shared view (ADR 10).
+type initiativeCreateOut struct {
+	service.InitiativeView
+	ConfirmOutline bool `json:"confirm_outline" jsonschema:"true: ask the user to approve the outline before creating milestones and tasks; false: show the outline and create it right away"`
+}
+
+func (t *tools) initiativeCreate(ctx context.Context, _ *mcp.CallToolRequest, in initiativeCreateIn) (*mcp.CallToolResult, initiativeCreateOut, error) {
 	v, err := t.svc.CreateInitiative(ctx, service.InitiativeInput{Title: in.Title, Brief: in.Brief, Slug: in.Slug})
-	return nil, v, toolError(err)
+	if err != nil {
+		return nil, initiativeCreateOut{}, toolError(err)
+	}
+	return nil, initiativeCreateOut{InitiativeView: v, ConfirmOutline: t.confirmOutline}, nil
 }
 
 type initiativeList struct {

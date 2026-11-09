@@ -21,7 +21,11 @@ Logs go to stderr because stdout carries the protocol.`,
 			if err != nil {
 				return err
 			}
-			srv := mcpserver.New(svc, version.Get().Version, a.logger())
+			l, err := a.loadConfig()
+			if err != nil {
+				return err
+			}
+			srv := mcpserver.New(svc, version.Get().Version, a.logger(), mcpserver.Options{ConfirmOutline: l.Config.Receive.ConfirmOutline})
 			return srv.Run(cmd.Context(), &mcp.StdioTransport{})
 		},
 	}

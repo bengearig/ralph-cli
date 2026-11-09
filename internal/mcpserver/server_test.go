@@ -18,6 +18,11 @@ import (
 
 func connect(t *testing.T) *mcp.ClientSession {
 	t.Helper()
+	return connectWith(t, Options{})
+}
+
+func connectWith(t *testing.T, opts Options) *mcp.ClientSession {
+	t.Helper()
 	ctx := context.Background()
 	st, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "r.db"))
 	if err != nil {
@@ -28,7 +33,7 @@ func connect(t *testing.T) *mcp.ClientSession {
 	svc := service.New(st, ix, service.Options{StallThreshold: 3})
 
 	srvT, cliT := mcp.NewInMemoryTransports()
-	ss, err := New(svc, "test", nil).Connect(ctx, srvT, nil)
+	ss, err := New(svc, "test", nil, opts).Connect(ctx, srvT, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,4 +235,68 @@ func TestToolErrorsAreActionable(t *testing.T) {
 			t.Error("missing required id should fail")
 		}
 	}
+}
+
+func TestInitiativeCreateReportsConfirmOutline(t *testing.T) {
+	for _, want := range []bool{true, false} {
+		cs := connectWith(t, Options{ConfirmOutline: want})
+		var got map[string]any
+		mustOK(t, cs, "initiative_create", map[string]any{"title": "Customer SSO", "brief": "Business wants Okta SSO"}, &got)
+		co, ok := got["confirm_outline"]
+		if !ok || co != want {
+			t.Errorf("ConfirmOutline=%v: confirm_outline = %v (present %v) in %v", want, co, ok, got)
+		}
+		if got["id"] != "I-1" || got["slug"] != "customer-sso" || got["title"] != "Customer SSO" || got["brief"] != "Business wants Okta SSO" {
+			t.Errorf("ConfirmOutline=%v: initiative fields not at top level: %v", want, got)
+		}
+	}
+}
+
+func TestConfirmOutlineOnlyOnInitiativeCreate(t *testing.T) {
+	cs := connectWith(t, Options{ConfirmOutline: true})
+	mustOK(t, cs, "initiative_create", map[string]any{"title": "Customer SSO"}, nil)
+	for _, c := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"initiative_get", map[string]any{"id": "I-1"}},
+		{"initiative_list", map[string]any{}},
+		{"initiative_update", map[string]any{"id": "I-1", "brief": "updated"}},
+	} {
+		var raw json.RawMessage
+		mustOK(t, cs, c.name, c.args, &raw)
+		if strings.Contains(string(raw), "confirm_outline") {
+			t.Errorf("%s result contains confirm_outline: %s", c.name, raw)
+		}
+	}
+}
+
+func TestInitiativeCreateOutputSchema(t *testing.T) {
+	cs := connect(t)
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name != "initiative_create" {
+			continue
+		}
+		raw, err := json.Marshal(tool.OutputSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var schema struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{"confirm_outline", "id", "slug", "title", "brief"} {
+			if _, ok := schema.Properties[key]; !ok {
+				t.Errorf("initiative_create output schema lacks %s: %s", key, raw)
+			}
+		}
+		return
+	}
+	t.Fatal("initiative_create not listed")
 }
