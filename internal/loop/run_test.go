@@ -182,6 +182,9 @@ func TestRunCompletesMilestone(t *testing.T) {
 		if c := out.Commits[i]; c.Task != v.ID || c.Hash != want {
 			t.Errorf("outcome commit %d = %+v, want %s %s", i, c, v.ID, want)
 		}
+		if tr := gitCmd(t, e.root, "log", "-1", "--format=%(trailers:key=Ralph-Task,valueonly)", want); tr != v.ID {
+			t.Errorf("%s Ralph-Task trailer = %q", v.ID, tr)
+		}
 	}
 	e.assertHead(t)
 	if short := out.Commits[0].Hash[:7]; !strings.Contains(e.out.String(), "  committed "+short+` "T-1: first"`+"\n") {
@@ -390,6 +393,24 @@ func TestRunWithoutCommits(t *testing.T) {
 	}
 	if st := gitCmd(t, e.root, "status", "--porcelain"); !strings.Contains(st, "task-1.txt") {
 		t.Errorf("work should be left uncommitted: %q", st)
+	}
+}
+
+func TestRunWithoutCommitTrailer(t *testing.T) {
+	e := newRunEnv(t, "a", "b")
+	e.cfg.Loop.CommitTrailer = false
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+	out, err := e.run(t, context.Background(), h)
+	if err != nil || len(out.Commits) != 2 {
+		t.Fatalf("out = %+v, err = %v", out, err)
+	}
+	for _, c := range out.Commits {
+		if tr := gitCmd(t, e.root, "log", "-1", "--format=%(trailers:key=Ralph-Task)", c.Hash); tr != "" {
+			t.Errorf("%s has a Ralph-Task trailer: %q", c.Task, tr)
+		}
+		if msg := gitCmd(t, e.root, "log", "-1", "--format=%B", c.Hash); strings.Contains(msg, "Ralph-Task") {
+			t.Errorf("%s message = %q", c.Task, msg)
+		}
 	}
 }
 

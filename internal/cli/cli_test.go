@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -376,6 +377,33 @@ func TestShowRecordedGitState(t *testing.T) {
 	h.json(&tj, "task", "show", "T-1")
 	if tj.Commit != commit {
 		t.Errorf("task JSON commit = %q, want %q", tj.Commit, commit)
+	}
+}
+
+func TestLoopDryRunShowsCommitTrailer(t *testing.T) {
+	h := newTestEnv(t, true)
+	h.ok("initiative", "create", "--title", "Customer SSO")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Callback")
+	h.ok("task", "create", "--milestone", "M-1", "--title", "Route", "--description", "Add route", "--criteria", "Tests pass")
+	h.ok("task", "status", "T-1", "TODO")
+
+	for _, tc := range []struct {
+		env  string
+		want bool
+	}{{"", true}, {"false", false}} {
+		if tc.env != "" {
+			t.Setenv("RALPH_LOOP__COMMIT_TRAILER", tc.env)
+		}
+		out := h.ok("loop", "--milestone", "M-1", "--dry-run")
+		policy := fmt.Sprintf("policy:     max 50 iterations, stall after 3 failures, commit per task: true, commit trailer: %t\n", tc.want)
+		if !strings.Contains(out, policy) {
+			t.Errorf("RALPH_LOOP__COMMIT_TRAILER=%q: dry-run lacks %q:\n%s", tc.env, policy, out)
+		}
+		var plan map[string]any
+		h.json(&plan, "loop", "--milestone", "M-1", "--dry-run")
+		if got, ok := plan["commit_trailer"].(bool); !ok || got != tc.want {
+			t.Errorf("RALPH_LOOP__COMMIT_TRAILER=%q: plan commit_trailer = %v", tc.env, plan["commit_trailer"])
+		}
 	}
 }
 

@@ -129,6 +129,7 @@ type LoopConfig struct {
 	BranchTemplate string `koanf:"branch_template"`
 	CommitPerTask  bool   `koanf:"commit_per_task"`
 	CommitTemplate string `koanf:"commit_template"`
+	CommitTrailer  bool   `koanf:"commit_trailer"`
 	PromptTemplate string `koanf:"prompt_template"`
 }
 

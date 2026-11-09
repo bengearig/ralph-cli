@@ -153,8 +153,9 @@ func (r Repo) CreateBranch(ctx context.Context, branch, start string) error {
 
 // CommitAll stages every change outside Exclude and commits it. It returns
 // committed=false when there was nothing to commit, and otherwise the new
-// commit's full object name. Commit hooks run.
-func (r Repo) CommitAll(ctx context.Context, message string) (hash string, committed bool, err error) {
+// commit's full object name. Each trailer, such as "Ralph-Task: T-1", is
+// passed to git commit --trailer (git 2.32+). Commit hooks run.
+func (r Repo) CommitAll(ctx context.Context, message string, trailers ...string) (hash string, committed bool, err error) {
 	if _, err := r.run(ctx, append([]string{"add", "--all"}, r.pathspec()...)...); err != nil {
 		return "", false, err
 	}
@@ -163,7 +164,11 @@ func (r Repo) CommitAll(ctx context.Context, message string) (hash string, commi
 	} else if exitCode(err) != 1 {
 		return "", false, err
 	}
-	if _, err := r.run(ctx, "commit", "--quiet", "-m", message); err != nil {
+	args := []string{"commit", "--quiet", "-m", message}
+	for _, t := range trailers {
+		args = append(args, "--trailer", t)
+	}
+	if _, err := r.run(ctx, args...); err != nil {
 		return "", false, err
 	}
 	hash, err = r.RevParse(ctx, "HEAD")

@@ -43,7 +43,7 @@ func TestDefaults(t *testing.T) {
 	if cfg.Loop.CommitTemplate != "{{.Task.ID}}: {{.Task.Title}}" {
 		t.Errorf("commit_template = %q", cfg.Loop.CommitTemplate)
 	}
-	if cfg.Loop.StallThreshold != 3 || !cfg.Loop.CommitPerTask || !cfg.PR.Draft {
+	if cfg.Loop.StallThreshold != 3 || !cfg.Loop.CommitPerTask || !cfg.Loop.CommitTrailer || !cfg.PR.Draft {
 		t.Errorf("unexpected loop/pr defaults: %+v %+v", cfg.Loop, cfg.PR)
 	}
 	if cfg.Receive.ConfirmOutline {
@@ -73,6 +73,7 @@ func TestLayerPrecedence(t *testing.T) {
 			"RALPH_EMBEDDINGS__OLLAMA__MODEL=mxbai-embed-large",
 			"RALPH_HARNESS__CLAUDE_CODE__EXTRA_ARGS=--verbose,--debug",
 			"RALPH_PR__DRAFT=false",
+			"RALPH_LOOP__COMMIT_TRAILER=false",
 			"RALPH_BITBUCKET_TOKEN=secret",
 			"OTHER=1",
 		},
@@ -102,6 +103,9 @@ func TestLayerPrecedence(t *testing.T) {
 	}
 	if c.PR.Draft {
 		t.Error("env bool: pr.draft should be false")
+	}
+	if c.Loop.CommitTrailer {
+		t.Error("env bool: loop.commit_trailer should be false")
 	}
 
 	out, err := l.YAML()

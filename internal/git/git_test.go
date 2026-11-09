@@ -167,6 +167,52 @@ func TestCommitAll(t *testing.T) {
 	}
 }
 
+func TestCommitAllTrailers(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+
+	write(t, r.Dir, "a.txt", "a\n")
+	if _, committed, err := r.CommitAll(ctx, "T-1: add a", "Ralph-Task: T-1"); err != nil || !committed {
+		t.Fatalf("commit = %v, %v", committed, err)
+	}
+	if got := mustRun(t, r, "log", "-1", "--format=%(trailers:key=Ralph-Task,valueonly)"); got != "T-1" {
+		t.Errorf("Ralph-Task trailer = %q, want T-1", got)
+	}
+	if got := mustRun(t, r, "log", "-1", "--format=%s"); got != "T-1: add a" {
+		t.Errorf("subject = %q", got)
+	}
+
+	write(t, r.Dir, "b.txt", "b\n")
+	msg := "T-2: add b\n\nCo-authored-by: X <x@example.com>"
+	if _, committed, err := r.CommitAll(ctx, msg, "Ralph-Task: T-2"); err != nil || !committed {
+		t.Fatalf("commit = %v, %v", committed, err)
+	}
+	body := mustRun(t, r, "log", "-1", "--format=%B")
+	want := "T-2: add b\n\nCo-authored-by: X <x@example.com>\nRalph-Task: T-2"
+	if body != want {
+		t.Errorf("message = %q, want one trailer block %q", body, want)
+	}
+	cmd := exec.Command("git", "interpret-trailers", "--parse")
+	cmd.Dir = r.Dir
+	cmd.Stdin = strings.NewReader(body + "\n")
+	parsed, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(parsed)); got != "Co-authored-by: X <x@example.com>\nRalph-Task: T-2" {
+		t.Errorf("interpret-trailers --parse = %q", got)
+	}
+
+	write(t, r.Dir, "c.txt", "c\n")
+	plain := "T-3: add c\n\nA body paragraph."
+	if _, committed, err := r.CommitAll(ctx, plain); err != nil || !committed {
+		t.Fatalf("commit = %v, %v", committed, err)
+	}
+	if got := mustRun(t, r, "log", "-1", "--format=%B"); got != plain {
+		t.Errorf("message without trailers = %q, want %q", got, plain)
+	}
+}
+
 func TestCommitHookFailureIsReported(t *testing.T) {
 	ctx := context.Background()
 	r := newRepo(t)

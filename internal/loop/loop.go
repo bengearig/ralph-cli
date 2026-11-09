@@ -46,6 +46,7 @@ type Plan struct {
 	MaxIterations  int                `json:"max_iterations"`
 	StallThreshold int                `json:"stall_threshold"`
 	CommitPerTask  bool               `json:"commit_per_task"`
+	CommitTrailer  bool               `json:"commit_trailer"`
 	FirstPrompt    string             `json:"first_prompt,omitempty"`
 	Warnings       []string           `json:"warnings,omitempty"`
 }
@@ -92,6 +93,7 @@ func (p Planner) Plan(ctx context.Context, milestoneID int64) (Plan, error) {
 		MaxIterations:  p.Config.Loop.MaxIterations,
 		StallThreshold: p.Config.Loop.StallThreshold,
 		CommitPerTask:  p.Config.Loop.CommitPerTask,
+		CommitTrailer:  p.Config.Loop.CommitTrailer,
 	}
 	if plan.Branch, err = MilestoneBranch(p.Config.Loop.BranchTemplate, plan.Initiative, plan.Milestone, m.Branch); err != nil {
 		return Plan{}, err

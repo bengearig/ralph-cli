@@ -86,6 +86,9 @@ loop:
   # Go text/template for those commits; fields: .Task (.ID, .Title, ...),
   # .Initiative and .Milestone (each with .ID, .Slug, .Title).
   commit_template: "{{.Task.ID}}: {{.Task.Title}}"
+  # Add a `Ralph-Task: <task ID>` trailer to those commits, so ralph can match
+  # commits to tasks after history is rewritten (rebase, amend, squash).
+  commit_trailer: true
   # Path to a custom iteration prompt template; empty uses the built-in one.
   prompt_template: ""
 

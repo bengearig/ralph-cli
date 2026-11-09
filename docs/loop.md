@@ -87,7 +87,7 @@ flowchart TD
 
    | Status | What happens |
    |---|---|
-   | `DONE` | Commit the changes, if `loop.commit_per_task`, using `loop.commit_template`. Commit hooks run. A failed commit stops the loop. |
+   | `DONE` | Commit the changes, if `loop.commit_per_task`, using `loop.commit_template`, with a `Ralph-Task: <task ID>` trailer if `loop.commit_trailer`. Commit hooks run. A failed commit stops the loop. |
    | `TODO` | The agent reported an unfinished iteration; the failure count was incremented. |
    | `BLOCKED`, `PROPOSED` | Report it and move on. |
    | still `IN_PROGRESS` | The session ended without reporting. Move the task to `TODO` with a reason describing the session's exit, result type, and final message. |

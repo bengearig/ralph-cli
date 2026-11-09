@@ -494,7 +494,11 @@ func (r Runner) commit(ctx context.Context, repo git.Repo, tmpl *template.Templa
 	if msg == "" {
 		msg = task.ID + ": " + task.Title
 	}
-	hash, committed, err := repo.CommitAll(ctx, msg)
+	var trailers []string
+	if r.Config.Loop.CommitTrailer {
+		trailers = append(trailers, "Ralph-Task: "+task.ID)
+	}
+	hash, committed, err := repo.CommitAll(ctx, msg, trailers...)
 	if err != nil {
 		return nil, fmt.Errorf("%s is DONE but the commit failed; commit by hand, then rerun: %w", task.ID, err)
 	}
