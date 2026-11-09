@@ -1,0 +1,601 @@
+package drift
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/bengearig/ralph/internal/domain"
+	"github.com/bengearig/ralph/internal/git"
+	"github.com/bengearig/ralph/internal/search"
+	"github.com/bengearig/ralph/internal/service"
+	"github.com/bengearig/ralph/internal/store/sqlite"
+)
+
+const branch = "ralph/oidc-login"
+
+type env struct {
+	t     *testing.T
+	root  string
+	svc   *service.Service
+	mID   int64
+	tasks []int64
+	base  string
+}
+
+func gitCmd(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// newEnv creates a repository on main and a milestone with a TODO task per
+// title, with the milestone branch checked out from main.
+func newEnv(t *testing.T, titles ...string) *env {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	for _, k := range []string{"GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"} {
+		t.Setenv(k, "Ralph Test")
+	}
+	for _, k := range []string{"GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"} {
+		t.Setenv(k, "ralph@example.com")
+	}
+
+	root := t.TempDir()
+	gitCmd(t, root, "init", "--quiet", "--initial-branch=main")
+	e := &env{t: t, root: root}
+	e.commit("README.md", "hi\n", "initial")
+	e.base = e.rev("HEAD")
+	gitCmd(t, root, "switch", "--quiet", "-c", branch)
+
+	ctx := context.Background()
+	st, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "ralph.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	e.svc = service.New(st, &search.Index{Store: st, Chunker: search.Chunker{MaxChars: 500}}, service.Options{})
+
+	i, err := e.svc.CreateInitiative(ctx, service.InitiativeInput{Title: "SSO"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	iID, _ := domain.ParseID(domain.KindInitiative, i.ID)
+	m, err := e.svc.CreateMilestone(ctx, service.MilestoneInput{InitiativeID: iID, Title: "OIDC login"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.mID, _ = domain.ParseID(domain.KindMilestone, m.ID)
+	for _, title := range titles {
+		tv, err := e.svc.CreateTask(ctx, service.TaskInput{MilestoneID: e.mID, Title: title, Description: "do " + title, AcceptanceCriteria: title + " works"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := domain.ParseID(domain.KindTask, tv.ID)
+		if _, err := e.svc.SetTaskStatus(ctx, id, domain.StatusTodo, ""); err != nil {
+			t.Fatal(err)
+		}
+		e.tasks = append(e.tasks, id)
+	}
+	return e
+}
+
+func (e *env) rev(ref string) string {
+	e.t.Helper()
+	return gitCmd(e.t, e.root, "rev-parse", ref)
+}
+
+// commit writes file and commits it with message, returning the hash.
+func (e *env) commit(file, content, message string) string {
+	e.t.Helper()
+	if err := os.WriteFile(filepath.Join(e.root, file), []byte(content), 0o644); err != nil {
+		e.t.Fatal(err)
+	}
+	gitCmd(e.t, e.root, "add", "--", file)
+	gitCmd(e.t, e.root, "commit", "--quiet", "-m", message)
+	return e.rev("HEAD")
+}
+
+func subject(t service.TaskView) string { return t.ID + ": " + t.Title }
+
+func taskID(id int64) string { return domain.FormatID(domain.KindTask, id) }
+
+// do commits work for the i-th task as the loop would, marks it DONE and
+// records the commit.
+func (e *env) do(i int, trailer bool) string {
+	e.t.Helper()
+	ctx := context.Background()
+	id := e.tasks[i]
+	tv, err := e.svc.GetTask(ctx, id)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	msg := subject(tv)
+	if trailer {
+		msg += "\n\nRalph-Task: " + tv.ID
+	}
+	hash := e.commit(strings.ReplaceAll(tv.Title, " ", "-")+".txt", "work for "+tv.Title+"\n", msg)
+	e.done(i)
+	if err := e.svc.RecordTaskCommit(ctx, id, hash); err != nil {
+		e.t.Fatal(err)
+	}
+	return hash
+}
+
+func (e *env) done(i int) {
+	e.t.Helper()
+	ctx := context.Background()
+	if _, err := e.svc.SetTaskStatus(ctx, e.tasks[i], domain.StatusInProgress, ""); err != nil {
+		e.t.Fatal(err)
+	}
+	if _, err := e.svc.SetTaskStatus(ctx, e.tasks[i], domain.StatusDone, "done"); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) record(g domain.MilestoneGit) {
+	e.t.Helper()
+	if err := e.svc.RecordMilestoneGit(context.Background(), e.mID, g); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// recordHere records the branch, the base and the current tip as head.
+func (e *env) recordHere() {
+	e.t.Helper()
+	e.record(domain.MilestoneGit{Branch: branch, BaseCommit: e.base, HeadCommit: e.rev("HEAD")})
+}
+
+func (e *env) input() Input {
+	return Input{
+		Service:        e.svc,
+		Repo:           git.Repo{Dir: e.root},
+		MilestoneID:    e.mID,
+		BaseBranch:     "main",
+		TemplateBranch: branch,
+		Subject:        subject,
+	}
+}
+
+type snapshot struct {
+	Milestone service.MilestoneView
+	Tasks     []service.TaskView
+}
+
+func (e *env) snapshot() snapshot {
+	e.t.Helper()
+	ctx := context.Background()
+	m, err := e.svc.GetMilestone(ctx, e.mID)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	var tasks []service.TaskView
+	for _, id := range e.tasks {
+		tv, err := e.svc.GetTask(ctx, id)
+		if err != nil {
+			e.t.Fatal(err)
+		}
+		tasks = append(tasks, tv)
+	}
+	return snapshot{Milestone: m, Tasks: tasks}
+}
+
+// check runs Check and asserts it changed no record.
+func (e *env) check(in Input) Report {
+	e.t.Helper()
+	before := e.snapshot()
+	r, err := Check(context.Background(), in)
+	if err != nil {
+		e.t.Fatalf("Check: %v", err)
+	}
+	if after := e.snapshot(); !reflect.DeepEqual(before, after) {
+		e.t.Fatalf("Check changed records:\nbefore %+v\nafter  %+v", before, after)
+	}
+	return r
+}
+
+func wantState(t *testing.T, r Report, s State) {
+	t.Helper()
+	if r.State != s {
+		t.Fatalf("state = %s, want %s; report %+v", r.State, s, r)
+	}
+}
+
+type want struct {
+	match  Match
+	commit string
+}
+
+func wantTasks(t *testing.T, r Report, ws ...want) {
+	t.Helper()
+	if len(r.Tasks) != len(ws) {
+		t.Fatalf("tasks = %+v, want %d findings", r.Tasks, len(ws))
+	}
+	for i, w := range ws {
+		if f := r.Tasks[i]; f.Match != w.match || f.Commit != w.commit {
+			t.Errorf("task %s: match %s commit %q, want %s %q", f.ID, f.Match, f.Commit, w.match, w.commit)
+		}
+	}
+}
+
+func hashes(cs []Commit) []string {
+	out := []string{}
+	for _, c := range cs {
+		out = append(out, c.Hash)
+	}
+	return out
+}
+
+func wantCommits(t *testing.T, what string, got []Commit, want ...string) {
+	t.Helper()
+	if want == nil {
+		want = []string{}
+	}
+	if h := hashes(got); !reflect.DeepEqual(h, want) {
+		t.Errorf("%s = %v, want %v", what, h, want)
+	}
+}
+
+func TestUnchanged(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	c1, c2 := e.do(0, true), e.do(1, true)
+	e.recordHere()
+
+	r := e.check(e.input())
+	wantState(t, r, StateUnchanged)
+	if !r.Clean() {
+		t.Error("Clean() = false for unchanged")
+	}
+	wantTasks(t, r, want{MatchPresent, c1}, want{MatchPresent, c2})
+	wantCommits(t, "unattributed", r.UnattributedCommits)
+	if r.Milestone != domain.FormatID(domain.KindMilestone, e.mID) || r.Branch != branch || r.BaseRef != "refs/heads/main" {
+		t.Errorf("report header = %q %q %q", r.Milestone, r.Branch, r.BaseRef)
+	}
+	if r.Tip != c2 || r.Recorded != (Recorded{Branch: branch, BaseCommit: e.base, HeadCommit: c2}) {
+		t.Errorf("tip %s, recorded %+v", r.Tip, r.Recorded)
+	}
+	if r.ProposedBase != e.base {
+		t.Errorf("proposed base = %s, want recorded base %s", r.ProposedBase, e.base)
+	}
+	if r.Tasks[0].ID != taskID(e.tasks[0]) || r.Tasks[0].Title != "login" || r.Tasks[0].RecordedCommit != c1 {
+		t.Errorf("finding = %+v", r.Tasks[0])
+	}
+	if s := r.Summary(); !strings.Contains(s, "recorded head "+c2[:12]) {
+		t.Errorf("summary = %q", s)
+	}
+}
+
+func TestReportJSON(t *testing.T) {
+	e := newEnv(t, "login")
+	e.do(0, true)
+	e.recordHere()
+	data, err := json.Marshal(e.check(e.input()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"milestone", "branch", "base_ref", "recorded", "tip", "state", "remote_branch_exists", "tasks", "unattributed_commits", "proposed_base"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("JSON lacks %q: %s", k, data)
+		}
+	}
+	rec := m["recorded"].(map[string]any)
+	for _, k := range []string{"branch", "base_commit", "head_commit"} {
+		if _, ok := rec[k]; !ok {
+			t.Errorf("recorded lacks %q: %s", k, data)
+		}
+	}
+	task := m["tasks"].([]any)[0].(map[string]any)
+	for _, k := range []string{"id", "title", "recorded_commit", "match", "commit"} {
+		if _, ok := task[k]; !ok {
+			t.Errorf("task finding lacks %q: %s", k, data)
+		}
+	}
+}
+
+func TestAhead(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	c1, c2 := e.do(0, true), e.do(1, true)
+	e.recordHere()
+	extra := e.commit("manual.txt", "by hand\n", "Manual tweak")
+
+	r := e.check(e.input())
+	wantState(t, r, StateAhead)
+	if r.Clean() {
+		t.Error("Clean() = true for ahead")
+	}
+	wantCommits(t, "extra", r.ExtraCommits, extra)
+	if r.ExtraCommits[0].Subject != "Manual tweak" {
+		t.Errorf("extra subject = %q", r.ExtraCommits[0].Subject)
+	}
+	wantTasks(t, r, want{MatchPresent, c1}, want{MatchPresent, c2})
+	wantCommits(t, "unattributed", r.UnattributedCommits, extra)
+	if s := r.Summary(); !strings.Contains(s, "1 commit ahead") {
+		t.Errorf("summary = %q", s)
+	}
+}
+
+func TestBehind(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	c1, c2 := e.do(0, true), e.do(1, true)
+	e.recordHere()
+	gitCmd(t, e.root, "reset", "--quiet", "--hard", "HEAD~1")
+
+	r := e.check(e.input())
+	wantState(t, r, StateBehind)
+	wantCommits(t, "lost", r.LostCommits, c2)
+	if r.LostCommits[0].Subject != subject(e.snapshot().Tasks[1]) {
+		t.Errorf("lost subject = %q", r.LostCommits[0].Subject)
+	}
+	wantTasks(t, r, want{MatchPresent, c1}, want{MatchMissing, ""})
+	if s := r.Summary(); !strings.Contains(s, "behind") {
+		t.Errorf("summary = %q", s)
+	}
+}
+
+func TestDivergedByRebase(t *testing.T) {
+	for _, trailer := range []bool{true, false} {
+		name := map[bool]string{true: "trailer", false: "patch_id"}[trailer]
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t, "login", "logout")
+			e.do(0, trailer)
+			e.do(1, trailer)
+			e.recordHere()
+			head := e.rev("HEAD")
+			gitCmd(t, e.root, "switch", "--quiet", "main")
+			e.commit("upstream.txt", "upstream\n", "Upstream change")
+			gitCmd(t, e.root, "switch", "--quiet", branch)
+			gitCmd(t, e.root, "rebase", "--quiet", "main")
+			n1, n2 := e.rev("HEAD~1"), e.rev("HEAD")
+
+			r := e.check(e.input())
+			wantState(t, r, StateDiverged)
+			m := MatchPatchID
+			if trailer {
+				m = MatchTrailer
+			}
+			wantTasks(t, r, want{m, n1}, want{m, n2})
+			wantCommits(t, "unattributed", r.UnattributedCommits)
+			if s, w := r.Summary(), "has diverged from its recorded head "+head[:12]; !strings.Contains(s, w) {
+				t.Errorf("summary = %q, want it to contain %q", s, w)
+			}
+			// The recorded base is still an ancestor of the rebased tip.
+			if r.ProposedBase != e.base {
+				t.Errorf("proposed base = %s, want recorded base %s", r.ProposedBase, e.base)
+			}
+		})
+	}
+}
+
+func TestDivergedBySquash(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	e.do(0, true)
+	e.do(1, true)
+	e.recordHere()
+	t1, t2 := taskID(e.tasks[0]), taskID(e.tasks[1])
+	gitCmd(t, e.root, "reset", "--quiet", "--soft", e.base)
+	gitCmd(t, e.root, "commit", "--quiet", "-m", "Login and logout\n\nRalph-Task: "+t1+"\nRalph-Task: "+t2)
+	sq := e.rev("HEAD")
+
+	r := e.check(e.input())
+	wantState(t, r, StateDiverged)
+	wantTasks(t, r, want{MatchTrailer, sq}, want{MatchTrailer, sq})
+	wantCommits(t, "unattributed", r.UnattributedCommits)
+}
+
+func TestTrailerNewestWins(t *testing.T) {
+	e := newEnv(t, "login")
+	e.do(0, true)
+	fix := e.commit("fix.txt", "fix\n", "Fix login\n\nRalph-Task: "+taskID(e.tasks[0]))
+	e.record(domain.MilestoneGit{Branch: branch, BaseCommit: e.base, HeadCommit: fix})
+	if err := e.svc.RecordTaskCommit(context.Background(), e.tasks[0], ""); err != nil {
+		t.Fatal(err)
+	}
+
+	r := e.check(e.input())
+	wantTasks(t, r, want{MatchTrailer, fix})
+	wantCommits(t, "unattributed", r.UnattributedCommits, e.rev("HEAD~1"))
+}
+
+func TestSubjectMatch(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	e.do(0, false)
+	e.do(1, false)
+	e.recordHere()
+	gitCmd(t, e.root, "reset", "--quiet", "--hard", e.base)
+	redone := e.commit("other.txt", "different work\n", subject(e.snapshot().Tasks[0]))
+
+	r := e.check(e.input())
+	wantState(t, r, StateDiverged)
+	wantTasks(t, r, want{MatchSubject, redone}, want{MatchMissing, ""})
+}
+
+func TestMissing(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	e.do(0, false)
+	e.do(1, false)
+	e.recordHere()
+	gitCmd(t, e.root, "reset", "--quiet", "--hard", e.base)
+	unrelated := e.commit("unrelated.txt", "something else\n", "Unrelated work")
+
+	r := e.check(e.input())
+	wantState(t, r, StateDiverged)
+	wantTasks(t, r, want{MatchMissing, ""}, want{MatchMissing, ""})
+	wantCommits(t, "unattributed", r.UnattributedCommits, unrelated)
+	if r.UnattributedCommits[0].Subject != "Unrelated work" {
+		t.Errorf("unattributed subject = %q", r.UnattributedCommits[0].Subject)
+	}
+}
+
+func TestMerged(t *testing.T) {
+	e := newEnv(t, "login")
+	c1 := e.do(0, true)
+	e.recordHere()
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	gitCmd(t, e.root, "merge", "--quiet", "--no-ff", "-m", "Merge", branch)
+
+	r := e.check(e.input())
+	wantState(t, r, StateMerged)
+	wantTasks(t, r, want{MatchPresent, c1})
+	if s := r.Summary(); !strings.Contains(s, "already merged into main") {
+		t.Errorf("summary = %q", s)
+	}
+}
+
+func TestFreshBranchNotMerged(t *testing.T) {
+	e := newEnv(t)
+	e.recordHere()
+
+	r := e.check(e.input())
+	wantState(t, r, StateUnchanged)
+	wantTasks(t, r)
+
+	// Without a recorded base, the proposed base stands in for it.
+	e.record(domain.MilestoneGit{Branch: branch, HeadCommit: e.base})
+	wantState(t, e.check(e.input()), StateUnchanged)
+}
+
+func TestBranchMissing(t *testing.T) {
+	e := newEnv(t, "login")
+	e.do(0, true)
+	e.recordHere()
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	gitCmd(t, e.root, "branch", "--quiet", "-D", branch)
+
+	r := e.check(e.input())
+	wantState(t, r, StateBranchMissing)
+	if r.RemoteBranchExists {
+		t.Error("remote_branch_exists = true without a remote")
+	}
+	if r.Tip != "" || r.ProposedBase != "" {
+		t.Errorf("tip %q, proposed base %q, want both empty", r.Tip, r.ProposedBase)
+	}
+	if s := r.Summary(); !strings.Contains(s, "does not exist") || strings.Contains(s, "origin/") {
+		t.Errorf("summary = %q", s)
+	}
+
+	remote := t.TempDir()
+	gitCmd(t, remote, "init", "--quiet", "--bare")
+	gitCmd(t, e.root, "remote", "add", "origin", remote)
+	gitCmd(t, e.root, "push", "--quiet", "origin", e.rev("HEAD")+":refs/heads/"+branch)
+	gitCmd(t, e.root, "fetch", "--quiet", "origin")
+
+	r = e.check(e.input())
+	wantState(t, r, StateBranchMissing)
+	if !r.RemoteBranchExists {
+		t.Error("remote_branch_exists = false with origin/" + branch)
+	}
+	if s := r.Summary(); !strings.Contains(s, "origin/"+branch+" exists") {
+		t.Errorf("summary = %q", s)
+	}
+}
+
+func TestBaseRefFallsBackToOrigin(t *testing.T) {
+	e := newEnv(t, "login")
+	e.do(0, true)
+	e.recordHere()
+	remote := t.TempDir()
+	gitCmd(t, remote, "init", "--quiet", "--bare")
+	gitCmd(t, e.root, "remote", "add", "origin", remote)
+	gitCmd(t, e.root, "push", "--quiet", "origin", "main")
+	gitCmd(t, e.root, "fetch", "--quiet", "origin")
+	gitCmd(t, e.root, "branch", "--quiet", "-D", "main")
+
+	r := e.check(e.input())
+	if r.BaseRef != "refs/remotes/origin/main" {
+		t.Errorf("base ref = %q", r.BaseRef)
+	}
+	wantState(t, r, StateUnchanged)
+}
+
+func TestUnrecorded(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	tv := e.snapshot().Tasks
+	c1 := e.commit("login.txt", "login\n", "Login\n\nRalph-Task: "+tv[0].ID)
+	c2 := e.commit("logout.txt", "logout\n", subject(tv[1]))
+	e.done(0)
+	e.done(1)
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	e.commit("upstream.txt", "upstream\n", "Upstream change")
+	gitCmd(t, e.root, "switch", "--quiet", branch)
+
+	r := e.check(e.input())
+	wantState(t, r, StateUnrecorded)
+	if r.Branch != branch || r.Recorded != (Recorded{}) {
+		t.Errorf("branch %q, recorded %+v", r.Branch, r.Recorded)
+	}
+	mb := gitCmd(t, e.root, "merge-base", c2, "main")
+	if mb != e.base || r.ProposedBase != mb {
+		t.Errorf("proposed base = %s, want merge-base %s", r.ProposedBase, mb)
+	}
+	wantTasks(t, r, want{MatchTrailer, c1}, want{MatchSubject, c2})
+	wantCommits(t, "unattributed", r.UnattributedCommits)
+}
+
+func TestGarbageCollectedHead(t *testing.T) {
+	e := newEnv(t, "login")
+	c1 := e.do(0, true)
+	e.record(domain.MilestoneGit{Branch: branch, BaseCommit: e.base, HeadCommit: strings.Repeat("0123456789", 4)})
+
+	r := e.check(e.input())
+	wantState(t, r, StateDiverged)
+	wantTasks(t, r, want{MatchPresent, c1})
+}
+
+func TestMissingRecordedCommitObject(t *testing.T) {
+	e := newEnv(t, "login")
+	e.do(0, false)
+	e.recordHere()
+	gone := strings.Repeat("abcdef0123", 4)
+	if err := e.svc.RecordTaskCommit(context.Background(), e.tasks[0], gone); err != nil {
+		t.Fatal(err)
+	}
+
+	r := e.check(e.input())
+	wantTasks(t, r, want{MatchSubject, e.rev("HEAD")})
+}
+
+func TestMissingBaseBranch(t *testing.T) {
+	e := newEnv(t, "login")
+	e.recordHere()
+	for _, base := range []string{"nope", ""} {
+		in := e.input()
+		in.BaseBranch = base
+		before := e.snapshot()
+		_, err := Check(context.Background(), in)
+		if err == nil || !strings.Contains(err.Error(), "pr.base_branch") {
+			t.Errorf("base %q: err = %v, want it to mention pr.base_branch", base, err)
+		}
+		if after := e.snapshot(); !reflect.DeepEqual(before, after) {
+			t.Error("Check changed records")
+		}
+	}
+}
+
+func TestOnlyDoneTasks(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	c1 := e.do(0, true)
+	e.recordHere()
+
+	r := e.check(e.input())
+	wantTasks(t, r, want{MatchPresent, c1})
+}
