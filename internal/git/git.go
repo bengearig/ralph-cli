@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 )
@@ -27,8 +28,14 @@ func (r Repo) run(ctx context.Context, args ...string) (string, error) {
 
 // runRaw executes git and returns stdout unmodified.
 func (r Repo) runRaw(ctx context.Context, args ...string) (string, error) {
+	return r.runInput(ctx, nil, args...)
+}
+
+// runInput executes git with stdin and returns stdout unmodified.
+func (r Repo) runInput(ctx context.Context, stdin io.Reader, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = r.Dir
+	cmd.Stdin = stdin
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
@@ -108,6 +115,96 @@ func (r Repo) MergeBase(ctx context.Context, a, b string) (hash string, found bo
 		return "", false, err
 	}
 	return out, true, nil
+}
+
+// IsAncestor reports whether ancestor is reachable from descendant. A commit
+// is an ancestor of itself.
+func (r Repo) IsAncestor(ctx context.Context, ancestor, descendant string) (bool, error) {
+	_, err := r.run(ctx, "merge-base", "--is-ancestor", ancestor, descendant)
+	if err != nil {
+		if exitCode(err) == 1 {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// CommitExists reports whether hash names a commit present in the object
+// database. Missing objects and objects of another type yield false.
+func (r Repo) CommitExists(ctx context.Context, hash string) (bool, error) {
+	if strings.ContainsAny(hash, "\n\r") {
+		return false, fmt.Errorf("git: invalid object name %q", hash)
+	}
+	// --batch-check reports a missing object on stdout, whereas cat-file -e
+	// exits 128 for it, as it does for real failures.
+	out, err := r.runInput(ctx, strings.NewReader(hash+"^{commit}\n"), "cat-file", "--batch-check=%(objecttype)")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) == "commit", nil
+}
+
+// LogCommit is one commit listed by Log.
+type LogCommit struct {
+	Hash    string
+	Subject string
+	// Trailers maps each requested trailer key to its values in message
+	// order. Keys without values are absent.
+	Trailers map[string][]string
+}
+
+// Log lists the commits in rangeSpec, such as "base..tip", newest first, with
+// the values of each trailer in trailerKeys.
+func (r Repo) Log(ctx context.Context, rangeSpec string, trailerKeys ...string) ([]LogCommit, error) {
+	format := "%H%x00%s"
+	for _, k := range trailerKeys {
+		if k == "" || strings.ContainsAny(k, ",():%\x00\n\r\t ") {
+			return nil, fmt.Errorf("git: invalid trailer key %q", k)
+		}
+		// Unfolded values hold no newlines, so a newline separates them.
+		format += "%x00%(trailers:key=" + k + ",valueonly,unfold,separator=%x0A)"
+	}
+	out, err := r.runRaw(ctx, "log", "-z", "--no-show-signature", "--no-color", "--format="+format, rangeSpec, "--")
+	if err != nil {
+		return nil, err
+	}
+	commits := []LogCommit{}
+	fields := strings.Split(out, "\x00")
+	// Each record is NUL-terminated, leaving one empty field at the end.
+	fields = fields[:len(fields)-1]
+	width := 2 + len(trailerKeys)
+	if len(fields)%width != 0 {
+		return nil, fmt.Errorf("git log %s: unexpected output: %d fields for %d per commit", rangeSpec, len(fields), width)
+	}
+	for i := 0; i < len(fields); i += width {
+		c := LogCommit{Hash: fields[i], Subject: fields[i+1], Trailers: map[string][]string{}}
+		for j, k := range trailerKeys {
+			if v := fields[i+2+j]; v != "" {
+				c.Trailers[k] = strings.Split(v, "\n")
+			}
+		}
+		commits = append(commits, c)
+	}
+	return commits, nil
+}
+
+// PatchID returns the stable patch-id of the commit hash's change, or "" when
+// its diff is empty, as for merges and empty commits.
+func (r Repo) PatchID(ctx context.Context, hash string) (string, error) {
+	diff, err := r.runRaw(ctx, "show", "--no-color", "--no-ext-diff", "--no-textconv", "--diff-merges=off", "--pretty=format:", hash, "--")
+	if err != nil {
+		return "", err
+	}
+	if diff == "" {
+		return "", nil
+	}
+	out, err := r.runInput(ctx, strings.NewReader(diff), "patch-id", "--stable")
+	if err != nil {
+		return "", err
+	}
+	id, _, _ := strings.Cut(strings.TrimSpace(out), " ")
+	return id, nil
 }
 
 // BranchExists reports whether a local branch exists.

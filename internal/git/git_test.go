@@ -2,9 +2,11 @@ package git
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -314,5 +316,145 @@ func TestMergeBase(t *testing.T) {
 
 	if _, _, err := r.MergeBase(ctx, "nope", "main"); err == nil {
 		t.Error("MergeBase with a missing ref should fail")
+	}
+}
+
+// commitFile writes name with body and commits it with message.
+func commitFile(t *testing.T, r Repo, name, body, message string) string {
+	t.Helper()
+	write(t, r.Dir, name, body)
+	mustRun(t, r, "add", name)
+	mustRun(t, r, "commit", "--quiet", "-m", message)
+	return mustRun(t, r, "rev-parse", "HEAD")
+}
+
+func TestIsAncestor(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	parent := mustRun(t, r, "rev-parse", "HEAD")
+	child := commitFile(t, r, "a.txt", "a\n", "child")
+	mustRun(t, r, "switch", "--quiet", "-c", "sibling", parent)
+	sibling := commitFile(t, r, "b.txt", "b\n", "sibling")
+
+	for _, tc := range []struct {
+		anc, desc string
+		want      bool
+	}{
+		{parent, child, true},
+		{child, child, true},
+		{child, parent, false},
+		{child, sibling, false},
+		{sibling, child, false},
+	} {
+		if got, err := r.IsAncestor(ctx, tc.anc, tc.desc); err != nil || got != tc.want {
+			t.Errorf("IsAncestor(%.7s, %.7s) = %v, %v; want %v", tc.anc, tc.desc, got, err, tc.want)
+		}
+	}
+	var gerr *Error
+	if _, err := r.IsAncestor(ctx, "nope", child); !errors.As(err, &gerr) {
+		t.Errorf("IsAncestor(nope) = %v, want a *git.Error", err)
+	}
+}
+
+func TestCommitExists(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	head := mustRun(t, r, "rev-parse", "HEAD")
+	if ok, err := r.CommitExists(ctx, head); err != nil || !ok {
+		t.Errorf("CommitExists(HEAD) = %v, %v", ok, err)
+	}
+	absent := strings.Repeat("0123456789", 4)
+	if ok, err := r.CommitExists(ctx, absent); err != nil || ok {
+		t.Errorf("CommitExists(absent) = %v, %v", ok, err)
+	}
+	blob := mustRun(t, r, "rev-parse", "HEAD:README.md")
+	if ok, err := r.CommitExists(ctx, blob); err != nil || ok {
+		t.Errorf("CommitExists(blob) = %v, %v", ok, err)
+	}
+}
+
+func TestLog(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	mustRun(t, r, "switch", "--quiet", "-c", "feature")
+	odd := "T-1: pipes | and\ttabs, ünïcødé ✓"
+	first := commitFile(t, r, "a.txt", "a\n", odd+"\n\nRalph-Task: T-1")
+	second := commitFile(t, r, "b.txt", "b\n", "squashed\n\nbody\n\nRalph-Task: T-2\nOther: x\nRalph-Task: T-3")
+	third := commitFile(t, r, "c.txt", "c\n", "plain")
+
+	got, err := r.Log(ctx, "main..feature", "Ralph-Task", "Missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []LogCommit{
+		{Hash: third, Subject: "plain", Trailers: map[string][]string{}},
+		{Hash: second, Subject: "squashed", Trailers: map[string][]string{"Ralph-Task": {"T-2", "T-3"}}},
+		{Hash: first, Subject: odd, Trailers: map[string][]string{"Ralph-Task": {"T-1"}}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Log(main..feature) =\n%q\nwant\n%q", got, want)
+	}
+	for _, c := range got {
+		if len(c.Hash) != 40 {
+			t.Errorf("hash %q is not a full object name", c.Hash)
+		}
+	}
+
+	if got, err := r.Log(ctx, "main..feature"); err != nil || len(got) != 3 || got[0].Subject != "plain" {
+		t.Errorf("Log without trailer keys = %q, %v", got, err)
+	}
+
+	empty, err := r.Log(ctx, "feature..main", "Ralph-Task")
+	if err != nil || empty == nil || len(empty) != 0 {
+		t.Errorf("Log(empty range) = %#v, %v; want an empty, non-nil slice", empty, err)
+	}
+
+	if _, err := r.Log(ctx, "main..nope"); err == nil {
+		t.Error("Log with an unknown ref should fail")
+	}
+	if _, err := r.Log(ctx, "main..feature", "bad,key"); err == nil {
+		t.Error("Log with an invalid trailer key should fail")
+	}
+}
+
+func TestPatchID(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	write(t, r.Dir, "other.txt", "1\n2\n3\n")
+	mustRun(t, r, "add", "other.txt")
+	mustRun(t, r, "commit", "--quiet", "-m", "other")
+	mustRun(t, r, "switch", "--quiet", "-c", "feature")
+	orig := commitFile(t, r, "a.txt", "a\n", "add a")
+	different := commitFile(t, r, "b.txt", "b\n", "add b")
+
+	mustRun(t, r, "switch", "--quiet", "main")
+	commitFile(t, r, "other.txt", "1\n2\n3\n4\n", "main moves on")
+	mustRun(t, r, "cherry-pick", orig)
+	picked := mustRun(t, r, "rev-parse", "HEAD")
+	if picked == orig || mustRun(t, r, "rev-parse", orig+"^") == mustRun(t, r, "rev-parse", picked+"^") {
+		t.Fatal("cherry-pick should produce a new commit on a different parent")
+	}
+
+	id, err := r.PatchID(ctx, orig)
+	if err != nil || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(id) {
+		t.Fatalf("PatchID(orig) = %q, %v", id, err)
+	}
+	if p, err := r.PatchID(ctx, picked); err != nil || p != id {
+		t.Errorf("PatchID(cherry-pick) = %q, %v; want %q", p, err, id)
+	}
+	if d, err := r.PatchID(ctx, different); err != nil || d == "" || d == id {
+		t.Errorf("PatchID(different) = %q, %v; want a different patch-id from %q", d, err, id)
+	}
+
+	mustRun(t, r, "commit", "--quiet", "--allow-empty", "-m", "empty")
+	if e, err := r.PatchID(ctx, "HEAD"); err != nil || e != "" {
+		t.Errorf("PatchID(empty commit) = %q, %v; want \"\"", e, err)
+	}
+	mustRun(t, r, "merge", "--quiet", "--no-ff", "--no-edit", "feature")
+	if m, err := r.PatchID(ctx, "HEAD"); err != nil || m != "" {
+		t.Errorf("PatchID(merge) = %q, %v; want \"\"", m, err)
+	}
+	if _, err := r.PatchID(ctx, "nope"); err == nil {
+		t.Error("PatchID of an unknown ref should fail")
 	}
 }
