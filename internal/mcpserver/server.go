@@ -24,6 +24,8 @@ Receive instructions → Articulate a solution → Loop over tasks → Pull requ
 - An initiative holds one set of received instructions (its brief) plus its documents and milestones.
 - Documents capture architecture, design, decisions, and reference material, project-wide or per initiative.
 - A milestone is an ordered group of tasks and becomes one branch and one pull request.
+- Receive plans at a high level: milestones and unplanned PROPOSED tasks (a title and maybe a summary).
+  Articulate works out each task's details with the user and promotes it.
 - Tasks start PROPOSED. Promote a task to TODO only when it has a description and acceptance criteria
   that a fresh agent with no other context could implement and verify.
 - The loop works TODO tasks in position order. Use BLOCKED (with a reason) or PROPOSED to kick work back

@@ -1,6 +1,6 @@
 # 8. Initiative → Milestone → Task, with a PROPOSED-first task lifecycle
 
-- Status: Accepted
+- Status: Accepted; refined by [14. Receive and Articulate responsibilities](0014-receive-and-articulate-responsibilities.md)
 - Date: 2026-11-06
 
 ## Context

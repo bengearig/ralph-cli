@@ -21,6 +21,7 @@ Claude Code is the first supported harness (`harness.default: claude_code`). It 
 Rerunning `ralph init` is safe:
 
 - Files that already match are left untouched.
+- A slash command you never edited is updated to the current version, including one installed by an earlier ralph.
 - A slash command you edited, or a different `ralph` entry in `.mcp.json`, is reported as `skipped`. Pass `--force`
   to overwrite it.
 - Malformed JSON files are reported as errors and never overwritten.
@@ -39,11 +40,15 @@ instructions if the server is not approved.
 
 ## Workflow
 
-1. **Receive.** Run `/ralph:receive <paste or dictate the instructions>`. The agent searches for related work,
-   creates the initiative with the brief verbatim, and asks about ambiguities. Answers are stored as `brief` or
-   `decision` documents.
-2. **Articulate.** Run `/ralph:articulate I-1`. Together you write architecture and design documents, split the work
-   into milestones, and propose tasks. As each task becomes fully specified, the agent promotes it to `TODO`.
+1. **Receive.** Run `/ralph:receive <paste or dictate the instructions>`. This is high-level planning. The agent
+   searches for related work, creates the initiative with the brief verbatim, and asks about goals, scope,
+   constraints, and delivery order. Answers are stored as `brief` or `decision` documents. It then proposes an outline
+   of milestones and their unplanned tasks, and creates them once you agree. To revise an initiative's plan later,
+   for example after a kickback, run `/ralph:receive I-1`.
+2. **Articulate.** Run `/ralph:articulate I-1`, or pass a milestone (`M-2`) or a single task (`T-3`). This is
+   low-level planning. The agent takes the `PROPOSED` tasks one at a time, asks about the details, writes each
+   task's description and acceptance criteria, and promotes it to `TODO` as soon as they are settled. It may add,
+   split, reorder, or cancel tasks within a milestone; changes to milestones go back to Receive.
 3. **Check.** Run `/ralph:status`, or `ralph status` in a terminal.
 4. **Loop.** Run `ralph loop --milestone M-1` in a terminal. Preview it first with `--dry-run --show-prompt`; see
    [the loop](loop.md).

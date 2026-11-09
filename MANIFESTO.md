@@ -15,7 +15,7 @@ without a plan is just a very fast way to be wrong.*
 
 ### Article I: Receive before you rush.
 
-Ambiguity is a bug. Ask the question now, while it's cheap.
+Ambiguity is a bug. Ask questions now, while it's cheap.
 
 ### Article II: Articulate before you act.
 

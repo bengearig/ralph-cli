@@ -42,6 +42,9 @@ The rows are checked top to bottom; the first match wins.
 
 ### Task (`T-n`)
 
+Receive creates tasks as `PROPOSED` with only a title and perhaps a summary. Articulate fills in the description
+and acceptance criteria and promotes them to `TODO`.
+
 | Field | Meaning |
 |---|---|
 | `title`, `description`, `acceptance_criteria` | What to do and how to tell it is done. |

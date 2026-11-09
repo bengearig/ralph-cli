@@ -7,6 +7,8 @@ request → **H**uman review. The plan lives in ralph's store, reached through t
 - **Initiatives** (`I-n`) hold received instructions verbatim as their brief.
 - **Documents** (`D-n`) hold architecture, design, decisions, and references, project-wide or per initiative.
 - **Milestones** (`M-n`) are ordered groups of tasks; each becomes one branch and one pull request.
+- `/ralph:receive` plans at a high level: the initiative, its milestones, and their unplanned tasks (`PROPOSED`, a
+  title and maybe a summary). `/ralph:articulate` works out each task's details with the user and promotes it.
 - **Tasks** (`T-n`) move `PROPOSED` → `TODO` → `IN_PROGRESS` → `DONE`. Only promote a task to `TODO` when its
   description and acceptance criteria let an agent with no other context implement and verify it.
 - Kick work back instead of guessing: `BLOCKED` (with a reason) when stuck, `PROPOSED` when it needs re-articulation.

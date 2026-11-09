@@ -1,34 +1,40 @@
 ---
-description: RALPH Articulate — design the solution and break it into loopable tasks
-argument-hint: "<initiative ID, e.g. I-1>"
+description: RALPH Articulate — work out each task's details with the user and promote it to TODO
+argument-hint: "<initiative, milestone, or task ID, e.g. I-1, M-2, T-3>"
 ---
 
 You are in the **Articulate** phase of the RALPH method (Receive → Articulate → Loop → Pull request → Human review).
 Article II: *Articulate before you act. Write the solution down in words a stranger could follow. If you can't
 explain it, you can't loop it.*
 
-Initiative: $ARGUMENTS
+Articulate plans at a **low level**: the exact details of each task. The high-level plan (milestones and their
+unplanned tasks) came from `/ralph:receive`.
+
+Scope: $ARGUMENTS
 
 Work with the user, using the `ralph` MCP tools:
 
-1. Load context: `initiative_get`, `doc_list` for the initiative and for the project (`project_only`), and `doc_get`
-   for anything relevant. Use `search` to find prior decisions and related work. If no initiative ID was given,
-   call `initiative_list` and ask which one.
-2. Draft or update the architecture and design. Store them with `doc_create` / `doc_update` (kinds `architecture`,
-   `design`, `decision`). Project-wide architecture belongs at project scope; initiative-specific design belongs to the
-   initiative. Review each with the user before moving on.
-3. Split the work into milestones with `milestone_create`. Each milestone becomes one branch and one pull request,
-   so each must be independently reviewable and leave the codebase working.
-4. Propose tasks with `task_create`. Tasks start `PROPOSED`. A good task:
-   - is small enough to finish in one loop iteration;
-   - has a description that an agent with **no access to this conversation** could implement from;
-   - has acceptance criteria that are verifiable, preferably by tests or commands;
-   - is positioned so that earlier tasks never depend on later ones.
-5. Refine each task with the user (`task_update`). When a task is fully articulated, promote it with
-   `task_set_status` to `TODO`, giving a short reason. Leave tasks that still have open questions as `PROPOSED`.
-6. Finish with `status` and summarize: documents written, milestones, and which tasks are `TODO` versus still `PROPOSED`.
-
-If articulation reveals that the instructions themselves are unclear, say so and return to `/ralph:receive`
-(the Kickback Clause) rather than guessing.
+1. Resolve the scope: an initiative (`initiative_get`), a milestone (`milestone_get`), or a single task (`task_get`).
+   If no ID was given, call `status` and ask which to articulate.
+2. Load context: the initiative's brief, its documents and the project-wide ones (`doc_list` for the initiative and
+   with `project_only`, then `doc_get` for anything relevant), and `search` for prior decisions and related work.
+3. Take the `PROPOSED` tasks in scope one at a time, in milestone order and then position order. For each task:
+   - read the code it will touch;
+   - ask the user about the low-level details, a few questions at a time: exact behavior, interfaces and data, edge
+     cases and error handling, and which tests or commands will prove it works;
+   - store decisions that matter beyond this one task as `design` or `decision` documents;
+   - write the result with `task_update`: a description that an agent with **no access to this conversation** could
+     implement from, and acceptance criteria that are verifiable, preferably by tests or commands;
+   - as soon as both are settled, promote the task with `task_set_status` to `TODO`, giving a short reason. Do not
+     ask for separate permission to promote.
+4. Within a milestone, and with the user's agreement, you may add tasks (`task_create`), split or merge them, reorder
+   them (`position`), or cancel them (`task_set_status` `CANCELLED` with a reason). Each task must be small enough to
+   finish in one loop iteration and must never depend on a later one.
+5. If a milestone needs to change (added, removed, re-scoped, or reordered), or the instructions themselves turn out
+   to be unclear, stop. Add a `KICKBACK` note (`task_add_note`) to the affected task when there is one, explain the
+   problem, and suggest `/ralph:receive <initiative ID>` (the Kickback Clause) rather than guessing.
+6. Leave `TODO` tasks alone unless the user wants to revisit one; move it back to `PROPOSED` first.
+7. Finish with `status` and summarize: which tasks were promoted, which remain `PROPOSED` and why, and
+   `ralph loop --milestone <ID>` for each milestone that is now `READY`.
 
 Do not write production code in this phase.

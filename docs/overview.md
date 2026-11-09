@@ -15,8 +15,8 @@ flowchart LR
 
 | Phase | Who | What ralph provides |
 |---|---|---|
-| **Receive** | Person and agent, interactive | `/ralph:receive` stores the instructions verbatim as an *initiative's* brief, then has the agent ask about every ambiguity before anything is designed. |
-| **Articulate** | Person and agent, interactive | `/ralph:articulate` writes architecture and design *documents*, splits the work into *milestones*, and proposes *tasks*. Each task is refined until it can be looped, then promoted from `PROPOSED` to `TODO`. |
+| **Receive** | Person and agent, interactive | High-level planning. `/ralph:receive` stores the instructions verbatim as an *initiative's* brief and resolves the high-level questions: goals, scope, constraints, and delivery order. Once the person agrees to an outline, it creates the *milestones* and each milestone's *unplanned tasks*. |
+| **Articulate** | Person and agent, interactive | Low-level planning. `/ralph:articulate` works through the unplanned tasks one at a time, asking about the details until each has a self-contained description and verifiable acceptance criteria, then promotes it from `PROPOSED` to `TODO`. Detailed design is recorded as *documents*. |
 | **Loop** | Agent, headless | `ralph loop --milestone M-n` starts a fresh harness session for each `TODO` task. Each session reads its context from the store, implements one task, verifies it, and records the outcome. ralph commits each finished task on the milestone's branch. |
 | **Pull request** | ralph | `ralph pr create --milestone M-n` opens one pull request per milestone on the configured host. *Planned; the dry run works today.* |
 | **Human review** | People | Review, merge, and deploy happen outside ralph. Agents propose; people merge. |

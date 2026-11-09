@@ -5,8 +5,9 @@ These terms are used consistently in code, documentation, CLI output, MCP tool d
 **Acceptance criteria.** Verifiable conditions, ideally tests or commands, that show a task is done. A task needs
 acceptance criteria before it can move to `TODO`.
 
-**Articulate.** The second phase. The solution is written down as documents, milestones, and tasks clearly enough
-for a stranger, or a fresh agent, to follow.
+**Articulate.** The second phase: low-level planning. Each unplanned task is worked out with a person until a
+stranger, or a fresh agent, could implement and verify it from its description and acceptance criteria alone, and is
+then promoted to `TODO`.
 
 **Brief.** The instructions for an initiative exactly as they were received. Clarifications are stored separately as
 `brief` or `decision` documents, so the original text is never lost.
@@ -39,6 +40,9 @@ request. Its status is derived from its tasks.
 
 **Project.** A repository initialized with `ralph init`, identified by its `.ralph/` directory.
 
+**Receive.** The first phase: high-level planning. The instructions are recorded verbatim as an initiative's brief,
+high-level questions are resolved, and the work is outlined as milestones and unplanned tasks.
+
 **Stale chunk.** A chunk without an embedding for the configured model identity. Stale chunks are found by keyword search
 only, until `ralph index` embeds them.
 
@@ -51,3 +55,6 @@ retried.
 
 **Task note.** A dated entry on a task. Notes are of kind `NOTE`, `ITERATION` (context for the next iteration), or
 `KICKBACK`.
+
+**Unplanned task.** A `PROPOSED` task created during Receive, with only a title and perhaps a one-sentence summary.
+Articulate works out its details.

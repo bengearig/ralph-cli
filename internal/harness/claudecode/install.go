@@ -258,6 +258,9 @@ func installCommands(root string, force bool) ([]harness.Change, error) {
 			return changes, err
 		case bytes.Equal(cur, want):
 			c.Action = harness.Unchanged
+		case shippedEarlier(e.Name(), cur):
+			c.Action = harness.Updated
+			c.Note = "updated from an earlier ralph version"
 		case force:
 			c.Action = harness.Updated
 		default:

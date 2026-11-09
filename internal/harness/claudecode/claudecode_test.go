@@ -203,3 +203,53 @@ func TestRegistered(t *testing.T) {
 		t.Error("unknown harness should fail")
 	}
 }
+
+func TestInstallUpdatesEarlierShippedCommands(t *testing.T) {
+	old := []byte("an earlier receive\n")
+	saved := shippedCommands
+	t.Cleanup(func() { shippedCommands = saved })
+	shippedCommands = map[string][]string{"receive.md": {commandDigest(old)}}
+
+	h := New(config.ClaudeCodeConfig{Binary: "claude"})
+	for name, content := range map[string][]byte{
+		"lf":   old,
+		"crlf": []byte(strings.ReplaceAll(string(old), "\n", "\r\n")),
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, ".claude", "commands", "ralph")
+			os.MkdirAll(dir, 0o755)
+			os.WriteFile(filepath.Join(dir, "receive.md"), content, 0o644)
+			os.WriteFile(filepath.Join(dir, "status.md"), []byte("my status\n"), 0o644)
+
+			changes, err := h.Install(root, harness.InstallOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := actions(changes)
+			if a := got[filepath.FromSlash(".claude/commands/ralph/receive.md")]; a != harness.Updated {
+				t.Errorf("receive.md action = %q", a)
+			}
+			if a := got[filepath.FromSlash(".claude/commands/ralph/status.md")]; a != harness.Skipped {
+				t.Errorf("edited status.md action = %q", a)
+			}
+			want, _ := templates.ReadFile("templates/commands/receive.md")
+			if data, _ := os.ReadFile(filepath.Join(dir, "receive.md")); string(data) != string(want) {
+				t.Error("receive.md not replaced with the current template")
+			}
+		})
+	}
+}
+
+func TestShippedCommandDigestsAreEarlierVersions(t *testing.T) {
+	for name, digests := range shippedCommands {
+		cur, err := templates.ReadFile("templates/commands/" + name)
+		if err != nil {
+			t.Errorf("%s: no such template", name)
+			continue
+		}
+		if slices.Contains(digests, commandDigest(cur)) {
+			t.Errorf("%s: the current template is listed as an earlier version", name)
+		}
+	}
+}
