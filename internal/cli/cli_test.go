@@ -15,6 +15,7 @@ import (
 	"github.com/bengearig/ralph/internal/config"
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/errs"
+	"github.com/bengearig/ralph/internal/pr"
 	"github.com/bengearig/ralph/internal/project"
 	"github.com/bengearig/ralph/internal/service"
 )
@@ -464,11 +465,15 @@ func TestPRDryRunUsesRecordedBranch(t *testing.T) {
 	}
 }
 
-func TestMilestoneReconcile(t *testing.T) {
+// newGitTestEnv is newTestEnv in a new git repository whose main branch
+// holds an initialized ralph project. git runs a git command in it and
+// returns its trimmed output; commit commits a file and returns the hash.
+func newGitTestEnv(t *testing.T) (h *testEnv, git func(args ...string) string, commit func(file, msg string) string) {
+	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
-	h := newTestEnv(t, false)
+	h = newTestEnv(t, false)
 	for k, v := range map[string]string{
 		"GIT_CONFIG_NOSYSTEM": "1",
 		"GIT_AUTHOR_NAME":     "Ralph Test", "GIT_AUTHOR_EMAIL": "ralph@example.com",
@@ -476,7 +481,7 @@ func TestMilestoneReconcile(t *testing.T) {
 	} {
 		t.Setenv(k, v)
 	}
-	git := func(args ...string) string {
+	git = func(args ...string) string {
 		t.Helper()
 		cmd := exec.Command("git", args...)
 		cmd.Dir = h.dir
@@ -486,7 +491,7 @@ func TestMilestoneReconcile(t *testing.T) {
 		}
 		return strings.TrimSpace(string(out))
 	}
-	commit := func(file, msg string) string {
+	commit = func(file, msg string) string {
 		t.Helper()
 		if err := os.WriteFile(filepath.Join(h.dir, file), []byte(msg+"\n"), 0o644); err != nil {
 			t.Fatal(err)
@@ -499,6 +504,11 @@ func TestMilestoneReconcile(t *testing.T) {
 	h.ok("init", "--no-harness")
 	git("add", ".")
 	git("commit", "--quiet", "-m", "initial")
+	return h, git, commit
+}
+
+func TestMilestoneReconcile(t *testing.T) {
+	h, git, commit := newGitTestEnv(t)
 	base := git("rev-parse", "HEAD")
 
 	h.ok("initiative", "create", "--title", "SSO")
@@ -665,5 +675,179 @@ func TestMilestoneReconcile(t *testing.T) {
 	h.json(&task, "task", "show", "T-2")
 	if task.Status != "TODO" || task.Commit != "" {
 		t.Errorf("T-2 = %+v", task)
+	}
+}
+
+// fakeProvider is a pull request provider that counts Create calls.
+type fakeProvider struct{ created int }
+
+func (f *fakeProvider) Name() string    { return "fake" }
+func (f *fakeProvider) Validate() error { return nil }
+func (f *fakeProvider) Create(context.Context, pr.Request) (pr.PullRequest, error) {
+	f.created++
+	return pr.PullRequest{ID: "1", URL: "https://example.com/pr/1"}, nil
+}
+
+func TestPRCreateDriftGate(t *testing.T) {
+	h, git, commit := newGitTestEnv(t)
+	base := git("rev-parse", "HEAD")
+	h.ok("initiative", "create", "--title", "SSO")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Login")
+	for _, title := range []string{"Route", "Logout"} {
+		h.ok("task", "create", "--milestone", "M-1", "--title", title, "--description", "d", "--criteria", "c")
+	}
+	git("switch", "--quiet", "-c", "ralph/login")
+	var commits []string
+	for _, id := range []string{"T-1", "T-2"} {
+		h.ok("task", "status", id, "TODO")
+		h.ok("task", "status", id, "IN_PROGRESS")
+		h.ok("task", "status", id, "DONE", "--reason", "done")
+		commits = append(commits, commit(id+".txt", id+": work\n\nRalph-Task: "+id))
+	}
+	cfg, err := config.Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Embeddings.Provider = config.EmbeddingsNone
+	svc, closeFn, err := service.Open(context.Background(), cfg, h.dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeFn()
+	ctx := context.Background()
+	record := func(g domain.MilestoneGit) {
+		t.Helper()
+		if err := svc.RecordMilestoneGit(ctx, 1, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recorded := domain.MilestoneGit{Branch: "ralph/login", BaseCommit: base, HeadCommit: commits[1]}
+	record(recorded)
+	for i, c := range commits {
+		if err := svc.RecordTaskCommit(ctx, int64(i+1), c); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fake := &fakeProvider{}
+	newPRProvider = func(*config.Config) (pr.Provider, error) { return fake, nil }
+	t.Cleanup(func() { newPRProvider = pr.New })
+
+	type dryRunJSON struct {
+		Provider string         `json:"provider"`
+		Drift    map[string]any `json:"drift"`
+	}
+	refused := func(name, want string) {
+		t.Helper()
+		before := fake.created
+		_, _, err := h.run("", "pr", "create", "--milestone", "M-1")
+		if !errors.Is(err, errs.ErrNeedsHuman) {
+			t.Fatalf("%s: err = %v, want ErrNeedsHuman", name, err)
+		}
+		for _, w := range []string{want, "run: ralph milestone reconcile M-1"} {
+			if !strings.Contains(err.Error(), w) {
+				t.Errorf("%s: error lacks %q: %v", name, w, err)
+			}
+		}
+		if fake.created != before {
+			t.Errorf("%s: the provider was called", name)
+		}
+	}
+
+	// Unchanged: the dry run reports it without a task table, and the
+	// request reaches the provider.
+	out := h.ok("pr", "create", "--milestone", "M-1", "--dry-run")
+	if want := "branches: ralph/login → main\ndrift:    unchanged (M-1 branch ralph/login is at its recorded head " + commits[1][:12] + ")\ndraft:"; !strings.Contains(out, want) {
+		t.Errorf("unchanged dry run lacks %q:\n%s", want, out)
+	}
+	if strings.Contains(out, "MATCH") {
+		t.Errorf("unchanged dry run prints the task table:\n%s", out)
+	}
+	var plan dryRunJSON
+	h.json(&plan, "pr", "create", "--milestone", "M-1", "--dry-run")
+	if plan.Drift["state"] != "unchanged" || plan.Provider != "fake" {
+		t.Errorf("unchanged JSON dry run = %+v", plan)
+	}
+	if fake.created != 0 {
+		t.Fatalf("dry run called the provider")
+	}
+	if out := h.ok("pr", "create", "--milestone", "M-1"); out != "opened https://example.com/pr/1\n" || fake.created != 1 {
+		t.Errorf("unchanged create: %q, created %d", out, fake.created)
+	}
+
+	// The real provider is reached on a clean milestone, so the error is
+	// its own and not a refusal.
+	newPRProvider = pr.New
+	t.Setenv("RALPH_PR__BITBUCKET_CLOUD__WORKSPACE", "acme")
+	t.Setenv("RALPH_PR__BITBUCKET_CLOUD__REPO_SLUG", "sso")
+	t.Setenv(cfg.PR.BitbucketCloud.TokenEnv, "secret")
+	if _, _, err := h.run("", "pr", "create", "--milestone", "M-1"); !errors.Is(err, errs.ErrNotImplemented) {
+		t.Errorf("clean milestone with bitbucket_cloud: err = %v, want ErrNotImplemented", err)
+	}
+	newPRProvider = func(*config.Config) (pr.Provider, error) { return fake, nil }
+
+	// Ahead by a manual commit.
+	commit("manual.txt", "Manual tweak")
+	refused("ahead", "M-1 branch ralph/login is 1 commit ahead of its recorded head "+commits[1][:12])
+
+	// Diverged by a rebase onto updated main: refused, but the dry run
+	// reports it with the task table.
+	git("reset", "--quiet", "--hard", commits[1])
+	git("switch", "--quiet", "main")
+	commit("upstream.txt", "Upstream change")
+	git("switch", "--quiet", "ralph/login")
+	git("rebase", "--quiet", "main")
+	rebased := git("rev-parse", "HEAD")
+	refused("diverged", "M-1 has diverged from its recorded head "+commits[1][:12])
+	out = h.ok("pr", "create", "--milestone", "M-1", "--dry-run")
+	for _, want := range []string{
+		"drift:    diverged (M-1 has diverged from its recorded head " + commits[1][:12] + ")\n",
+		"TASK  MATCH    COMMIT        TITLE",
+		"T-2   trailer  " + rebased[:12] + "  Logout",
+		"Milestone M-1 of initiative I-1",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("diverged dry run lacks %q:\n%s", want, out)
+		}
+	}
+	plan = dryRunJSON{}
+	h.json(&plan, "pr", "create", "--milestone", "M-1", "--dry-run")
+	if plan.Drift["state"] != "diverged" {
+		t.Errorf("diverged JSON dry run drift = %v", plan.Drift)
+	}
+
+	// Unrecorded: refused until reconcile --accept.
+	record(domain.MilestoneGit{})
+	refused("unrecorded", "M-1 has no recorded head for branch ralph/login")
+	record(recorded)
+
+	// Merged into main.
+	git("switch", "--quiet", "main")
+	git("merge", "--quiet", "--no-ff", "-m", "Merge ralph/login", "ralph/login")
+	refused("merged", "M-1 branch ralph/login is already merged into main")
+
+	// A failing drift check fails pr create but only warns in a dry run.
+	t.Setenv("RALPH_PR__BASE_BRANCH", "nope")
+	_, _, err = h.run("", "pr", "create", "--milestone", "M-1")
+	if err == nil || errors.Is(err, errs.ErrNeedsHuman) || !strings.Contains(err.Error(), "pr.base_branch") {
+		t.Errorf("missing base branch: err = %v, want the drift check's error", err)
+	}
+	out, errOut, err := h.run("", "pr", "create", "--milestone", "M-1", "--dry-run")
+	if err != nil {
+		t.Fatalf("dry run with a failing drift check: %v", err)
+	}
+	if !strings.Contains(errOut, "warning: drift check failed: ") || !strings.Contains(errOut, "pr.base_branch") {
+		t.Errorf("dry run warning:\n%s", errOut)
+	}
+	if !strings.Contains(out, "drift:    not checked\n") {
+		t.Errorf("dry run output:\n%s", out)
+	}
+	var raw map[string]any
+	h.json(&raw, "pr", "create", "--milestone", "M-1", "--dry-run")
+	if raw["drift"] != nil || !strings.Contains(fmt.Sprint(raw["drift_error"]), "pr.base_branch") {
+		t.Errorf("JSON dry run with a failing drift check: drift = %v, drift_error = %v", raw["drift"], raw["drift_error"])
+	}
+	if fake.created != 1 {
+		t.Errorf("provider called %d times, want 1", fake.created)
 	}
 }

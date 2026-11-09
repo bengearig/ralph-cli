@@ -321,6 +321,11 @@ func (a *app) printDriftReport(r drift.Report) error {
 			return err
 		}
 	}
+	return a.printDriftDetails(r)
+}
+
+// printDriftDetails renders a drift report's commit lists and task table.
+func (a *app) printDriftDetails(r drift.Report) error {
 	if err := a.printCommits("commits beyond the recorded head", r.ExtraCommits); err != nil {
 		return err
 	}
