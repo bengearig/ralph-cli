@@ -131,7 +131,10 @@ func (r Runner) Run(ctx context.Context, plan Plan) (Outcome, error) {
 	}
 	defer lock.release()
 
-	repo, err := r.prepareBranch(ctx, plan, f)
+	repo, branch, err := r.prepareBranch(ctx, plan, milestoneID, f)
+	if branch != "" {
+		plan.Branch, out.Branch = branch, branch
+	}
 	if err != nil {
 		return out, err
 	}
@@ -288,15 +291,17 @@ func (r Runner) Run(ctx context.Context, plan Plan) (Outcome, error) {
 }
 
 // prepareBranch checks out the milestone branch, creating it from the base
-// branch when needed. Uncommitted changes are allowed only when already on
-// the milestone branch, where they are the previous run's unfinished work.
-func (r Runner) prepareBranch(ctx context.Context, plan Plan, f feed) (git.Repo, error) {
+// branch when needed, and records the branch when the milestone has no
+// record yet. It returns the branch actually checked out. Uncommitted changes
+// are allowed only when already on the milestone branch, where they are the
+// previous run's unfinished work.
+func (r Runner) prepareBranch(ctx context.Context, plan Plan, milestoneID int64, f feed) (git.Repo, string, error) {
 	if _, err := exec.LookPath("git"); err != nil {
-		return git.Repo{}, errors.New("the loop needs git, which was not found on PATH")
+		return git.Repo{}, "", errors.New("the loop needs git, which was not found on PATH")
 	}
 	gitRoot, err := project.GitRoot(ctx, r.Root)
 	if err != nil {
-		return git.Repo{}, fmt.Errorf("the loop needs a git repository: %w", err)
+		return git.Repo{}, "", fmt.Errorf("the loop needs a git repository: %w", err)
 	}
 	root := r.Root
 	if resolved, err := filepath.EvalSymlinks(root); err == nil {
@@ -307,48 +312,147 @@ func (r Runner) prepareBranch(ctx context.Context, plan Plan, f feed) (git.Repo,
 	}
 	exclude, err := filepath.Rel(gitRoot, filepath.Join(root, project.DirName))
 	if err != nil {
-		return git.Repo{}, err
+		return git.Repo{}, "", err
 	}
 	repo := git.Repo{Dir: gitRoot, Exclude: filepath.ToSlash(exclude)}
 
+	m, err := r.Service.GetMilestone(ctx, milestoneID)
+	if err != nil {
+		return repo, "", err
+	}
+	recorded, branch := m.Branch, plan.Branch
+	if recorded != "" && recorded != branch {
+		return repo, "", fmt.Errorf("%s's recorded branch %s differs from the planned %s; rerun to plan again", m.ID, recorded, branch)
+	}
+
 	current, err := repo.CurrentBranch(ctx)
 	if err != nil {
-		return repo, err
+		return repo, "", err
 	}
-	if current == plan.Branch {
-		return repo, nil
+	if recorded != "" && current != recorded {
+		exists, err := repo.BranchExists(ctx, recorded)
+		if err != nil {
+			return repo, "", err
+		}
+		if !exists {
+			if branch, err = BranchName(r.Config.Loop.BranchTemplate, plan.Initiative, plan.Milestone); err != nil {
+				return repo, "", err
+			}
+			f.printf("! recorded branch %s not found; using %s from loop.branch_template\n", recorded, branch)
+			recorded = ""
+		}
+	}
+
+	start, err := r.checkout(ctx, repo, plan, branch, current, f)
+	if err != nil {
+		return repo, branch, err
+	}
+	switch {
+	case start != "":
+		base, err := repo.RevParse(ctx, start)
+		if err != nil {
+			return repo, branch, err
+		}
+		return repo, branch, r.recordBranch(ctx, milestoneID, domain.MilestoneGit{Branch: branch, BaseCommit: base, HeadCommit: base})
+	case recorded == "":
+		g, err := r.adoptBranch(ctx, repo, plan, branch, f)
+		if err != nil {
+			return repo, branch, err
+		}
+		return repo, branch, r.recordBranch(ctx, milestoneID, g)
+	}
+	return repo, branch, nil
+}
+
+// checkout puts the work tree on branch. It returns the start ref when it
+// created the branch, or "" when the branch already existed.
+func (r Runner) checkout(ctx context.Context, repo git.Repo, plan Plan, branch, current string, f feed) (string, error) {
+	if current == branch {
+		return "", nil
 	}
 	dirty, err := repo.Dirty(ctx)
 	if err != nil {
-		return repo, err
+		return "", err
 	}
 	if len(dirty) > 0 {
 		shown := dirty
 		if len(shown) > dirtyListMax {
 			shown = append(shown[:dirtyListMax:dirtyListMax], fmt.Sprintf("… and %d more", len(dirty)-dirtyListMax))
 		}
-		return repo, fmt.Errorf("the working tree has uncommitted changes; commit or stash them, or switch to %s to resume:\n  %s",
-			plan.Branch, strings.Join(shown, "\n  "))
+		return "", fmt.Errorf("the working tree has uncommitted changes; commit or stash them, or switch to %s to resume:\n  %s",
+			branch, strings.Join(shown, "\n  "))
 	}
-	exists, err := repo.BranchExists(ctx, plan.Branch)
+	exists, err := repo.BranchExists(ctx, branch)
 	if err != nil {
-		return repo, err
+		return "", err
 	}
 	if exists {
-		f.printf("switching to %s\n", plan.Branch)
-		return repo, repo.Switch(ctx, plan.Branch)
+		f.printf("switching to %s\n", branch)
+		return "", repo.Switch(ctx, branch)
 	}
-	for _, start := range []string{"refs/heads/" + plan.BaseBranch, "refs/remotes/origin/" + plan.BaseBranch} {
-		ok, err := repo.RefExists(ctx, start)
+	start, err := baseRef(ctx, repo, plan.BaseBranch)
+	if err != nil {
+		return "", err
+	}
+	if start == "" {
+		return "", fmt.Errorf("base branch %q not found locally or on origin; set pr.base_branch", plan.BaseBranch)
+	}
+	f.printf("creating %s from %s\n", branch, strings.TrimPrefix(strings.TrimPrefix(start, "refs/heads/"), "refs/remotes/"))
+	if err := repo.CreateBranch(ctx, branch, start); err != nil {
+		return "", err
+	}
+	return start, nil
+}
+
+// adoptBranch builds the first record for an existing branch the loop did
+// not create, trusting it as the milestone's branch.
+func (r Runner) adoptBranch(ctx context.Context, repo git.Repo, plan Plan, branch string, f feed) (domain.MilestoneGit, error) {
+	g := domain.MilestoneGit{Branch: branch}
+	head, err := repo.RevParse(ctx, "HEAD")
+	if err != nil {
+		return g, err
+	}
+	g.HeadCommit = head
+	base, err := baseRef(ctx, repo, plan.BaseBranch)
+	if err != nil {
+		return g, err
+	}
+	if base == "" {
+		f.printf("! base branch %q not found locally or on origin; recording %s without a base commit\n", plan.BaseBranch, branch)
+		return g, nil
+	}
+	hash, found, err := repo.MergeBase(ctx, "HEAD", base)
+	if err != nil {
+		return g, err
+	}
+	if !found {
+		f.printf("! %s shares no history with %s; recording it without a base commit\n", branch, plan.BaseBranch)
+		return g, nil
+	}
+	g.BaseCommit = hash
+	return g, nil
+}
+
+func (r Runner) recordBranch(ctx context.Context, milestoneID int64, g domain.MilestoneGit) error {
+	if err := r.Service.RecordMilestoneGit(ctx, milestoneID, g); err != nil {
+		return fmt.Errorf("recording branch %s: %w", g.Branch, err)
+	}
+	return nil
+}
+
+// baseRef returns the first of the local and origin base branch refs that
+// exists, or "" when neither does.
+func baseRef(ctx context.Context, repo git.Repo, base string) (string, error) {
+	for _, ref := range []string{"refs/heads/" + base, "refs/remotes/origin/" + base} {
+		ok, err := repo.RefExists(ctx, ref)
 		if err != nil {
-			return repo, err
+			return "", err
 		}
 		if ok {
-			f.printf("creating %s from %s\n", plan.Branch, strings.TrimPrefix(strings.TrimPrefix(start, "refs/heads/"), "refs/remotes/"))
-			return repo, repo.CreateBranch(ctx, plan.Branch, start)
+			return ref, nil
 		}
 	}
-	return repo, fmt.Errorf("base branch %q not found locally or on origin; set pr.base_branch", plan.BaseBranch)
+	return "", nil
 }
 
 // runSession runs one harness session, saving its prompt and transcript.

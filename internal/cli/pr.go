@@ -53,8 +53,8 @@ func (a *app) newPRCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			branch, err := loop.BranchName(l.Config.Loop.BranchTemplate,
-				loop.Ref{ID: i.ID, Slug: i.Slug, Title: i.Title}, loop.Ref{ID: m.ID, Slug: m.Slug, Title: m.Title})
+			branch, err := loop.MilestoneBranch(l.Config.Loop.BranchTemplate,
+				loop.Ref{ID: i.ID, Slug: i.Slug, Title: i.Title}, loop.Ref{ID: m.ID, Slug: m.Slug, Title: m.Title}, m.Branch)
 			if err != nil {
 				return err
 			}

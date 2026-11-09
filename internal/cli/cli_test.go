@@ -378,3 +378,60 @@ func TestShowRecordedGitState(t *testing.T) {
 		t.Errorf("task JSON commit = %q, want %q", tj.Commit, commit)
 	}
 }
+
+func TestPRDryRunUsesRecordedBranch(t *testing.T) {
+	h := newTestEnv(t, true)
+	h.ok("initiative", "create", "--title", "Customer SSO")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Callback")
+	h.ok("task", "create", "--milestone", "M-1", "--title", "Route", "--description", "Add route", "--criteria", "Tests pass")
+	h.ok("task", "status", "T-1", "TODO")
+
+	if out := h.ok("pr", "create", "--milestone", "M-1", "--dry-run"); !strings.Contains(out, "branches: ralph/callback → main\n") {
+		t.Errorf("template branch:\n%s", out)
+	}
+	var plan struct {
+		Branch string `json:"branch"`
+	}
+	h.json(&plan, "loop", "--milestone", "M-1", "--dry-run")
+	if plan.Branch != "ralph/callback" {
+		t.Errorf("loop dry-run branch = %q", plan.Branch)
+	}
+	var m struct {
+		Branch string `json:"branch"`
+	}
+	h.json(&m, "milestone", "show", "M-1")
+	if m.Branch != "" {
+		t.Errorf("loop --dry-run recorded branch %q", m.Branch)
+	}
+
+	cfg, err := config.Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Embeddings.Provider = config.EmbeddingsNone
+	svc, closeFn, err := service.Open(context.Background(), cfg, h.dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeFn()
+	if err := svc.RecordMilestoneGit(context.Background(), 1, domain.MilestoneGit{Branch: "feature/sso-callback"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if out := h.ok("pr", "create", "--milestone", "M-1", "--dry-run"); !strings.Contains(out, "branches: feature/sso-callback → main\n") {
+		t.Errorf("recorded branch:\n%s", out)
+	}
+	var req struct {
+		Request struct {
+			SourceBranch string `json:"source_branch"`
+		} `json:"request"`
+	}
+	h.json(&req, "pr", "create", "--milestone", "M-1", "--dry-run")
+	if req.Request.SourceBranch != "feature/sso-callback" {
+		t.Errorf("JSON source branch = %q", req.Request.SourceBranch)
+	}
+	h.json(&plan, "loop", "--milestone", "M-1", "--dry-run")
+	if plan.Branch != "feature/sso-callback" {
+		t.Errorf("loop dry-run branch = %q", plan.Branch)
+	}
+}

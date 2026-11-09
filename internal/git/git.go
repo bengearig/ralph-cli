@@ -92,6 +92,24 @@ func (r Repo) RefExists(ctx context.Context, ref string) (bool, error) {
 	return true, nil
 }
 
+// RevParse returns the full object name of the commit ref points to.
+func (r Repo) RevParse(ctx context.Context, ref string) (string, error) {
+	return r.run(ctx, "rev-parse", "--verify", ref+"^{commit}")
+}
+
+// MergeBase returns the full object name of a best common ancestor of a and
+// b, or found=false when they share no history.
+func (r Repo) MergeBase(ctx context.Context, a, b string) (hash string, found bool, err error) {
+	out, err := r.run(ctx, "merge-base", a, b)
+	if err != nil {
+		if exitCode(err) == 1 {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return out, true, nil
+}
+
 // BranchExists reports whether a local branch exists.
 func (r Repo) BranchExists(ctx context.Context, name string) (bool, error) {
 	return r.RefExists(ctx, "refs/heads/"+name)

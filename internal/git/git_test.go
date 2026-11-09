@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -212,5 +213,57 @@ func TestStash(t *testing.T) {
 	}
 	if files := mustRun(t, r, "stash", "show", "--include-untracked", "--name-only"); !strings.Contains(files, "new.txt") || !strings.Contains(files, "README.md") {
 		t.Errorf("stashed files = %q", files)
+	}
+}
+
+func TestRevParse(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	hash, err := r.RevParse(ctx, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(hash) {
+		t.Errorf("RevParse(HEAD) = %q, want a full SHA-1", hash)
+	}
+	if want := mustRun(t, r, "rev-parse", "main"); hash != want {
+		t.Errorf("RevParse(HEAD) = %q, want %q", hash, want)
+	}
+	mustRun(t, r, "tag", "-a", "-m", "annotated", "v1")
+	if tagged, err := r.RevParse(ctx, "v1"); err != nil || tagged != hash {
+		t.Errorf("RevParse(v1) = %q, %v; want the tagged commit %q", tagged, err, hash)
+	}
+	if _, err := r.RevParse(ctx, "nope"); err == nil || !strings.Contains(err.Error(), "git rev-parse") {
+		t.Errorf("RevParse(nope) = %v", err)
+	}
+}
+
+func TestMergeBase(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	fork := mustRun(t, r, "rev-parse", "HEAD")
+	mustRun(t, r, "switch", "--quiet", "-c", "feature")
+	write(t, r.Dir, "f.txt", "f\n")
+	mustRun(t, r, "add", "f.txt")
+	mustRun(t, r, "commit", "--quiet", "-m", "feature")
+	mustRun(t, r, "switch", "--quiet", "main")
+	write(t, r.Dir, "m.txt", "m\n")
+	mustRun(t, r, "add", "m.txt")
+	mustRun(t, r, "commit", "--quiet", "-m", "main moves on")
+
+	if hash, found, err := r.MergeBase(ctx, "feature", "main"); err != nil || !found || hash != fork {
+		t.Errorf("MergeBase(feature, main) = %q, %v, %v; want %q", hash, found, err, fork)
+	}
+
+	mustRun(t, r, "switch", "--quiet", "--orphan", "lonely")
+	write(t, r.Dir, "o.txt", "o\n")
+	mustRun(t, r, "add", "o.txt")
+	mustRun(t, r, "commit", "--quiet", "-m", "unrelated")
+	if hash, found, err := r.MergeBase(ctx, "lonely", "main"); err != nil || found || hash != "" {
+		t.Errorf("MergeBase(lonely, main) = %q, %v, %v; want no common ancestor", hash, found, err)
+	}
+
+	if _, _, err := r.MergeBase(ctx, "nope", "main"); err == nil {
+		t.Error("MergeBase with a missing ref should fail")
 	}
 }

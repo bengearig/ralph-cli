@@ -93,7 +93,7 @@ func (p Planner) Plan(ctx context.Context, milestoneID int64) (Plan, error) {
 		StallThreshold: p.Config.Loop.StallThreshold,
 		CommitPerTask:  p.Config.Loop.CommitPerTask,
 	}
-	if plan.Branch, err = BranchName(p.Config.Loop.BranchTemplate, plan.Initiative, plan.Milestone); err != nil {
+	if plan.Branch, err = MilestoneBranch(p.Config.Loop.BranchTemplate, plan.Initiative, plan.Milestone, m.Branch); err != nil {
 		return Plan{}, err
 	}
 
@@ -190,6 +190,15 @@ func RenderPrompt(tmpl string, data PromptData) (string, error) {
 		return "", fmt.Errorf("rendering prompt template: %w", err)
 	}
 	return b.String(), nil
+}
+
+// MilestoneBranch returns the milestone's recorded branch, or the one the
+// branch template derives when none is recorded.
+func MilestoneBranch(tmpl string, initiative, milestone Ref, recorded string) (string, error) {
+	if recorded != "" {
+		return recorded, nil
+	}
+	return BranchName(tmpl, initiative, milestone)
 }
 
 // BranchName renders the branch template and checks the result is a usable

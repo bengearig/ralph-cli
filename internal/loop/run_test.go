@@ -483,3 +483,166 @@ func TestRunReportsLeftoverAtEnd(t *testing.T) {
 		t.Errorf("feed:\n%s", e.out.String())
 	}
 }
+
+// blocker is a harness that blocks every task without touching the tree,
+// recording the prompts it was given.
+func (e *runEnv) blocker(prompts *[]string) *fakeHarness {
+	return &fakeHarness{script: func(_ int, id int64, req harness.Request) (harness.Result, error) {
+		*prompts = append(*prompts, req.Prompt)
+		_, err := e.svc.SetTaskStatus(context.Background(), id, domain.StatusBlocked, "stop here")
+		return harness.Result{Completed: true}, err
+	}}
+}
+
+func (e *runEnv) milestone(t *testing.T) service.MilestoneView {
+	t.Helper()
+	m, err := e.svc.GetMilestone(context.Background(), e.mID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func (e *runEnv) commitFile(t *testing.T, name string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(e.root, name), []byte(name+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, e.root, "add", name)
+	gitCmd(t, e.root, "commit", "--quiet", "-m", "add "+name)
+}
+
+func TestRunRecordsCreatedBranch(t *testing.T) {
+	e := newRunEnv(t, "a")
+	mainHash := gitCmd(t, e.root, "rev-parse", "main")
+	plan, err := Planner{Service: e.svc, Config: e.cfg, Root: e.root}.Plan(context.Background(), e.mID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var prompts []string
+	_, err = Runner{Service: e.svc, Config: e.cfg, Root: e.root, Harness: e.blocker(&prompts), Out: &e.out}.Run(context.Background(), plan)
+	if !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("err = %v\n%s", err, e.out.String())
+	}
+	if !strings.Contains(e.out.String(), "creating ralph/oidc-login from main") {
+		t.Errorf("feed:\n%s", e.out.String())
+	}
+	m := e.milestone(t)
+	if len(mainHash) != 40 || m.Branch != plan.Branch || m.BaseCommit != mainHash || m.HeadCommit != mainHash {
+		t.Errorf("record = %q base %q head %q; want %q base and head %q", m.Branch, m.BaseCommit, m.HeadCommit, plan.Branch, mainHash)
+	}
+}
+
+func TestRunAdoptsExistingUnrecordedBranch(t *testing.T) {
+	e := newRunEnv(t, "a")
+	gitCmd(t, e.root, "switch", "--quiet", "-c", "ralph/oidc-login")
+	e.commitFile(t, "earlier.txt")
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	e.commitFile(t, "main-moves-on.txt")
+	tip := gitCmd(t, e.root, "rev-parse", "ralph/oidc-login")
+	base := gitCmd(t, e.root, "merge-base", "ralph/oidc-login", "main")
+
+	var prompts []string
+	if _, err := e.run(t, context.Background(), e.blocker(&prompts)); !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("err = %v\n%s", err, e.out.String())
+	}
+	if !strings.Contains(e.out.String(), "switching to ralph/oidc-login") {
+		t.Errorf("feed:\n%s", e.out.String())
+	}
+	m := e.milestone(t)
+	if m.Branch != "ralph/oidc-login" || m.BaseCommit != base || m.HeadCommit != tip {
+		t.Errorf("record = %q base %q head %q; want base %q head %q", m.Branch, m.BaseCommit, m.HeadCommit, base, tip)
+	}
+}
+
+func TestRunAdoptsUnrelatedBranchWithoutBase(t *testing.T) {
+	e := newRunEnv(t, "a")
+	gitCmd(t, e.root, "switch", "--quiet", "--orphan", "ralph/oidc-login")
+	e.commitFile(t, "unrelated.txt")
+	tip := gitCmd(t, e.root, "rev-parse", "HEAD")
+
+	var prompts []string
+	if _, err := e.run(t, context.Background(), e.blocker(&prompts)); !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("err = %v\n%s", err, e.out.String())
+	}
+	if !strings.Contains(e.out.String(), "! ralph/oidc-login shares no history with main; recording it without a base commit") {
+		t.Errorf("feed:\n%s", e.out.String())
+	}
+	if m := e.milestone(t); m.Branch != "ralph/oidc-login" || m.BaseCommit != "" || m.HeadCommit != tip {
+		t.Errorf("record = %q base %q head %q; want head %q", m.Branch, m.BaseCommit, m.HeadCommit, tip)
+	}
+}
+
+func TestRunUsesRecordedBranch(t *testing.T) {
+	e := newRunEnv(t, "a")
+	gitCmd(t, e.root, "branch", "feature/custom")
+	g := domain.MilestoneGit{Branch: "feature/custom"}
+	if err := e.svc.RecordMilestoneGit(context.Background(), e.mID, g); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := Planner{Service: e.svc, Config: e.cfg, Root: e.root}.Plan(context.Background(), e.mID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Branch != "feature/custom" || !strings.Contains(plan.FirstPrompt, "Branch: feature/custom") {
+		t.Fatalf("plan branch = %q", plan.Branch)
+	}
+	var prompts []string
+	out, err := Runner{Service: e.svc, Config: e.cfg, Root: e.root, Harness: e.blocker(&prompts), Out: &e.out}.Run(context.Background(), plan)
+	if !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("err = %v\n%s", err, e.out.String())
+	}
+	if b := gitCmd(t, e.root, "branch", "--show-current"); b != "feature/custom" || out.Branch != "feature/custom" {
+		t.Errorf("checked out %q, outcome branch %q", b, out.Branch)
+	}
+	if list := gitCmd(t, e.root, "branch", "--list", "ralph/oidc-login"); list != "" {
+		t.Errorf("template branch was created: %q", list)
+	}
+	if m := e.milestone(t); m.Branch != g.Branch || m.BaseCommit != "" || m.HeadCommit != "" {
+		t.Errorf("record changed to %q base %q head %q", m.Branch, m.BaseCommit, m.HeadCommit)
+	}
+}
+
+func TestRunRecordedBranchMissingFallsBackToTemplate(t *testing.T) {
+	e := newRunEnv(t, "a")
+	mainHash := gitCmd(t, e.root, "rev-parse", "main")
+	stale := strings.Repeat("ab", 20)
+	if err := e.svc.RecordMilestoneGit(context.Background(), e.mID, domain.MilestoneGit{Branch: "gone/branch", BaseCommit: stale, HeadCommit: stale}); err != nil {
+		t.Fatal(err)
+	}
+	var prompts []string
+	out, err := e.run(t, context.Background(), e.blocker(&prompts))
+	if !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("err = %v\n%s", err, e.out.String())
+	}
+	if !strings.Contains(e.out.String(), "! recorded branch gone/branch not found; using ralph/oidc-login from loop.branch_template") {
+		t.Errorf("feed:\n%s", e.out.String())
+	}
+	if b := gitCmd(t, e.root, "branch", "--show-current"); b != "ralph/oidc-login" || out.Branch != "ralph/oidc-login" {
+		t.Errorf("checked out %q, outcome branch %q", b, out.Branch)
+	}
+	if len(prompts) == 0 || !strings.Contains(prompts[0], "Branch: ralph/oidc-login") {
+		t.Errorf("prompt should name the checked-out branch: %q", prompts)
+	}
+	if m := e.milestone(t); m.Branch != "ralph/oidc-login" || m.BaseCommit != mainHash || m.HeadCommit != mainHash {
+		t.Errorf("record = %q base %q head %q; want base and head %q", m.Branch, m.BaseCommit, m.HeadCommit, mainHash)
+	}
+}
+
+func TestPlanRecordsNothing(t *testing.T) {
+	e := newRunEnv(t, "a")
+	gitCmd(t, e.root, "branch", "ralph/oidc-login")
+	plan, err := Planner{Service: e.svc, Config: e.cfg, Root: e.root}.Plan(context.Background(), e.mID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Branch != "ralph/oidc-login" {
+		t.Errorf("plan branch = %q", plan.Branch)
+	}
+	if m := e.milestone(t); m.Branch != "" || m.BaseCommit != "" || m.HeadCommit != "" {
+		t.Errorf("planning recorded %q base %q head %q", m.Branch, m.BaseCommit, m.HeadCommit)
+	}
+	if b := gitCmd(t, e.root, "branch", "--show-current"); b != "main" {
+		t.Errorf("planning switched to %q", b)
+	}
+}
