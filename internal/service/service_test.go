@@ -471,3 +471,115 @@ func TestRecordGitState(t *testing.T) {
 		t.Errorf("empty task JSON has commit: %v", tj)
 	}
 }
+
+func TestReopenTask(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	_, mid := e.scaffold(t)
+	commit := strings.Repeat("d", 40)
+
+	newTask := func(path ...domain.Status) int64 {
+		t.Helper()
+		desc, ac := "Do the thing", "The thing is done"
+		tv, err := e.svc.CreateTask(ctx, TaskInput{MilestoneID: mid, Title: "Task", Description: desc, AcceptanceCriteria: ac})
+		if err != nil {
+			t.Fatal(err)
+		}
+		id := mustID(t, domain.KindTask, tv.ID)
+		for _, st := range path {
+			if _, err := e.svc.SetTaskStatus(ctx, id, st, "step"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return id
+	}
+	snapshot := func(id int64) string {
+		t.Helper()
+		v, err := e.svc.GetTask(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	toDone := []domain.Status{domain.StatusTodo, domain.StatusInProgress, domain.StatusDone}
+
+	done := newTask(toDone...)
+	if err := e.svc.RecordTaskCommit(ctx, done, commit); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := e.svc.GetTask(ctx, done); v.Commit != commit {
+		t.Fatalf("commit not recorded: %q", v.Commit)
+	}
+
+	if _, err := e.svc.SetTaskStatus(ctx, done, domain.StatusTodo, "try"); !errors.Is(err, domain.ErrInvalidTransition) {
+		t.Errorf("SetTaskStatus(DONE → TODO) = %v, want ErrInvalidTransition", err)
+	}
+	if v, _ := e.svc.GetTask(ctx, done); len(v.AllowedNext) != 0 {
+		t.Errorf("DONE allowed next = %v", v.AllowedNext)
+	}
+
+	for _, reason := range []string{"", "   \t\n"} {
+		before := snapshot(done)
+		if _, err := e.svc.ReopenTask(ctx, done, reason); !errors.Is(err, domain.ErrInvalid) {
+			t.Errorf("ReopenTask(reason %q) = %v, want ErrInvalid", reason, err)
+		}
+		if after := snapshot(done); after != before {
+			t.Errorf("blank reason changed the task:\nbefore %s\nafter  %s", before, after)
+		}
+	}
+
+	for name, id := range map[string]int64{
+		"TODO":        newTask(domain.StatusTodo),
+		"IN_PROGRESS": newTask(domain.StatusTodo, domain.StatusInProgress),
+		"CANCELLED":   newTask(domain.StatusTodo, domain.StatusCancelled),
+	} {
+		before := snapshot(id)
+		_, err := e.svc.ReopenTask(ctx, id, "lost")
+		if !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), name) {
+			t.Errorf("ReopenTask(%s) = %v, want ErrInvalid naming the status", name, err)
+		}
+		if after := snapshot(id); after != before {
+			t.Errorf("reopening %s changed the task:\nbefore %s\nafter  %s", name, before, after)
+		}
+	}
+
+	if _, err := e.svc.ReopenTask(ctx, 999, "lost"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("ReopenTask(999) = %v, want ErrNotFound", err)
+	}
+
+	got, err := e.svc.ReopenTask(ctx, done, "  commit lost in a rebase  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := e.svc.GetTask(ctx, done)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, v := range map[string]TaskView{"returned": got, "persisted": persisted} {
+		if v.Status != "TODO" || v.FailureCount != 0 || v.Commit != "" || v.BlockedReason != "" {
+			t.Errorf("%s view = status %s failures %d commit %q blocked %q", name, v.Status, v.FailureCount, v.Commit, v.BlockedReason)
+		}
+		if len(v.Notes) == 0 {
+			t.Errorf("%s view has no notes", name)
+			continue
+		}
+		last := v.Notes[len(v.Notes)-1]
+		if last.Kind != "NOTE" || last.Body != "Reopened by reconcile: commit lost in a rebase" {
+			t.Errorf("%s last note = %+v", name, last)
+		}
+	}
+	if len(persisted.AllowedNext) == 0 {
+		t.Errorf("reopened task should be loopable again, allowed next = %v", persisted.AllowedNext)
+	}
+	if next, err := e.svc.NextTask(ctx, mid); err != nil || next == nil {
+		t.Errorf("NextTask after reopen = %+v, %v", next, err)
+	}
+
+	if _, err := e.svc.ReopenTask(ctx, done, "again"); !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("reopening a TODO task again = %v, want ErrInvalid", err)
+	}
+}

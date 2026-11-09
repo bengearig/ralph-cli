@@ -503,6 +503,47 @@ func (s *Service) SetTaskStatus(ctx context.Context, id int64, to domain.Status,
 	return out, err
 }
 
+// ReopenTask sends a DONE task whose work was lost back to TODO. It is
+// reconcile-only: the transition table keeps DONE terminal.
+func (s *Service) ReopenTask(ctx context.Context, id int64, reason string) (TaskView, error) {
+	if err := domain.RequireText("reason", reason); err != nil {
+		return TaskView{}, err
+	}
+	reason = strings.TrimSpace(reason)
+	var out TaskView
+	err := s.store.InTx(ctx, func(tx store.Store) error {
+		t, err := tx.GetTask(ctx, id)
+		if err != nil {
+			return err
+		}
+		if t.Status != domain.StatusDone {
+			return fmt.Errorf("%w: only a DONE task can be reopened; %s is %s",
+				domain.ErrInvalid, domain.FormatID(domain.KindTask, id), t.Status)
+		}
+		t.Status = domain.StatusTodo
+		t.FailureCount = 0
+		t.BlockedReason = ""
+		if err := tx.UpdateTask(ctx, &t); err != nil {
+			return err
+		}
+		if err := tx.SetTaskCommit(ctx, id, ""); err != nil {
+			return err
+		}
+		t.Commit = ""
+		note := domain.TaskNote{TaskID: id, Kind: domain.NoteGeneral, Body: "Reopened by reconcile: " + reason}
+		if err := tx.AddTaskNote(ctx, &note); err != nil {
+			return err
+		}
+		notes, err := tx.ListTaskNotes(ctx, id)
+		if err != nil {
+			return err
+		}
+		out = taskView(t, notes)
+		return nil
+	})
+	return out, err
+}
+
 // AddTaskNote appends a note to a task.
 func (s *Service) AddTaskNote(ctx context.Context, id int64, kind domain.NoteKind, body string) (TaskView, error) {
 	if err := domain.RequireText("note", body); err != nil {
