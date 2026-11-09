@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/store"
@@ -159,6 +161,114 @@ func TestGitRecordMigrationPreservesRows(t *testing.T) {
 	}
 	if title != "T1" || commit != "" {
 		t.Errorf("task = %q, commit_hash %q", title, commit)
+	}
+}
+
+func TestGitRecordSetters(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	i, m := seed(t, s)
+	task := domain.Task{MilestoneID: m.ID, Title: "t", Status: domain.StatusTodo}
+	if err := s.CreateTask(ctx, &task); err != nil {
+		t.Fatal(err)
+	}
+	// Any write that stamps updated_at would now produce a different time.
+	later := m.UpdatedAt.Add(time.Hour)
+	s.now = func() time.Time { return later }
+
+	g := domain.MilestoneGit{
+		Branch:     "ralph/m1",
+		BaseCommit: strings.Repeat("a", 40),
+		HeadCommit: strings.Repeat("b", 40),
+	}
+	if err := s.SetMilestoneGit(ctx, m.ID, g); err != nil {
+		t.Fatal(err)
+	}
+	hash := strings.Repeat("c", 64)
+	if err := s.SetTaskCommit(ctx, task.ID, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	gotM, err := s.GetMilestone(ctx, m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotM.Git != g {
+		t.Errorf("GetMilestone git = %+v, want %+v", gotM.Git, g)
+	}
+	if !gotM.UpdatedAt.Equal(m.UpdatedAt) {
+		t.Errorf("SetMilestoneGit changed updated_at: %v -> %v", m.UpdatedAt, gotM.UpdatedAt)
+	}
+	ms, err := s.ListMilestones(ctx, i.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ms) != 1 || ms[0].Git != g {
+		t.Errorf("ListMilestones = %+v", ms)
+	}
+	gotT, err := s.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotT.Commit != hash {
+		t.Errorf("GetTask commit = %q, want %q", gotT.Commit, hash)
+	}
+	if !gotT.UpdatedAt.Equal(task.UpdatedAt) {
+		t.Errorf("SetTaskCommit changed updated_at: %v -> %v", task.UpdatedAt, gotT.UpdatedAt)
+	}
+	ts, err := s.ListTasks(ctx, store.TaskFilter{InitiativeID: i.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ts) != 1 || ts[0].Commit != hash {
+		t.Errorf("ListTasks = %+v", ts)
+	}
+
+	if err := s.SetMilestoneGit(ctx, 999, g); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("SetMilestoneGit(999) = %v, want ErrNotFound", err)
+	}
+	if err := s.SetTaskCommit(ctx, 999, hash); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("SetTaskCommit(999) = %v, want ErrNotFound", err)
+	}
+
+	// Edits through Update* must not overwrite recorded values, even from a
+	// struct whose git fields are stale or empty.
+	gotM.Title = "Renamed"
+	gotM.Git = domain.MilestoneGit{}
+	if err := s.UpdateMilestone(ctx, &gotM); err != nil {
+		t.Fatal(err)
+	}
+	gotT.Status = domain.StatusInProgress
+	gotT.Commit = ""
+	if err := s.UpdateTask(ctx, &gotT); err != nil {
+		t.Fatal(err)
+	}
+	if after, err := s.GetMilestone(ctx, m.ID); err != nil || after.Title != "Renamed" || after.Git != g {
+		t.Errorf("after UpdateMilestone = %+v, %v; want title Renamed and git %+v", after, err, g)
+	}
+	if after, err := s.GetTask(ctx, task.ID); err != nil || after.Status != domain.StatusInProgress || after.Commit != hash {
+		t.Errorf("after UpdateTask = %+v, %v; want IN_PROGRESS and commit %q", after, err, hash)
+	}
+}
+
+func TestCreateIgnoresGitRecord(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	i, _ := seed(t, s)
+	m := domain.Milestone{InitiativeID: i.ID, Slug: "m2", Title: "M2",
+		Git: domain.MilestoneGit{Branch: "b", BaseCommit: strings.Repeat("a", 40), HeadCommit: strings.Repeat("a", 40)}}
+	if err := s.CreateMilestone(ctx, &m); err != nil {
+		t.Fatal(err)
+	}
+	task := domain.Task{MilestoneID: m.ID, Title: "t", Status: domain.StatusTodo, Commit: strings.Repeat("a", 40)}
+	if err := s.CreateTask(ctx, &task); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.GetMilestone(ctx, m.ID); err != nil || got.Git != (domain.MilestoneGit{}) {
+		t.Errorf("created milestone git = %+v, %v; want empty", got.Git, err)
+	}
+	if got, err := s.GetTask(ctx, task.ID); err != nil || got.Commit != "" {
+		t.Errorf("created task commit = %q, %v; want empty", got.Commit, err)
 	}
 }
 

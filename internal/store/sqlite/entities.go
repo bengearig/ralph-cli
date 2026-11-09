@@ -76,12 +76,14 @@ func (s *Store) UpdateInitiative(ctx context.Context, i *domain.Initiative) erro
 
 // ---- milestones ----
 
-const milestoneCols = `id, initiative_id, slug, title, description, position, created_at, updated_at`
+const milestoneCols = `id, initiative_id, slug, title, description, position, branch, base_commit, head_commit,
+	created_at, updated_at`
 
 func scanMilestone(sc scanner) (domain.Milestone, error) {
 	var m domain.Milestone
 	var created, updated string
-	if err := sc.Scan(&m.ID, &m.InitiativeID, &m.Slug, &m.Title, &m.Description, &m.Position, &created, &updated); err != nil {
+	if err := sc.Scan(&m.ID, &m.InitiativeID, &m.Slug, &m.Title, &m.Description, &m.Position,
+		&m.Git.Branch, &m.Git.BaseCommit, &m.Git.HeadCommit, &created, &updated); err != nil {
 		return m, err
 	}
 	var err error
@@ -153,16 +155,27 @@ func (s *Store) UpdateMilestone(ctx context.Context, m *domain.Milestone) error 
 	return nil
 }
 
+func (s *Store) SetMilestoneGit(ctx context.Context, id int64, g domain.MilestoneGit) error {
+	res, err := s.q.ExecContext(ctx,
+		`UPDATE milestones SET branch = ?, base_commit = ?, head_commit = ? WHERE id = ?`,
+		g.Branch, g.BaseCommit, g.HeadCommit, id)
+	what := domain.FormatID(domain.KindMilestone, id)
+	if err != nil {
+		return mapErr(err, "recording git state of "+what)
+	}
+	return checkAffected(res, what)
+}
+
 // ---- tasks ----
 
 const taskCols = `t.id, t.milestone_id, t.title, t.description, t.acceptance_criteria, t.status, t.position,
-	t.failure_count, t.blocked_reason, t.created_at, t.updated_at`
+	t.failure_count, t.blocked_reason, t.commit_hash, t.created_at, t.updated_at`
 
 func scanTask(sc scanner) (domain.Task, error) {
 	var t domain.Task
 	var status, created, updated string
 	if err := sc.Scan(&t.ID, &t.MilestoneID, &t.Title, &t.Description, &t.AcceptanceCriteria, &status, &t.Position,
-		&t.FailureCount, &t.BlockedReason, &created, &updated); err != nil {
+		&t.FailureCount, &t.BlockedReason, &t.Commit, &created, &updated); err != nil {
 		return t, err
 	}
 	t.Status = domain.Status(status)
@@ -252,6 +265,15 @@ func (s *Store) UpdateTask(ctx context.Context, t *domain.Task) error {
 	}
 	t.UpdatedAt = now
 	return nil
+}
+
+func (s *Store) SetTaskCommit(ctx context.Context, id int64, hash string) error {
+	res, err := s.q.ExecContext(ctx, `UPDATE tasks SET commit_hash = ? WHERE id = ?`, hash, id)
+	what := domain.FormatID(domain.KindTask, id)
+	if err != nil {
+		return mapErr(err, "recording commit of "+what)
+	}
+	return checkAffected(res, what)
 }
 
 func (s *Store) AddTaskNote(ctx context.Context, n *domain.TaskNote) error {

@@ -11,9 +11,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bengearig/ralph/internal/config"
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/errs"
 	"github.com/bengearig/ralph/internal/project"
+	"github.com/bengearig/ralph/internal/service"
 )
 
 // testEnv runs ralph commands against a temporary project with embeddings
@@ -294,5 +296,85 @@ func TestLoopCommand(t *testing.T) {
 	status.Dir = h.dir
 	if st, _ := status.Output(); len(st) != 0 {
 		t.Errorf("ralph's own files should be git-ignored: %q", st)
+	}
+}
+
+func TestShowRecordedGitState(t *testing.T) {
+	h := newTestEnv(t, true)
+	h.ok("initiative", "create", "--title", "Customer SSO")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Callback")
+	h.ok("task", "create", "--milestone", "M-1", "--title", "Route", "--description", "Add route", "--criteria", "Tests pass")
+	plainMilestone := h.ok("milestone", "show", "M-1")
+	plainTask := h.ok("task", "show", "T-1")
+
+	cfg, err := config.Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Embeddings.Provider = config.EmbeddingsNone
+	svc, closeFn, err := service.Open(context.Background(), cfg, h.dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeFn()
+	record := func(g domain.MilestoneGit) {
+		t.Helper()
+		if err := svc.RecordMilestoneGit(context.Background(), 1, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := h.ok("milestone", "show", "M-1"); got != plainMilestone {
+		t.Errorf("milestone show changed with nothing recorded:\n%s\nwant:\n%s", got, plainMilestone)
+	}
+
+	base := strings.Repeat("0123456789abcdef", 3)[:40]
+	head := strings.Repeat("fedcba9876543210", 4)
+	commit := strings.Repeat("abcdef0123456789", 3)[:40]
+	statusEnd := strings.Index(plainMilestone, "\nstatus: ")
+	statusEnd += strings.Index(plainMilestone[statusEnd+1:], "\n") + 2
+	withBranch := func(line string) string {
+		return plainMilestone[:statusEnd] + "branch: " + line + "\n" + plainMilestone[statusEnd:]
+	}
+
+	record(domain.MilestoneGit{Branch: "ralph/callback"})
+	if got, want := h.ok("milestone", "show", "M-1"), withBranch("ralph/callback"); got != want {
+		t.Errorf("branch only:\n%s\nwant:\n%s", got, want)
+	}
+	record(domain.MilestoneGit{Branch: "ralph/callback", BaseCommit: base})
+	if got, want := h.ok("milestone", "show", "M-1"), withBranch("ralph/callback (base 0123456789ab)"); got != want {
+		t.Errorf("branch and base:\n%s\nwant:\n%s", got, want)
+	}
+	record(domain.MilestoneGit{Branch: "ralph/callback", BaseCommit: base, HeadCommit: head})
+	if got, want := h.ok("milestone", "show", "M-1"), withBranch("ralph/callback (base 0123456789ab, head fedcba987654)"); got != want {
+		t.Errorf("branch, base and head:\n%s\nwant:\n%s", got, want)
+	}
+
+	if err := svc.RecordTaskCommit(context.Background(), 1, commit); err != nil {
+		t.Fatal(err)
+	}
+	wantTask := strings.Replace(plainTask, "failures: 0\n", "failures: 0\ncommit: abcdef012345\n", 1)
+	if got := h.ok("task", "show", "T-1"); got != wantTask {
+		t.Errorf("task show:\n%s\nwant:\n%s", got, wantTask)
+	}
+
+	var mj struct {
+		Branch     string `json:"branch"`
+		BaseCommit string `json:"base_commit"`
+		HeadCommit string `json:"head_commit"`
+		Tasks      []struct {
+			Commit string `json:"commit"`
+		} `json:"tasks"`
+	}
+	h.json(&mj, "milestone", "show", "M-1")
+	if mj.Branch != "ralph/callback" || mj.BaseCommit != base || mj.HeadCommit != head || len(mj.Tasks) != 1 || mj.Tasks[0].Commit != commit {
+		t.Errorf("milestone JSON = %+v", mj)
+	}
+	var tj struct {
+		Commit string `json:"commit"`
+	}
+	h.json(&tj, "task", "show", "T-1")
+	if tj.Commit != commit {
+		t.Errorf("task JSON commit = %q, want %q", tj.Commit, commit)
 	}
 }

@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -169,5 +170,39 @@ func TestTransitionNoteKind(t *testing.T) {
 		if got := TransitionNoteKind(c.from, c.to); got != c.want {
 			t.Errorf("TransitionNoteKind(%s, %s) = %s, want %s", c.from, c.to, got, c.want)
 		}
+	}
+}
+
+func TestValidCommit(t *testing.T) {
+	sha1 := strings.Repeat("0123456789", 4)
+	sha256 := strings.Repeat("abcdef0123456789", 4)
+	cases := []struct {
+		name string
+		in   string
+		ok   bool
+	}{
+		{"empty", "", true},
+		{"sha1", sha1, true},
+		{"sha256", sha256, true},
+		{"short", "abc1234", false},
+		{"uppercase", strings.ToUpper(sha256[:40]), false},
+		{"41 chars", sha1 + "a", false},
+		{"non-hex", "g" + sha1[1:], false},
+		{"padded", " " + sha1[1:], false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := ValidCommit(c.in)
+			if c.ok && err != nil {
+				t.Errorf("ValidCommit(%q) = %v, want nil", c.in, err)
+			}
+			if !c.ok {
+				if !errors.Is(err, ErrInvalid) {
+					t.Errorf("ValidCommit(%q) = %v, want ErrInvalid", c.in, err)
+				} else if !strings.Contains(err.Error(), c.in) {
+					t.Errorf("ValidCommit(%q) error %q does not name the value", c.in, err)
+				}
+			}
+		})
 	}
 }

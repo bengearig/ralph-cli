@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -347,5 +348,126 @@ func TestNewEmbedderFromConfig(t *testing.T) {
 	cfg.Embeddings.Provider = config.EmbeddingsNone
 	if emb, err := NewEmbedder(cfg.Embeddings); emb != nil || err != nil {
 		t.Errorf("none = %v, %v", emb, err)
+	}
+}
+
+func TestRecordGitState(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	_, mid := e.scaffold(t)
+	tv, err := e.svc.CreateTask(ctx, TaskInput{MilestoneID: mid, Title: "Wire callback"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tid := mustID(t, domain.KindTask, tv.ID)
+	base, head, next := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 64)
+
+	for name, g := range map[string]domain.MilestoneGit{
+		"short base":          {Branch: "ralph/x", BaseCommit: "abc1234"},
+		"short head":          {Branch: "ralph/x", HeadCommit: "abc1234"},
+		"base without branch": {BaseCommit: base},
+		"head without branch": {HeadCommit: head},
+		"blank branch":        {Branch: "  ", BaseCommit: base, HeadCommit: head},
+	} {
+		if err := e.svc.RecordMilestoneGit(ctx, mid, g); !errors.Is(err, domain.ErrInvalid) {
+			t.Errorf("RecordMilestoneGit(%s) = %v, want ErrInvalid", name, err)
+		}
+	}
+	if err := e.svc.RecordMilestoneHead(ctx, mid, head); !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("RecordMilestoneHead with no branch = %v, want ErrInvalid", err)
+	}
+	if err := e.svc.RecordMilestoneGit(ctx, 999, domain.MilestoneGit{Branch: "b"}); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("RecordMilestoneGit(999) = %v, want ErrNotFound", err)
+	}
+
+	before, err := e.svc.GetMilestone(ctx, mid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := domain.MilestoneGit{Branch: "ralph/oauth-provider", BaseCommit: base, HeadCommit: base}
+	if err := e.svc.RecordMilestoneGit(ctx, mid, g); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.RecordMilestoneHead(ctx, mid, head); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.RecordMilestoneHead(ctx, mid, "nothex"); !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("RecordMilestoneHead(nothex) = %v, want ErrInvalid", err)
+	}
+	if err := e.svc.RecordMilestoneHead(ctx, 999, head); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("RecordMilestoneHead(999) = %v, want ErrNotFound", err)
+	}
+	mv, err := e.svc.GetMilestone(ctx, mid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mv.Branch != g.Branch || mv.BaseCommit != base || mv.HeadCommit != head {
+		t.Errorf("milestone view = branch %q base %q head %q", mv.Branch, mv.BaseCommit, mv.HeadCommit)
+	}
+	if mv.UpdatedAt != before.UpdatedAt || mv.Title != before.Title || mv.Description != before.Description {
+		t.Errorf("recording changed other fields: before %+v, after %+v", before, mv)
+	}
+
+	for _, bad := range []string{"abc1234", strings.ToUpper(head), head + "0", "z" + head[1:]} {
+		if err := e.svc.RecordTaskCommit(ctx, tid, bad); !errors.Is(err, domain.ErrInvalid) {
+			t.Errorf("RecordTaskCommit(%q) = %v, want ErrInvalid", bad, err)
+		}
+	}
+	if err := e.svc.RecordTaskCommit(ctx, 999, next); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("RecordTaskCommit(999) = %v, want ErrNotFound", err)
+	}
+	if err := e.svc.RecordTaskCommit(ctx, tid, next); err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.svc.GetTask(ctx, tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Commit != next || got.UpdatedAt != tv.UpdatedAt {
+		t.Errorf("task view commit %q updated %s; want %q, %s", got.Commit, got.UpdatedAt, next, tv.UpdatedAt)
+	}
+	if list, err := e.svc.ListTasks(ctx, TaskFilter{MilestoneID: mid}); err != nil || len(list) != 1 || list[0].Commit != next {
+		t.Errorf("ListTasks = %+v, %v", list, err)
+	}
+	if list, err := e.svc.ListMilestones(ctx, 0); err != nil || len(list) != 1 || list[0].HeadCommit != head {
+		t.Errorf("ListMilestones = %+v, %v", list, err)
+	}
+
+	keys := func(v any) map[string]any {
+		t.Helper()
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	mj, tj := keys(mv), keys(got)
+	if mj["branch"] != g.Branch || mj["base_commit"] != base || mj["head_commit"] != head {
+		t.Errorf("milestone JSON = %v", mj)
+	}
+	if tj["commit"] != next {
+		t.Errorf("task JSON = %v", tj)
+	}
+
+	if err := e.svc.RecordMilestoneGit(ctx, mid, domain.MilestoneGit{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.RecordTaskCommit(ctx, tid, ""); err != nil {
+		t.Fatal(err)
+	}
+	mv, _ = e.svc.GetMilestone(ctx, mid)
+	got, _ = e.svc.GetTask(ctx, tid)
+	mj, tj = keys(mv), keys(got)
+	for _, k := range []string{"branch", "base_commit", "head_commit"} {
+		if _, ok := mj[k]; ok {
+			t.Errorf("empty milestone JSON has %q: %v", k, mj)
+		}
+	}
+	if _, ok := tj["commit"]; ok {
+		t.Errorf("empty task JSON has commit: %v", tj)
 	}
 }

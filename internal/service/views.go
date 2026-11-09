@@ -28,6 +28,9 @@ type MilestoneView struct {
 	Position     int            `json:"position"`
 	Status       string         `json:"status"`
 	TaskCounts   map[string]int `json:"task_counts"`
+	Branch       string         `json:"branch,omitempty"`
+	BaseCommit   string         `json:"base_commit,omitempty"`
+	HeadCommit   string         `json:"head_commit,omitempty"`
 	CreatedAt    string         `json:"created_at"`
 	UpdatedAt    string         `json:"updated_at"`
 	IndexWarning string         `json:"index_warning,omitempty"`
@@ -44,6 +47,7 @@ type TaskView struct {
 	Position           int        `json:"position"`
 	FailureCount       int        `json:"failure_count"`
 	BlockedReason      string     `json:"blocked_reason,omitempty"`
+	Commit             string     `json:"commit,omitempty"`
 	Notes              []NoteView `json:"notes,omitempty"`
 	CreatedAt          string     `json:"created_at"`
 	UpdatedAt          string     `json:"updated_at"`
@@ -122,6 +126,9 @@ func milestoneView(m domain.Milestone, tasks []domain.Task) MilestoneView {
 		Position:     m.Position,
 		Status:       MilestoneStatus(tasks),
 		TaskCounts:   counts,
+		Branch:       m.Git.Branch,
+		BaseCommit:   m.Git.BaseCommit,
+		HeadCommit:   m.Git.HeadCommit,
 		CreatedAt:    ts(m.CreatedAt),
 		UpdatedAt:    ts(m.UpdatedAt),
 	}
@@ -143,6 +150,7 @@ func taskView(t domain.Task, notes []domain.TaskNote) TaskView {
 		Position:           t.Position,
 		FailureCount:       t.FailureCount,
 		BlockedReason:      t.BlockedReason,
+		Commit:             t.Commit,
 		CreatedAt:          ts(t.CreatedAt),
 		UpdatedAt:          ts(t.UpdatedAt),
 	}

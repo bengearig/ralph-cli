@@ -274,6 +274,51 @@ func (s *Service) UpdateMilestone(ctx context.Context, id int64, p MilestonePatc
 	return v, nil
 }
 
+// ---- git records ----
+
+// RecordMilestoneGit replaces a milestone's recorded git state. Only the loop
+// and reconcile call it; it neither reindexes nor changes updated_at.
+func (s *Service) RecordMilestoneGit(ctx context.Context, milestoneID int64, g domain.MilestoneGit) error {
+	if err := domain.ValidCommit(g.BaseCommit); err != nil {
+		return err
+	}
+	if err := domain.ValidCommit(g.HeadCommit); err != nil {
+		return err
+	}
+	if strings.TrimSpace(g.Branch) == "" && (g.BaseCommit != "" || g.HeadCommit != "") {
+		return fmt.Errorf("%w: recorded commits need a branch", domain.ErrInvalid)
+	}
+	return s.store.SetMilestoneGit(ctx, milestoneID, g)
+}
+
+// RecordMilestoneHead updates only the recorded head of a milestone's branch.
+func (s *Service) RecordMilestoneHead(ctx context.Context, milestoneID int64, head string) error {
+	if err := domain.ValidCommit(head); err != nil {
+		return err
+	}
+	return s.store.InTx(ctx, func(tx store.Store) error {
+		m, err := tx.GetMilestone(ctx, milestoneID)
+		if err != nil {
+			return err
+		}
+		g := m.Git
+		g.HeadCommit = head
+		if strings.TrimSpace(g.Branch) == "" && head != "" {
+			return fmt.Errorf("%w: %s has no recorded branch to set a head on",
+				domain.ErrInvalid, domain.FormatID(domain.KindMilestone, milestoneID))
+		}
+		return tx.SetMilestoneGit(ctx, milestoneID, g)
+	})
+}
+
+// RecordTaskCommit records the loop's commit for a task.
+func (s *Service) RecordTaskCommit(ctx context.Context, taskID int64, hash string) error {
+	if err := domain.ValidCommit(hash); err != nil {
+		return err
+	}
+	return s.store.SetTaskCommit(ctx, taskID, hash)
+}
+
 // ---- tasks ----
 
 type TaskInput struct {

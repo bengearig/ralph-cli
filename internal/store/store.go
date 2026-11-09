@@ -72,13 +72,19 @@ type Store interface {
 	GetMilestone(ctx context.Context, id int64) (domain.Milestone, error)
 	// ListMilestones lists all milestones, or one initiative's when initiativeID is non-zero.
 	ListMilestones(ctx context.Context, initiativeID int64) ([]domain.Milestone, error)
+	// UpdateMilestone never writes the git record; use SetMilestoneGit.
 	UpdateMilestone(ctx context.Context, m *domain.Milestone) error
+	// SetMilestoneGit replaces a milestone's git record without changing updated_at.
+	SetMilestoneGit(ctx context.Context, id int64, g domain.MilestoneGit) error
 
 	CreateTask(ctx context.Context, t *domain.Task) error
 	GetTask(ctx context.Context, id int64) (domain.Task, error)
 	// ListTasks orders by milestone position, then task position.
 	ListTasks(ctx context.Context, f TaskFilter) ([]domain.Task, error)
+	// UpdateTask never writes the commit; use SetTaskCommit.
 	UpdateTask(ctx context.Context, t *domain.Task) error
+	// SetTaskCommit records a task's commit without changing updated_at.
+	SetTaskCommit(ctx context.Context, id int64, hash string) error
 	AddTaskNote(ctx context.Context, n *domain.TaskNote) error
 	ListTaskNotes(ctx context.Context, taskID int64) ([]domain.TaskNote, error)
 

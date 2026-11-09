@@ -272,6 +272,11 @@ func (a *app) printTask(v service.TaskView) error {
 		v.ID, v.Title, v.MilestoneID, v.Status, orNone(strings.Join(v.AllowedNext, ", ")), v.Position, v.FailureCount); err != nil {
 		return err
 	}
+	if v.Commit != "" {
+		if err := a.printf("commit: %s\n", shortCommit(v.Commit)); err != nil {
+			return err
+		}
+	}
 	if v.BlockedReason != "" {
 		if err := a.printf("blocked: %s\n", v.BlockedReason); err != nil {
 			return err

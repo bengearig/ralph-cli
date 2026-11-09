@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bengearig/ralph/internal/domain"
+	"github.com/bengearig/ralph/internal/service"
 )
 
 // optString returns &v only when the flag was explicitly set, so patches
@@ -120,4 +121,27 @@ func indent(s string) string {
 		lines[i] = "  " + l
 	}
 	return strings.Join(lines, "\n")
+}
+
+func shortCommit(hash string) string {
+	const n = 12
+	if len(hash) > n {
+		return hash[:n]
+	}
+	return hash
+}
+
+// branchLine renders a recorded branch with whichever commits are known.
+func branchLine(m service.MilestoneView) string {
+	var commits []string
+	if m.BaseCommit != "" {
+		commits = append(commits, "base "+shortCommit(m.BaseCommit))
+	}
+	if m.HeadCommit != "" {
+		commits = append(commits, "head "+shortCommit(m.HeadCommit))
+	}
+	if len(commits) == 0 {
+		return m.Branch
+	}
+	return m.Branch + " (" + strings.Join(commits, ", ") + ")"
 }

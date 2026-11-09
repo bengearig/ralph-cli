@@ -96,8 +96,17 @@ type Milestone struct {
 	Title        string
 	Description  string
 	Position     int
+	Git          MilestoneGit
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+}
+
+// MilestoneGit is the git state the loop recorded for a milestone. Empty
+// fields mean not recorded; commits are full object names.
+type MilestoneGit struct {
+	Branch     string
+	BaseCommit string
+	HeadCommit string
 }
 
 // Task is a single loopable unit of work.
@@ -111,6 +120,7 @@ type Task struct {
 	Position           int
 	FailureCount       int
 	BlockedReason      string
+	Commit             string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
@@ -225,6 +235,23 @@ func ValidateSlug(s string) error {
 func RequireText(field, value string) error {
 	if strings.TrimSpace(value) == "" {
 		return fmt.Errorf("%w: %s must not be empty", ErrInvalid, field)
+	}
+	return nil
+}
+
+// ValidCommit accepts an empty string (not recorded) or a full SHA-1 or
+// SHA-256 object name in lowercase hex.
+func ValidCommit(s string) error {
+	if s == "" {
+		return nil
+	}
+	if len(s) != 40 && len(s) != 64 {
+		return fmt.Errorf("%w: commit %q must be a full 40- or 64-character hash", ErrInvalid, s)
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return fmt.Errorf("%w: commit %q must be lowercase hexadecimal", ErrInvalid, s)
+		}
 	}
 	return nil
 }
