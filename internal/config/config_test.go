@@ -46,6 +46,9 @@ func TestDefaults(t *testing.T) {
 	if cfg.Loop.StallThreshold != 3 || !cfg.Loop.CommitPerTask || !cfg.PR.Draft {
 		t.Errorf("unexpected loop/pr defaults: %+v %+v", cfg.Loop, cfg.PR)
 	}
+	if cfg.Receive.ConfirmOutline {
+		t.Error("receive.confirm_outline should default to false")
+	}
 }
 
 func TestLayerPrecedence(t *testing.T) {
@@ -216,6 +219,35 @@ func TestBudgetFromEnv(t *testing.T) {
 	}
 }
 
+func TestConfirmOutlineFromProjectFile(t *testing.T) {
+	project := writeFile(t, t.TempDir(), "p.yaml", "receive:\n  confirm_outline: true\n")
+	l, err := Load(Sources{ProjectFile: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !l.Config.Receive.ConfirmOutline {
+		t.Error("receive.confirm_outline should be true")
+	}
+}
+
+func TestConfirmOutlineFromEnv(t *testing.T) {
+	l, err := Load(Sources{Environ: []string{"RALPH_RECEIVE__CONFIRM_OUTLINE=true"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !l.Config.Receive.ConfirmOutline {
+		t.Error("receive.confirm_outline should be true")
+	}
+}
+
+func TestConfirmOutlineUnderStepsIsUnknown(t *testing.T) {
+	project := writeFile(t, t.TempDir(), "p.yaml", "steps:\n  receive:\n    confirm_outline: true\n")
+	_, err := Load(Sources{ProjectFile: project})
+	if err == nil || !strings.Contains(err.Error(), "confirm_outline") {
+		t.Errorf("err = %v, want an unknown-key error naming confirm_outline", err)
+	}
+}
+
 func TestValidateOllamaSettings(t *testing.T) {
 	cfg, _ := Defaults()
 	cfg.Embeddings.Ollama.BaseURL = "localhost:11434"
@@ -299,5 +331,13 @@ func TestProjectTemplateOverridesNothing(t *testing.T) {
 		if !strings.Contains(string(tmpl), "\n# "+line+"\n") {
 			t.Errorf("template is missing commented setting %q", line)
 		}
+	}
+	for _, line := range strings.Split(string(tmpl), "\n") {
+		if strings.Contains(line, "confirm_outline: false") && !strings.HasPrefix(line, "# ") {
+			t.Errorf("confirm_outline should only appear commented out, got %q", line)
+		}
+	}
+	if !strings.Contains(string(tmpl), "\n#   confirm_outline: false\n") {
+		t.Error("template is missing the commented receive.confirm_outline setting")
 	}
 }

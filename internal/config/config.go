@@ -53,6 +53,7 @@ type Config struct {
 	Search     SearchConfig     `koanf:"search"`
 	Harness    HarnessConfig    `koanf:"harness"`
 	Steps      StepsConfig      `koanf:"steps"`
+	Receive    ReceiveConfig    `koanf:"receive"`
 	Loop       LoopConfig       `koanf:"loop"`
 	PR         PRConfig         `koanf:"pr"`
 }
@@ -116,6 +117,10 @@ type StepsConfig struct {
 type StepConfig struct {
 	Harness string `koanf:"harness"`
 	Model   string `koanf:"model"`
+}
+
+type ReceiveConfig struct {
+	ConfirmOutline bool `koanf:"confirm_outline"`
 }
 
 type LoopConfig struct {

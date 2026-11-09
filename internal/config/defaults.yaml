@@ -67,6 +67,12 @@ steps:
     harness: ""
     model: ""
 
+receive:
+  # Ask for approval, in the harness's plan mode, before /ralph:receive creates
+  # a new initiative's milestones and tasks. When false, the outline is created
+  # right away and then shown. Revisions always ask.
+  confirm_outline: false
+
 loop:
   # Hard cap on iterations in one loop run.
   max_iterations: 50

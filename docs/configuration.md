@@ -116,6 +116,12 @@ steps:
 The interactive steps (`receive`, `articulate`) currently run in your own Claude Code session through the slash
 commands, so their overrides take effect once ralph launches those sessions itself. See the [roadmap](roadmap.md).
 
+### `receive`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `receive.confirm_outline` | `false` | When `true`, `/ralph:receive` presents a new initiative's outline of milestones and tasks for approval in the harness's plan mode, and creates it only once the plan is approved. When `false`, it creates the outline right away and then shows it with its IDs. Revising an existing initiative always goes through plan-mode approval, whatever this is set to. The agent learns the value from the `initiative_create` MCP result. Config is read when `ralph mcp` starts, so a change takes effect in the next Claude Code session. |
+
 ### `loop`
 
 | Key | Default | Meaning |
