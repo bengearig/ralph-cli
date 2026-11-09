@@ -21,6 +21,10 @@ best-matching chunk.
 **Document.** Durable written knowledge: `brief`, `architecture`, `design`, `decision`, `reference`, or `note`. A
 document belongs either to the whole project or to one initiative.
 
+**Drift.** A difference between a milestone's branch and the git state the loop recorded for it: commits added on
+top, commits lost, history rewritten by a rebase, amend or squash, a missing or renamed branch, or a branch already
+merged. The loop and `ralph pr create` check for drift and refuse to go on until it is reconciled.
+
 **Embedding.** A vector representing a chunk's meaning, produced by the configured model. Each stored vector records
 its model identity (the model plus any document prefix), and vectors with different identities are never compared.
 
@@ -42,6 +46,10 @@ request. Its status is derived from its tasks.
 
 **Receive.** The first phase: high-level planning. The instructions are recorded verbatim as an initiative's brief,
 high-level questions are resolved, and the work is outlined as milestones and unplanned tasks.
+
+**Reconcile.** Resolving drift with `ralph milestone reconcile`: reviewing where each `DONE` task's work is now on
+the branch, then pointing the record at a renamed branch, reopening tasks whose work is gone, or accepting the branch
+as the new record.
 
 **Stale chunk.** A chunk without an embedding for the configured model identity. Stale chunks are found by keyword search
 only, until `ralph index` embeds them.

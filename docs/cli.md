@@ -12,8 +12,8 @@ Every command accepts these global flags:
 IDs can be given in display form (`T-12`, case-insensitive) or as bare numbers (`12`). Commands that take text
 accept `--<field>-file <path>` or `--file <path>`; `-` reads stdin.
 
-Exit codes: `0` success, `1` error, `2` the requested capability is not implemented yet, `3` the loop stopped
-because remaining tasks need a person.
+Exit codes: `0` success, `1` error, `2` the requested capability is not implemented yet, `3` a person is needed: the
+loop stopped because remaining tasks need one, or a milestone's branch has drifted from its record.
 
 Commit hashes recorded by the loop are shown shortened in text output and in full with `--json`. See
 [Git records](data-model.md#git-records).
@@ -66,11 +66,63 @@ Commit hashes recorded by the loop are shown shortened in text output and in ful
 |---|---|
 | `ralph loop --milestone <id> --dry-run [--show-prompt]` | Print the loop plan: branch, harness and model, exact command, ordered tasks, policy, and optionally the first prompt. |
 | `ralph loop --milestone <id>` | Run the loop: one fresh harness session per task on the milestone's branch, committing each `DONE` task. The progress feed goes to stderr, transcripts to `.ralph/runs/`. See [the loop](loop.md). |
-| `ralph pr create --milestone <id> --dry-run` | Print the pull request that would be opened and any provider configuration problems. |
+| `ralph milestone reconcile <id> [--branch <name>] [--reopen <ids>] [--reason <text>] [--accept]` | Report how the milestone's branch differs from its record and resolve it. See [below](#ralph-milestone-reconcile). |
+| `ralph pr create --milestone <id> --dry-run` | Print the pull request that would be opened, the drift check's result, and any provider configuration problems. |
 | `ralph pr create --milestone <id>` | Open the pull request. *Not implemented yet (exit code 2).* |
 
 `ralph pr create` takes its source branch from the milestone's recorded branch, the one the loop worked on, and
 derives it from `loop.branch_template` only when none is recorded.
+
+Before it calls the provider, `ralph pr create` runs the drift check (see
+[Drift and reconcile](loop.md#drift-and-reconcile)). Unless the branch is exactly as recorded (`unchanged`), it
+refuses with exit code `3`, naming the state and saying `run: ralph milestone reconcile <M-n>`; a merged branch is
+reported as already merged into the base branch. If the check itself fails, for example because there is no git
+repository or `pr.base_branch` doesn't exist, `pr create` fails with that error. `--dry-run` never refuses: it adds a
+`drift:` line with the state and its summary, followed by the task table when the branch has drifted, and reports a
+failed check as a warning. With `--json`, the dry run includes the report as `drift`, or the failure as
+`drift_error`.
+
+### `ralph milestone reconcile`
+
+```sh
+ralph milestone reconcile <id> [--branch <name>] [--reopen T-a,T-b --reason <text>] [--accept]
+```
+
+Without flags it prints the drift report and **changes nothing**. The flags combine, and apply in this order:
+
+| Flag | Effect |
+|---|---|
+| `--branch <name>` | Point the record at an existing local branch, for example after a rename, keeping the recorded base and head, then check again. Fails if the branch doesn't exist locally. |
+| `--reopen <ids>` | Move these `DONE` tasks of the milestone back to `TODO`. Comma-separated or repeated. Unknown tasks, tasks of another milestone, and tasks that aren't `DONE` are errors. See [reopening](data-model.md#reopening). |
+| `--reason <text>` | Why the tasks are reopened. Required with `--reopen`, and refused without it. |
+| `--accept` | Record the branch as it is: the tip as head, the branch name, and the base (the recorded base while it is still an ancestor of the tip, otherwise the merge base with the base ref). Each matched `DONE` task gets its matched commit recorded. Each `missing` task that isn't being reopened stays `DONE`, with its commit cleared and the note `reconcile: no commit found on <branch> at <short tip>; kept DONE`. Refused for `merged`, and for `branch_missing` until `--branch` names an existing branch. |
+
+Everything is validated before anything is written, and the writes share one transaction, so a failed reconcile
+changes nothing.
+
+The text output starts with the report:
+
+- the state's one-line summary and the state;
+- the branch and the base ref;
+- the recorded branch, base and head, and the branch tip, as 12-character hashes;
+- the proposed base, when `--accept` would record a different one;
+- the commits beyond the recorded head (`ahead`) or no longer on the branch (`behind`);
+- a table of `DONE` tasks with the matcher that found each one and its commit;
+- the unattributed commits.
+
+When flags were given, an `applied:` list of what changed follows, then the report after the changes. When the
+result still needs a person, the error message ends with what to run next. `--json` prints
+`{"before": <report>, "after": <report or null>}`, with full hashes; `after` is `null` without flags. The report's
+fields are those of the drift check: `milestone`, `branch`, `base_ref`, `recorded`, `tip`, `state`,
+`remote_branch_exists`, `extra_commits`, `lost_commits`, `tasks`, `unattributed_commits`, and `proposed_base`.
+
+| Exit code | When |
+|---|---|
+| `0` | The final state is `unchanged`: the branch matches its record. |
+| `3` | The branch still needs a person. Without flags, that is any state but `unchanged`. |
+| `1` | An error, including a flag that failed validation. |
+
+[Drift and reconcile](loop.md#drift-and-reconcile) explains the states and matchers, with worked examples.
 
 ## Example session
 

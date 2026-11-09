@@ -46,7 +46,7 @@ The loop records the milestone's git state as it works (see [Git records](#git-r
 |---|---|
 | `branch` | The branch the loop works on. Once recorded, it is used instead of `loop.branch_template`. |
 | `base_commit` | The commit the branch started from: the base branch's tip when the loop created it, or its merge base with `pr.base_branch` when the loop adopted an existing branch. Stays empty if an adopted branch has no base branch or no history in common with it. |
-| `head_commit` | The branch tip as the loop last left it, updated after every iteration. |
+| `head_commit` | The branch tip as the loop last left it, updated after every iteration. The loop also moves it to the tip when it resumes on a branch with commits added on top, and `ralph milestone reconcile --accept` sets it to the tip it accepts. |
 
 ### Task (`T-n`)
 
@@ -58,9 +58,9 @@ and acceptance criteria and promotes them to `TODO`.
 | `title`, `description`, `acceptance_criteria` | What to do and how to tell it is done. |
 | `status` | See the state machine below. |
 | `position` | Loop order within the milestone. New tasks go last unless a position is given. |
-| `failure_count` | Consecutive failed iterations; reset when the task reaches `DONE`. |
+| `failure_count` | Consecutive failed iterations; reset when the task reaches `DONE`, and when reconcile reopens it. |
 | `blocked_reason` | Why the task is `BLOCKED`; cleared when it leaves `BLOCKED`. |
-| `commit` | The commit the loop made when the task reached `DONE`. Empty when the loop made none, for example with `loop.commit_per_task: false` or nothing to commit. See [Git records](#git-records). |
+| `commit` | The commit the loop made when the task reached `DONE`, or the commit reconcile matched it to after history was rewritten. Empty when there is none, for example with `loop.commit_per_task: false`, nothing to commit, or no matching commit found by reconcile. See [Git records](#git-records). |
 
 `DONE` and `CANCELLED` tasks cannot be edited. A task past `PROPOSED` must keep a non-empty description and
 acceptance criteria.
@@ -86,9 +86,10 @@ in git. The loop page describes when each one is written: at
   `ralph milestone show` and `ralph task show` shorten them for display; `--json` and the MCP tools return them in
   full.
 - An empty value means nothing has been recorded. Views omit empty fields from JSON.
-- Only the loop writes these fields. A later reconcile step is planned to write them too. They have their own store
-  and service methods: milestone and task edits through the CLI or MCP never change them, and no command or tool
-  sets them directly. Recording them does not change `updated_at`.
+- Only the loop and `ralph milestone reconcile` write these fields, and reconcile writes only what it finds on the
+  branch (see [Drift and reconcile](loop.md#drift-and-reconcile)). They have their own store and service methods:
+  milestone and task edits through the CLI or MCP never change them, and no command or tool sets them to a value of
+  its choosing. Recording them does not change `updated_at`.
 - In the schema, the task field is the column `tasks.commit_hash`, because `COMMIT` is an SQL keyword.
 
 ## Task state machine
@@ -121,6 +122,21 @@ Guards:
 - **To `BLOCKED`.** A reason is required.
 - **Stall Statute.** When `IN_PROGRESS → TODO` would bring `failure_count` to `loop.stall_threshold`, the service
   moves the task to `BLOCKED` instead and records the reason.
+
+### Reopening
+
+`DONE` is terminal in the transition table, and stays so: `ralph task status`, the `task_set_status` MCP tool, and
+every other status change reject a move out of `DONE`, and a `DONE` task lists no allowed next statuses. That is why
+the diagram above has no `DONE → TODO` arrow.
+
+The one exception is a separate service operation, `ReopenTask`, outside the transition table. Only
+[`ralph milestone reconcile --reopen`](cli.md#ralph-milestone-reconcile) calls it, for a task whose work was lost from
+the branch, for example by a reset. It requires the task to be `DONE` and a non-empty reason, and in one transaction:
+
+- sets the status to `TODO`, so the loop picks the task up again;
+- resets `failure_count` to 0 and clears `blocked_reason`;
+- clears the recorded `commit`;
+- adds a `NOTE`: `Reopened by reconcile: <reason>`.
 
 ## Display IDs and slugs
 

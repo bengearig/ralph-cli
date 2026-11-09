@@ -16,7 +16,7 @@
 - [CLI](cli.md): commands and flags.
 - [MCP server](mcp.md): the tools an agent harness uses.
 - [Claude Code integration](claude-code.md): what `ralph init` installs and how to use it.
-- [The loop](loop.md): how the loop plans, runs, and stops.
+- [The loop](loop.md): how the loop plans, runs, and stops, and how branch drift is detected and reconciled.
 - [Roadmap](roadmap.md): what is stubbed and what comes next.
 
 ## Decisions

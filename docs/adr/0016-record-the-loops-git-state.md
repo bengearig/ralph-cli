@@ -1,6 +1,6 @@
 # 16. Record the loop's git state
 
-- Status: Accepted
+- Status: Accepted; refined by [17. Detect and reconcile branch drift](0017-detect-and-reconcile-branch-drift.md)
 - Date: 2026-11-09
 - Refines: [13. Loop execution policy](0013-loop-execution-policy.md)
 
