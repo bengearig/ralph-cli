@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -55,6 +56,109 @@ func TestMigrationsIdempotent(t *testing.T) {
 	defer s2.Close()
 	if v2, _ := s2.SchemaVersion(ctx); v2 != v1 {
 		t.Errorf("version changed on reopen: %d → %d", v1, v2)
+	}
+}
+
+var gitRecordColumns = map[string][]string{
+	"milestones": {"branch", "base_commit", "head_commit"},
+	"tasks":      {"commit_hash"},
+}
+
+func TestGitRecordColumns(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	for table, want := range gitRecordColumns {
+		rows, err := s.db.QueryContext(ctx, `SELECT name, type, "notnull", dflt_value FROM pragma_table_info(?)`, table)
+		if err != nil {
+			t.Fatal(err)
+		}
+		type col struct {
+			typ     string
+			notNull bool
+			dflt    sql.NullString
+		}
+		cols := map[string]col{}
+		for rows.Next() {
+			var name string
+			var c col
+			if err := rows.Scan(&name, &c.typ, &c.notNull, &c.dflt); err != nil {
+				t.Fatal(err)
+			}
+			cols[name] = c
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		rows.Close()
+		for _, name := range want {
+			c, ok := cols[name]
+			switch {
+			case !ok:
+				t.Errorf("%s.%s missing", table, name)
+			case c.typ != "TEXT" || !c.notNull || !c.dflt.Valid || c.dflt.String != "''":
+				t.Errorf("%s.%s = type %q, notnull %v, default %v; want TEXT NOT NULL DEFAULT ''", table, name, c.typ, c.notNull, c.dflt)
+			}
+		}
+	}
+}
+
+// Builds a database with migration 0001 only, as ralph left it before the git
+// record columns existed, then checks Open upgrades it without losing rows.
+func TestGitRecordMigrationPreservesRows(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "ralph.db")
+	ms, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ms[0].version != 1 {
+		t.Fatalf("first migration = %s, want version 1", ms[0].name)
+	}
+
+	raw, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const now = "2026-01-01T00:00:00Z"
+	for _, stmt := range []string{
+		`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`,
+		ms[0].sql,
+		`INSERT INTO schema_migrations (version, applied_at) VALUES (1, '` + now + `')`,
+		`INSERT INTO initiatives (id, slug, title, created_at, updated_at) VALUES (1, 'old', 'Old', '` + now + `', '` + now + `')`,
+		`INSERT INTO milestones (id, initiative_id, slug, title, position, created_at, updated_at) VALUES (1, 1, 'm1', 'M1', 1, '` + now + `', '` + now + `')`,
+		`INSERT INTO tasks (id, milestone_id, title, status, position, created_at, updated_at) VALUES (1, 1, 'T1', 'TODO', 1, '` + now + `', '` + now + `')`,
+	} {
+		if _, err := raw.ExecContext(ctx, stmt); err != nil {
+			raw.Close()
+			t.Fatalf("building pre-migration database: %v", err)
+		}
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+	if v, err := s.SchemaVersion(ctx); err != nil || v != ms[len(ms)-1].version {
+		t.Errorf("SchemaVersion = %d, %v; want %d", v, err, ms[len(ms)-1].version)
+	}
+
+	var title, branch, base, head string
+	if err := s.db.QueryRowContext(ctx, `SELECT title, branch, base_commit, head_commit FROM milestones WHERE id = 1`).Scan(&title, &branch, &base, &head); err != nil {
+		t.Fatalf("milestone: %v", err)
+	}
+	if title != "M1" || branch != "" || base != "" || head != "" {
+		t.Errorf("milestone = %q, branch %q, base %q, head %q", title, branch, base, head)
+	}
+	var commit string
+	if err := s.db.QueryRowContext(ctx, `SELECT title, commit_hash FROM tasks WHERE id = 1`).Scan(&title, &commit); err != nil {
+		t.Fatalf("task: %v", err)
+	}
+	if title != "T1" || commit != "" {
+		t.Errorf("task = %q, commit_hash %q", title, commit)
 	}
 }
 
