@@ -152,6 +152,9 @@ func TestCommitAll(t *testing.T) {
 	if err != nil || !committed || hash == "" {
 		t.Fatalf("commit = %q, %v, %v", hash, committed, err)
 	}
+	if full := mustRun(t, r, "rev-parse", "HEAD"); hash != full || len(hash) < 40 {
+		t.Errorf("hash = %q, want the full object name %q", hash, full)
+	}
 	if msg := mustRun(t, r, "log", "-1", "--format=%s"); msg != "T-1: add a" {
 		t.Errorf("message = %q", msg)
 	}

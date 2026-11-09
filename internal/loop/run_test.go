@@ -173,6 +173,20 @@ func TestRunCompletesMilestone(t *testing.T) {
 	if log := gitCmd(t, e.root, "log", "--format=%s", "main..HEAD"); log != "T-2: second\nT-1: first" {
 		t.Errorf("commits = %q", log)
 	}
+	for i, id := range []int64{1, 2} {
+		v := e.status(t, id)
+		want := e.commitWithSubject(t, v.ID+": "+v.Title)
+		if len(want) != 40 || v.Commit != want {
+			t.Errorf("%s commit = %q, want %q", v.ID, v.Commit, want)
+		}
+		if c := out.Commits[i]; c.Task != v.ID || c.Hash != want {
+			t.Errorf("outcome commit %d = %+v, want %s %s", i, c, v.ID, want)
+		}
+	}
+	e.assertHead(t)
+	if short := out.Commits[0].Hash[:7]; !strings.Contains(e.out.String(), "  committed "+short+` "T-1: first"`+"\n") {
+		t.Errorf("feed should show %s as %s:\n%s", out.Commits[0].Hash, short, e.out.String())
+	}
 	if files := gitCmd(t, e.root, "show", "--name-only", "--format=", "HEAD"); files != "task-2.txt" {
 		t.Errorf("last commit files = %q", files)
 	}
@@ -305,6 +319,7 @@ func TestRunInterruptedLeavesTaskInProgress(t *testing.T) {
 	e := newRunEnv(t, "a")
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &fakeHarness{script: func(int, int64, harness.Request) (harness.Result, error) {
+		e.commitFile(t, "agent.txt")
 		cancel()
 		return harness.Result{}, ctx.Err()
 	}}
@@ -312,8 +327,11 @@ func TestRunInterruptedLeavesTaskInProgress(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || out.StopReason != StopInterrupted {
 		t.Fatalf("out = %+v, err = %v", out, err)
 	}
-	if v := e.status(t, 1); v.Status != "IN_PROGRESS" || v.FailureCount != 0 {
+	if v := e.status(t, 1); v.Status != "IN_PROGRESS" || v.FailureCount != 0 || v.Commit != "" {
 		t.Errorf("task = %+v", v)
+	}
+	if e.assertHead(t) != e.commitWithSubject(t, "add agent.txt") {
+		t.Error("HEAD should be the agent's commit")
 	}
 	if !strings.Contains(e.out.String(), "T-1 left IN_PROGRESS, rerun to resume") {
 		t.Errorf("feed:\n%s", e.out.String())
@@ -356,13 +374,85 @@ func TestRunLockContention(t *testing.T) {
 func TestRunWithoutCommits(t *testing.T) {
 	e := newRunEnv(t, "a")
 	e.cfg.Loop.CommitPerTask = false
-	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) {
+		e.commitFile(t, "agent.txt")
+		return e.complete(id)
+	}}
 	out, err := e.run(t, context.Background(), h)
 	if err != nil || len(out.Commits) != 0 {
 		t.Fatalf("out = %+v, err = %v", out, err)
 	}
+	if v := e.status(t, 1); v.Commit != "" {
+		t.Errorf("no loop commit should be recorded: %q", v.Commit)
+	}
+	if e.assertHead(t) != e.commitWithSubject(t, "add agent.txt") {
+		t.Error("HEAD should be the agent's commit")
+	}
 	if st := gitCmd(t, e.root, "status", "--porcelain"); !strings.Contains(st, "task-1.txt") {
 		t.Errorf("work should be left uncommitted: %q", st)
+	}
+}
+
+func TestRunRecordsHeadForUnfinishedIterations(t *testing.T) {
+	e := newRunEnv(t, "flaky", "unclear")
+	var heads []string
+	h := &fakeHarness{script: func(call int, id int64, _ harness.Request) (harness.Result, error) {
+		if len(heads) > 0 {
+			if got := e.milestone(t).HeadCommit; got != heads[len(heads)-1] {
+				t.Errorf("session %d sees head %q, want the previous session's HEAD %q", call, got, heads[len(heads)-1])
+			}
+		}
+		e.commitFile(t, fmt.Sprintf("agent-%d.txt", call))
+		heads = append(heads, gitCmd(t, e.root, "rev-parse", "HEAD"))
+		var err error
+		switch call {
+		case 1:
+		case 2:
+			_, err = e.svc.SetTaskStatus(context.Background(), id, domain.StatusBlocked, "stuck")
+		default:
+			_, err = e.svc.SetTaskStatus(context.Background(), id, domain.StatusProposed, "unclear")
+		}
+		return harness.Result{Completed: true}, err
+	}}
+	_, err := e.run(t, context.Background(), h)
+	if !errors.Is(err, errs.ErrNeedsHuman) || h.calls != 3 {
+		t.Fatalf("calls = %d, err = %v\n%s", h.calls, err, e.out.String())
+	}
+	feed := e.out.String()
+	for _, want := range []string{"↺ T-1 not finished", "✗ T-1 BLOCKED", "⤺ T-2 sent back to PROPOSED"} {
+		if !strings.Contains(feed, want) {
+			t.Errorf("feed lacks %q:\n%s", want, feed)
+		}
+	}
+	if head := e.assertHead(t); head != heads[2] {
+		t.Errorf("HEAD = %q, want the last session's commit %q", head, heads[2])
+	}
+	for _, id := range []int64{1, 2} {
+		if v := e.status(t, id); v.Commit != "" {
+			t.Errorf("%s commit = %q, want none", v.ID, v.Commit)
+		}
+	}
+}
+
+func TestRunCommitHookFailureRecordsNoTaskCommit(t *testing.T) {
+	e := newRunEnv(t, "a")
+	hook := filepath.Join(e.root, ".git", "hooks", "pre-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho 'lint failed' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+	out, err := e.run(t, context.Background(), h)
+	if err == nil || !strings.Contains(err.Error(), "T-1 is DONE but the commit failed") || !strings.Contains(err.Error(), "lint failed") {
+		t.Fatalf("err = %v\n%s", err, e.out.String())
+	}
+	if v := e.status(t, 1); v.Status != "DONE" || v.Commit != "" {
+		t.Errorf("task = %+v", v)
+	}
+	if len(out.Commits) != 0 || strings.Contains(e.out.String(), "could not record head") {
+		t.Errorf("out = %+v\n%s", out, e.out.String())
+	}
+	if e.assertHead(t) != gitCmd(t, e.root, "rev-parse", "main") {
+		t.Error("HEAD should still be the base commit")
 	}
 }
 
@@ -512,6 +602,31 @@ func (e *runEnv) commitFile(t *testing.T, name string) {
 	gitCmd(t, e.root, "commit", "--quiet", "-m", "add "+name)
 }
 
+// commitWithSubject returns the full hash of the one commit on HEAD whose
+// subject is subject.
+func (e *runEnv) commitWithSubject(t *testing.T, subject string) string {
+	t.Helper()
+	var found []string
+	for _, line := range strings.Split(gitCmd(t, e.root, "log", "--format=%H %s", "HEAD"), "\n") {
+		if hash, s, _ := strings.Cut(line, " "); s == subject {
+			found = append(found, hash)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("commits with subject %q: %v", subject, found)
+	}
+	return found[0]
+}
+
+func (e *runEnv) assertHead(t *testing.T) string {
+	t.Helper()
+	head := gitCmd(t, e.root, "rev-parse", "HEAD")
+	if got := e.milestone(t).HeadCommit; got != head {
+		t.Errorf("recorded head = %q, want HEAD %q", got, head)
+	}
+	return head
+}
+
 func TestRunRecordsCreatedBranch(t *testing.T) {
 	e := newRunEnv(t, "a")
 	mainHash := gitCmd(t, e.root, "rev-parse", "main")
@@ -598,9 +713,10 @@ func TestRunUsesRecordedBranch(t *testing.T) {
 	if list := gitCmd(t, e.root, "branch", "--list", "ralph/oidc-login"); list != "" {
 		t.Errorf("template branch was created: %q", list)
 	}
-	if m := e.milestone(t); m.Branch != g.Branch || m.BaseCommit != "" || m.HeadCommit != "" {
-		t.Errorf("record changed to %q base %q head %q", m.Branch, m.BaseCommit, m.HeadCommit)
+	if m := e.milestone(t); m.Branch != g.Branch || m.BaseCommit != "" {
+		t.Errorf("record changed to %q base %q", m.Branch, m.BaseCommit)
 	}
+	e.assertHead(t)
 }
 
 func TestRunRecordedBranchMissingFallsBackToTemplate(t *testing.T) {

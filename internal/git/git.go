@@ -152,7 +152,8 @@ func (r Repo) CreateBranch(ctx context.Context, branch, start string) error {
 }
 
 // CommitAll stages every change outside Exclude and commits it. It returns
-// committed=false when there was nothing to commit. Commit hooks run.
+// committed=false when there was nothing to commit, and otherwise the new
+// commit's full object name. Commit hooks run.
 func (r Repo) CommitAll(ctx context.Context, message string) (hash string, committed bool, err error) {
 	if _, err := r.run(ctx, append([]string{"add", "--all"}, r.pathspec()...)...); err != nil {
 		return "", false, err
@@ -165,7 +166,7 @@ func (r Repo) CommitAll(ctx context.Context, message string) (hash string, commi
 	if _, err := r.run(ctx, "commit", "--quiet", "-m", message); err != nil {
 		return "", false, err
 	}
-	hash, err = r.run(ctx, "rev-parse", "--short", "HEAD")
+	hash, err = r.RevParse(ctx, "HEAD")
 	return hash, err == nil, err
 }
 

@@ -201,6 +201,7 @@ func (r Runner) Run(ctx context.Context, plan Plan) (Outcome, error) {
 		res, logPath, err := r.runSession(ctx, plan, task, iter, prompt, runDir, now(), f)
 		out.CostUSD += res.CostUSD
 		if err != nil {
+			r.recordHeadBestEffort(ctx, repo, milestoneID, f)
 			if ctx.Err() != nil {
 				return out, interrupted(ctx, &out, f, task.ID+" left IN_PROGRESS, ")
 			}
@@ -229,6 +230,7 @@ func (r Runner) Run(ctx context.Context, plan Plan) (Outcome, error) {
 			if plan.CommitPerTask {
 				c, err := r.commit(ctx, repo, commitTmpl, plan, after, f)
 				if err != nil {
+					r.recordHeadBestEffort(ctx, repo, milestoneID, f)
 					if ctx.Err() != nil {
 						return out, interrupted(ctx, &out, f, after.ID+" is DONE but not committed; commit by hand, then ")
 					}
@@ -236,6 +238,9 @@ func (r Runner) Run(ctx context.Context, plan Plan) (Outcome, error) {
 				}
 				if c != nil {
 					out.Commits = append(out.Commits, *c)
+					if err := r.Service.RecordTaskCommit(ctx, taskID, c.Hash); err != nil {
+						return out, fmt.Errorf("recording %s's commit: %w", after.ID, err)
+					}
 				}
 			}
 		case domain.StatusTodo:
@@ -246,6 +251,9 @@ func (r Runner) Run(ctx context.Context, plan Plan) (Outcome, error) {
 			f.printf("⤺ %s sent back to PROPOSED · %s\n", after.ID, stats)
 		default:
 			f.printf("• %s is %s · %s\n", after.ID, after.Status, stats)
+		}
+		if err := r.recordHead(ctx, repo, milestoneID); err != nil {
+			return out, fmt.Errorf("recording the milestone head: %w", err)
 		}
 	}
 
@@ -494,8 +502,33 @@ func (r Runner) commit(ctx context.Context, repo git.Repo, tmpl *template.Templa
 		f.printf("  nothing to commit for %s\n", task.ID)
 		return nil, nil
 	}
-	f.printf("  committed %s %q\n", hash, msg)
+	f.printf("  committed %s %q\n", shortHash(hash), msg)
 	return &Commit{Task: task.ID, Hash: hash}, nil
+}
+
+// recordHead records the branch tip as the milestone's head.
+func (r Runner) recordHead(ctx context.Context, repo git.Repo, milestoneID int64) error {
+	head, err := repo.RevParse(ctx, "HEAD")
+	if err != nil {
+		return err
+	}
+	return r.Service.RecordMilestoneHead(ctx, milestoneID, head)
+}
+
+// recordHeadBestEffort records the head on the way out of a failed or
+// interrupted iteration, even when ctx is cancelled, without masking the
+// error that ends the run.
+func (r Runner) recordHeadBestEffort(ctx context.Context, repo git.Repo, milestoneID int64, f feed) {
+	if err := r.recordHead(context.WithoutCancel(ctx), repo, milestoneID); err != nil {
+		f.printf("■ could not record head: %v\n", err)
+	}
+}
+
+func shortHash(hash string) string {
+	if len(hash) > 7 {
+		return hash[:7]
+	}
+	return hash
 }
 
 // stashLeftover sets aside an unfinished task's changes before another task
