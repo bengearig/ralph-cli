@@ -77,5 +77,14 @@ before records existed have no record to compare against at all.
 - Teams that turn `loop.commit_trailer` off rely on patch-ids and subjects, so squashes and reworded commits leave
   tasks `missing` more often.
 - A `DONE` task may now have an empty commit for a reason other than the loop not committing; its notes say why.
-- Agent-guided reconcile, where an agent explains the report and applies the actions after approval, is a follow-up
-  (milestone M-6). It will expose the same check and actions through MCP rather than add new behaviour.
+- Agent-guided reconcile, where an agent explains the report and applies the actions after approval, was a planned
+  follow-up. See the follow-up below.
+
+## Follow-up
+
+Agent-guided reconcile now exists. The `milestone_drift` (read-only) and `milestone_reconcile` (destructive) MCP
+tools expose the same check and actions, through the same code as `ralph milestone reconcile`, rather than adding new
+behaviour. The `/ralph:reconcile` slash command explains the drift per task, proposes actions, and applies them only
+after the user approves them in plan mode; if the user declines plan mode, it applies nothing and prints the
+equivalent CLI command. See [MCP server](../mcp.md#milestones) and
+[Claude Code integration](../claude-code.md#workflow).

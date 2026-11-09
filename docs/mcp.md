@@ -21,7 +21,8 @@ therefore launch it from the repository; Claude Code does this for project-scope
   and omit those fields when nothing is recorded. No tool sets them. See
   [Git records](data-model.md#git-records).
 - **Index warnings.** Write results include `index_warning` when the entity was saved but could not be embedded.
-- **Annotations.** Read tools are marked read-only. No tool is destructive, and none reaches outside the project.
+- **Annotations.** Read tools are marked read-only, and tools that can undo recorded work, such as
+  `milestone_reconcile`, are marked destructive. No tool reaches outside the project.
 - **Logging.** Logs go to stderr only.
 
 ## Tools
@@ -46,6 +47,8 @@ The authoritative list, with schemas, is whatever `tools/list` returns. The regi
 | `milestone_list` | Milestones with derived status and task counts, optionally for one initiative. |
 | `milestone_get` | A milestone with its tasks in loop order, and its recorded `branch`, `base_commit`, and `head_commit` when the loop has recorded them. |
 | `milestone_update` | Edit title, description, or position. The recorded git state cannot be changed. |
+| `milestone_drift` | Read-only. Compare the milestone's recorded git state with its branch and report the drift state, where each `DONE` task's work is now, and any extra, lost, or unattributed commits. See [Drift and reconcile](loop.md#drift-and-reconcile). |
+| `milestone_reconcile` | Destructive. Resolve drift with `branch`, `reopen` with `reason`, and `accept`, exactly as `ralph milestone reconcile` does, and return the report `before` and `after` the actions. Invalid actions are tool errors and change nothing. A milestone that is still not clean afterwards is a normal result, not an error. Agents should get the user's approval first, as `/ralph:reconcile` does. |
 
 ### Tasks
 

@@ -12,7 +12,7 @@ Claude Code is the first supported harness (`harness.default: claude_code`). It 
 |---|---|---|
 | `.mcp.json` | Adds `mcpServers.ralph` → `{"type": "stdio", "command": "ralph", "args": ["mcp"]}`. Other servers and keys are preserved. | Yes, so the team shares it. |
 | `.claude/settings.json` | Adds `mcp__ralph` to `permissions.allow`, so ralph's tools run without a prompt each time. Other settings are preserved. | Yes |
-| `.claude/commands/ralph/*.md` | The `/ralph:receive`, `/ralph:articulate`, `/ralph:status`, and `/ralph:search` slash commands. | Yes |
+| `.claude/commands/ralph/*.md` | The `/ralph:receive`, `/ralph:articulate`, `/ralph:status`, `/ralph:search`, and `/ralph:reconcile` slash commands. | Yes |
 | `CLAUDE.md` | A RALPH section between `<!-- ralph:begin -->` and `<!-- ralph:end -->`. Text outside the markers is left alone; the section is replaced on rerun. | Yes |
 | `.ralph/config.yaml` | Project config template, every setting commented out. | Yes |
 | `.ralph/ralph.db` | The store. | No, it is git-ignored. |
@@ -54,7 +54,14 @@ instructions if the server is not approved.
 3. **Check.** Run `/ralph:status`, or `ralph status` in a terminal.
 4. **Loop.** Run `ralph loop --milestone M-1` in a terminal. Preview it first with `--dry-run --show-prompt`; see
    [the loop](loop.md).
-5. **Pull request.** Run `ralph pr create --milestone M-1`. Planned.
+5. **Reconcile, if needed.** Run `/ralph:reconcile M-1` when `ralph pr create` or `ralph loop` refuses the milestone
+   because its branch has drifted, or after you rebase, squash, reset, or rename the branch yourself. The agent
+   checks the drift with read-only tools and explains, per task, where the recorded work is now. If anything needs
+   resolving, it proposes actions (point the record at a renamed branch, reopen tasks whose work is gone, accept the
+   branch as it is) and applies them only after you approve them in plan mode, entering plan mode itself if the
+   session is not already in it. If you decline plan mode, nothing is applied, and the agent prints the equivalent
+   `ralph milestone reconcile` command for you to run. See [Drift and reconcile](loop.md#drift-and-reconcile).
+6. **Pull request.** Run `ralph pr create --milestone M-1`. Planned.
 
 At any point, `/ralph:search <question>` searches the store, reads the best matches, and answers with their IDs.
 It changes nothing. `ralph search` is the terminal equivalent.
