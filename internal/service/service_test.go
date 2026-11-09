@@ -583,3 +583,52 @@ func TestReopenTask(t *testing.T) {
 		t.Errorf("reopening a TODO task again = %v, want ErrInvalid", err)
 	}
 }
+
+func TestInTx(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	_, mID := e.scaffold(t)
+	tv, err := e.svc.CreateTask(ctx, TaskInput{MilestoneID: mID, Title: "Route"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := mustID(t, domain.KindTask, tv.ID)
+	commit := strings.Repeat("ab", 20)
+	g := domain.MilestoneGit{Branch: "ralph/oauth", HeadCommit: commit}
+
+	boom := errors.New("boom")
+	err = e.svc.InTx(ctx, func(tx *Service) error {
+		if err := tx.RecordMilestoneGit(ctx, mID, g); err != nil {
+			return err
+		}
+		if err := tx.RecordTaskCommit(ctx, id, commit); err != nil {
+			return err
+		}
+		if _, err := tx.AddTaskNote(ctx, id, domain.NoteGeneral, "inside"); err != nil {
+			return err
+		}
+		return boom
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("InTx = %v, want boom", err)
+	}
+	m, _ := e.svc.GetMilestone(ctx, mID)
+	got, _ := e.svc.GetTask(ctx, id)
+	if m.Branch != "" || m.HeadCommit != "" || got.Commit != "" || len(got.Notes) != 0 {
+		t.Errorf("rolled-back writes persisted: milestone %+v, task %+v", m, got)
+	}
+
+	if err := e.svc.InTx(ctx, func(tx *Service) error {
+		if err := tx.RecordMilestoneGit(ctx, mID, g); err != nil {
+			return err
+		}
+		return tx.RecordTaskCommit(ctx, id, commit)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = e.svc.GetMilestone(ctx, mID)
+	got, _ = e.svc.GetTask(ctx, id)
+	if m.Branch != g.Branch || m.HeadCommit != commit || got.Commit != commit {
+		t.Errorf("committed writes missing: milestone %+v, task %+v", m, got)
+	}
+}

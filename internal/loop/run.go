@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -119,9 +118,9 @@ func (r Runner) Run(ctx context.Context, plan Plan) (Outcome, error) {
 	if _, err := template.New("prompt").Option("missingkey=error").Parse(promptTmpl); err != nil {
 		return out, fmt.Errorf("parsing prompt template: %w", err)
 	}
-	commitTmpl, err := template.New("commit").Option("missingkey=error").Parse(r.Config.Loop.CommitTemplate)
+	commitTmpl, err := parseCommitTemplate(r.Config.Loop.CommitTemplate)
 	if err != nil {
-		return out, fmt.Errorf("loop.commit_template: %w", err)
+		return out, err
 	}
 
 	ralphDir := filepath.Join(r.Root, project.DirName)
@@ -304,25 +303,10 @@ func (r Runner) Run(ctx context.Context, plan Plan) (Outcome, error) {
 // are allowed only when already on the milestone branch, where they are the
 // previous run's unfinished work.
 func (r Runner) prepareBranch(ctx context.Context, plan Plan, milestoneID int64, f feed) (git.Repo, string, error) {
-	if _, err := exec.LookPath("git"); err != nil {
-		return git.Repo{}, "", errors.New("the loop needs git, which was not found on PATH")
-	}
-	gitRoot, err := project.GitRoot(ctx, r.Root)
+	repo, err := ResolveRepo(ctx, r.Root)
 	if err != nil {
 		return git.Repo{}, "", fmt.Errorf("the loop needs a git repository: %w", err)
 	}
-	root := r.Root
-	if resolved, err := filepath.EvalSymlinks(root); err == nil {
-		root = resolved
-	}
-	if resolved, err := filepath.EvalSymlinks(gitRoot); err == nil {
-		gitRoot = resolved
-	}
-	exclude, err := filepath.Rel(gitRoot, filepath.Join(root, project.DirName))
-	if err != nil {
-		return git.Repo{}, "", err
-	}
-	repo := git.Repo{Dir: gitRoot, Exclude: filepath.ToSlash(exclude)}
 
 	m, err := r.Service.GetMilestone(ctx, milestoneID)
 	if err != nil {
@@ -486,13 +470,9 @@ func (r Runner) runSession(ctx context.Context, plan Plan, task service.TaskView
 }
 
 func (r Runner) commit(ctx context.Context, repo git.Repo, tmpl *template.Template, plan Plan, task service.TaskView, f feed) (*Commit, error) {
-	var b strings.Builder
-	if err := tmpl.Execute(&b, commitData{Task: task, Initiative: plan.Initiative, Milestone: plan.Milestone}); err != nil {
-		return nil, fmt.Errorf("loop.commit_template: %w", err)
-	}
-	msg := strings.TrimSpace(b.String())
-	if msg == "" {
-		msg = task.ID + ": " + task.Title
+	msg, err := commitMessage(tmpl, commitData{Task: task, Initiative: plan.Initiative, Milestone: plan.Milestone})
+	if err != nil {
+		return nil, err
 	}
 	var trailers []string
 	if r.Config.Loop.CommitTrailer {

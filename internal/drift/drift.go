@@ -156,12 +156,21 @@ func plural(n int, noun string) string {
 
 // Check builds the drift report for a milestone. It writes nothing.
 func Check(ctx context.Context, in Input) (Report, error) {
+	return check(ctx, in, "")
+}
+
+// check is Check with the recorded branch replaced by branch when it is
+// non-empty, as if the record already pointed there.
+func check(ctx context.Context, in Input, branch string) (Report, error) {
 	if in.Service == nil {
 		return Report{}, errors.New("drift: no service")
 	}
 	m, err := in.Service.GetMilestone(ctx, in.MilestoneID)
 	if err != nil {
 		return Report{}, err
+	}
+	if branch != "" {
+		m.Branch = branch
 	}
 	tasks, err := in.Service.ListTasks(ctx, service.TaskFilter{MilestoneID: in.MilestoneID, Statuses: []domain.Status{domain.StatusDone}})
 	if err != nil {

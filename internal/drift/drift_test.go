@@ -3,6 +3,7 @@ package drift
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -598,4 +599,254 @@ func TestOnlyDoneTasks(t *testing.T) {
 
 	r := e.check(e.input())
 	wantTasks(t, r, want{MatchPresent, c1})
+}
+
+func (e *env) apply(a Actions) (Report, Report) {
+	e.t.Helper()
+	before, after, err := Apply(context.Background(), e.input(), a)
+	if err != nil {
+		e.t.Fatalf("Apply(%+v): %v", a, err)
+	}
+	return before, after
+}
+
+// wantRefused asserts Apply fails with domain.ErrInvalid and changes nothing.
+func (e *env) wantRefused(a Actions, contains string) {
+	e.t.Helper()
+	before := e.snapshot()
+	_, _, err := Apply(context.Background(), e.input(), a)
+	if err == nil || !strings.Contains(err.Error(), contains) {
+		e.t.Errorf("Apply(%+v): err = %v, want it to contain %q", a, err, contains)
+	}
+	if after := e.snapshot(); !reflect.DeepEqual(before, after) {
+		e.t.Errorf("Apply(%+v) changed records:\nbefore %+v\nafter  %+v", a, before, after)
+	}
+}
+
+func (e *env) wantRecord(g domain.MilestoneGit) {
+	e.t.Helper()
+	m := e.snapshot().Milestone
+	if got := (domain.MilestoneGit{Branch: m.Branch, BaseCommit: m.BaseCommit, HeadCommit: m.HeadCommit}); got != g {
+		e.t.Errorf("record = %+v, want %+v", got, g)
+	}
+}
+
+func (e *env) wantTask(i int, status, commit string) service.TaskView {
+	e.t.Helper()
+	tv := e.snapshot().Tasks[i]
+	if tv.Status != status || tv.Commit != commit {
+		e.t.Errorf("%s: status %s commit %q, want %s %q", tv.ID, tv.Status, tv.Commit, status, commit)
+	}
+	return tv
+}
+
+func noteBodies(tv service.TaskView) []string {
+	out := []string{}
+	for _, n := range tv.Notes {
+		out = append(out, n.Kind+": "+n.Body)
+	}
+	return out
+}
+
+func TestApplyNoActions(t *testing.T) {
+	e := newEnv(t, "login")
+	e.do(0, true)
+	e.recordHere()
+	e.commit("manual.txt", "by hand\n", "Manual tweak")
+	snap := e.snapshot()
+
+	before, after := e.apply(Actions{})
+	wantState(t, before, StateAhead)
+	if !reflect.DeepEqual(before, after) {
+		t.Errorf("after = %+v, want before %+v", after, before)
+	}
+	if got := e.snapshot(); !reflect.DeepEqual(snap, got) {
+		t.Error("Apply without actions changed records")
+	}
+}
+
+func TestApplyAcceptDiverged(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	e.do(0, true)
+	e.do(1, true)
+	e.recordHere()
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	e.commit("upstream.txt", "upstream\n", "Upstream change")
+	gitCmd(t, e.root, "switch", "--quiet", branch)
+	gitCmd(t, e.root, "rebase", "--quiet", "main")
+	n1, n2 := e.rev("HEAD~1"), e.rev("HEAD")
+
+	before, after := e.apply(Actions{Accept: true})
+	wantState(t, before, StateDiverged)
+	wantState(t, after, StateUnchanged)
+	e.wantRecord(domain.MilestoneGit{Branch: branch, BaseCommit: e.base, HeadCommit: n2})
+	e.wantTask(0, "DONE", n1)
+	e.wantTask(1, "DONE", n2)
+	wantTasks(t, after, want{MatchPresent, n1}, want{MatchPresent, n2})
+}
+
+func TestApplyAcceptKeepsMissingTaskDone(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	c1 := e.do(0, true)
+	e.do(1, true)
+	e.recordHere()
+	gitCmd(t, e.root, "reset", "--quiet", "--hard", "HEAD~1")
+
+	before, after := e.apply(Actions{Accept: true})
+	wantState(t, before, StateBehind)
+	wantState(t, after, StateUnchanged)
+	e.wantRecord(domain.MilestoneGit{Branch: branch, BaseCommit: e.base, HeadCommit: c1})
+	e.wantTask(0, "DONE", c1)
+	tv := e.wantTask(1, "DONE", "")
+	note := "NOTE: reconcile: no commit found on " + branch + " at " + c1[:12] + "; kept DONE"
+	if notes := noteBodies(tv); notes[len(notes)-1] != note {
+		t.Errorf("notes = %q, want last %q", notes, note)
+	}
+	wantTasks(t, after, want{MatchPresent, c1}, want{MatchMissing, ""})
+}
+
+func TestApplyReopenAndAccept(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	c1 := e.do(0, true)
+	e.do(1, true)
+	e.recordHere()
+	gitCmd(t, e.root, "reset", "--quiet", "--hard", "HEAD~1")
+
+	_, after := e.apply(Actions{Reopen: []int64{e.tasks[1]}, Reason: "lost in a reset", Accept: true})
+	wantState(t, after, StateUnchanged)
+	e.wantRecord(domain.MilestoneGit{Branch: branch, BaseCommit: e.base, HeadCommit: c1})
+	e.wantTask(0, "DONE", c1)
+	tv := e.wantTask(1, "TODO", "")
+	notes := noteBodies(tv)
+	if last := notes[len(notes)-1]; last != "NOTE: Reopened by reconcile: lost in a reset" {
+		t.Errorf("notes = %q", notes)
+	}
+	for _, n := range notes {
+		if strings.Contains(n, "kept DONE") {
+			t.Errorf("reopened task got the kept-DONE note: %q", notes)
+		}
+	}
+	wantTasks(t, after, want{MatchPresent, c1})
+}
+
+func TestApplyRejectsInvalidActions(t *testing.T) {
+	e := newEnv(t, "login", "logout", "logs")
+	e.do(0, true)
+	e.do(1, true)
+	e.recordHere()
+	gitCmd(t, e.root, "reset", "--quiet", "--hard", "HEAD~1")
+
+	ctx := context.Background()
+	m := e.snapshot().Milestone
+	iID, _ := domain.ParseID(domain.KindInitiative, m.InitiativeID)
+	other, err := e.svc.CreateMilestone(ctx, service.MilestoneInput{InitiativeID: iID, Title: "Other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherID, _ := domain.ParseID(domain.KindMilestone, other.ID)
+	ot, err := e.svc.CreateTask(ctx, service.TaskInput{MilestoneID: otherID, Title: "elsewhere", Description: "d", AcceptanceCriteria: "c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otID, _ := domain.ParseID(domain.KindTask, ot.ID)
+	for _, st := range []domain.Status{domain.StatusTodo, domain.StatusInProgress, domain.StatusDone} {
+		if _, err := e.svc.SetTaskStatus(ctx, otID, st, "r"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	otBefore, _ := e.svc.GetTask(ctx, otID)
+
+	lost := e.tasks[1]
+	for _, accept := range []bool{false, true} {
+		e.wantRefused(Actions{Reopen: []int64{lost}, Accept: accept}, "reason")
+		e.wantRefused(Actions{Reopen: []int64{lost}, Reason: "  ", Accept: accept}, "reason")
+		e.wantRefused(Actions{Reopen: []int64{lost, e.tasks[2]}, Reason: "r", Accept: accept}, "is TODO")
+		e.wantRefused(Actions{Reopen: []int64{lost, otID}, Reason: "r", Accept: accept}, "belongs to "+other.ID)
+		e.wantRefused(Actions{Reopen: []int64{lost, 999}, Reason: "r", Accept: accept}, "T-999")
+		e.wantRefused(Actions{Reason: "r", Accept: accept}, "only used when reopening")
+		e.wantRefused(Actions{Branch: "nope", Reopen: []int64{lost}, Reason: "r", Accept: accept}, `branch "nope" does not exist`)
+	}
+	if otAfter, _ := e.svc.GetTask(ctx, otID); !reflect.DeepEqual(otBefore, otAfter) {
+		t.Errorf("other milestone's task changed: %+v", otAfter)
+	}
+	_, _, err = Apply(ctx, e.input(), Actions{Reopen: []int64{lost}})
+	if !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("err = %v, want domain.ErrInvalid", err)
+	}
+}
+
+func TestApplyRefusesAcceptOnMergedAndBranchMissing(t *testing.T) {
+	t.Run("merged", func(t *testing.T) {
+		e := newEnv(t, "login")
+		e.do(0, true)
+		e.recordHere()
+		gitCmd(t, e.root, "switch", "--quiet", "main")
+		gitCmd(t, e.root, "merge", "--quiet", "--no-ff", "-m", "Merge", branch)
+		e.wantRefused(Actions{Accept: true}, "already merged")
+		e.wantRefused(Actions{Reopen: []int64{e.tasks[0]}, Reason: "r", Accept: true}, "already merged")
+	})
+	t.Run("branch_missing", func(t *testing.T) {
+		e := newEnv(t, "login")
+		e.do(0, true)
+		e.recordHere()
+		gitCmd(t, e.root, "switch", "--quiet", "main")
+		gitCmd(t, e.root, "branch", "--quiet", "-D", branch)
+		e.wantRefused(Actions{Accept: true}, "--branch first")
+		e.wantRefused(Actions{Reopen: []int64{e.tasks[0]}, Reason: "r", Accept: true}, "--branch first")
+	})
+}
+
+func TestApplyBranchThenAccept(t *testing.T) {
+	e := newEnv(t, "login")
+	c1 := e.do(0, true)
+	e.recordHere()
+	gitCmd(t, e.root, "branch", "--quiet", "-m", "other")
+	extra := e.commit("manual.txt", "by hand\n", "Manual tweak")
+
+	before, after := e.apply(Actions{Branch: "other"})
+	wantState(t, before, StateBranchMissing)
+	wantState(t, after, StateAhead)
+	e.wantRecord(domain.MilestoneGit{Branch: "other", BaseCommit: e.base, HeadCommit: c1})
+	if after.Branch != "other" {
+		t.Errorf("after branch = %q", after.Branch)
+	}
+
+	_, after = e.apply(Actions{Accept: true})
+	wantState(t, after, StateUnchanged)
+	e.wantRecord(domain.MilestoneGit{Branch: "other", BaseCommit: e.base, HeadCommit: extra})
+	e.wantTask(0, "DONE", c1)
+}
+
+func TestApplyBranchAndAcceptTogether(t *testing.T) {
+	e := newEnv(t, "login")
+	c1 := e.do(0, true)
+	e.recordHere()
+	gitCmd(t, e.root, "branch", "--quiet", "-m", "other")
+	extra := e.commit("manual.txt", "by hand\n", "Manual tweak")
+
+	before, after := e.apply(Actions{Branch: "other", Accept: true})
+	wantState(t, before, StateBranchMissing)
+	wantState(t, after, StateUnchanged)
+	e.wantRecord(domain.MilestoneGit{Branch: "other", BaseCommit: e.base, HeadCommit: extra})
+	e.wantTask(0, "DONE", c1)
+}
+
+func TestApplyBackfill(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	tv := e.snapshot().Tasks
+	c1 := e.commit("login.txt", "login\n", "Login\n\nRalph-Task: "+tv[0].ID)
+	c2 := e.commit("logout.txt", "logout\n", subject(tv[1]))
+	e.done(0)
+	e.done(1)
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	e.commit("upstream.txt", "upstream\n", "Upstream change")
+	gitCmd(t, e.root, "switch", "--quiet", branch)
+
+	before, after := e.apply(Actions{Accept: true})
+	wantState(t, before, StateUnrecorded)
+	wantState(t, after, StateUnchanged)
+	e.wantRecord(domain.MilestoneGit{Branch: branch, BaseCommit: e.base, HeadCommit: c2})
+	e.wantTask(0, "DONE", c1)
+	e.wantTask(1, "DONE", c2)
+	wantTasks(t, after, want{MatchPresent, c1}, want{MatchPresent, c2})
 }

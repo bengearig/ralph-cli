@@ -52,6 +52,23 @@ func New(st store.Store, ix *search.Index, opts Options) *Service {
 // loop planning.
 func (s *Service) Store() store.Store { return s.store }
 
+// InTx runs fn with a Service bound to one store transaction: if fn returns
+// an error, none of its writes persist. fn must use only the Service it is
+// given; the store may allow a single connection, so calls through s would
+// wait on the transaction.
+func (s *Service) InTx(ctx context.Context, fn func(tx *Service) error) error {
+	return s.store.InTx(ctx, func(st store.Store) error {
+		inner := *s
+		inner.store = st
+		if s.index != nil {
+			ix := *s.index
+			ix.Store = st
+			inner.index = &ix
+		}
+		return fn(&inner)
+	})
+}
+
 const maxSlugAttempts = 100
 
 // createWithSlug calls create with the requested slug, or with slugs derived

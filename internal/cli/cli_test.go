@@ -463,3 +463,207 @@ func TestPRDryRunUsesRecordedBranch(t *testing.T) {
 		t.Errorf("loop dry-run branch = %q", plan.Branch)
 	}
 }
+
+func TestMilestoneReconcile(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	h := newTestEnv(t, false)
+	for k, v := range map[string]string{
+		"GIT_CONFIG_NOSYSTEM": "1",
+		"GIT_AUTHOR_NAME":     "Ralph Test", "GIT_AUTHOR_EMAIL": "ralph@example.com",
+		"GIT_COMMITTER_NAME": "Ralph Test", "GIT_COMMITTER_EMAIL": "ralph@example.com",
+	} {
+		t.Setenv(k, v)
+	}
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = h.dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	commit := func(file, msg string) string {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(h.dir, file), []byte(msg+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git("add", "--", file)
+		git("commit", "--quiet", "-m", msg)
+		return git("rev-parse", "HEAD")
+	}
+	git("init", "--quiet", "--initial-branch=main")
+	h.ok("init", "--no-harness")
+	git("add", ".")
+	git("commit", "--quiet", "-m", "initial")
+	base := git("rev-parse", "HEAD")
+
+	h.ok("initiative", "create", "--title", "SSO")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Login")
+	for _, title := range []string{"Route", "Logout"} {
+		h.ok("task", "create", "--milestone", "M-1", "--title", title, "--description", "d", "--criteria", "c")
+	}
+	git("switch", "--quiet", "-c", "ralph/login")
+	var commits []string
+	for _, id := range []string{"T-1", "T-2"} {
+		h.ok("task", "status", id, "TODO")
+		h.ok("task", "status", id, "IN_PROGRESS")
+		h.ok("task", "status", id, "DONE", "--reason", "done")
+		commits = append(commits, commit(id+".txt", id+": work\n\nRalph-Task: "+id))
+	}
+
+	cfg, err := config.Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Embeddings.Provider = config.EmbeddingsNone
+	svc, closeFn, err := service.Open(context.Background(), cfg, h.dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeFn()
+	ctx := context.Background()
+	if err := svc.RecordMilestoneGit(ctx, 1, domain.MilestoneGit{Branch: "ralph/login", BaseCommit: base, HeadCommit: commits[1]}); err != nil {
+		t.Fatal(err)
+	}
+	for i, c := range commits {
+		if err := svc.RecordTaskCommit(ctx, int64(i+1), c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state := func() string {
+		t.Helper()
+		return h.ok("--json", "milestone", "show", "M-1")
+	}
+
+	// Unchanged: the report alone succeeds.
+	out := h.ok("milestone", "reconcile", "M-1")
+	for _, want := range []string{"state:    unchanged", "tip:      " + commits[1][:12], "T-1   present  " + commits[0][:12] + "  Route"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("unchanged report lacks %q:\n%s", want, out)
+		}
+	}
+
+	// Diverged by a rebase: the report changes nothing and needs a human.
+	git("switch", "--quiet", "main")
+	commit("upstream.txt", "Upstream change")
+	git("switch", "--quiet", "ralph/login")
+	git("rebase", "--quiet", "main")
+	tip := git("rev-parse", "HEAD")
+	rebased := []string{git("rev-parse", "HEAD~1"), tip}
+	recorded := state()
+	out, _, err = h.run("", "milestone", "reconcile", "M-1")
+	if !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("diverged report: err = %v, want ErrNeedsHuman", err)
+	}
+	if !strings.HasSuffix(err.Error(), "run: ralph milestone reconcile M-1 --accept") {
+		t.Errorf("error should end with the next step: %v", err)
+	}
+	for _, want := range []string{
+		"M-1 has diverged from its recorded head " + commits[1][:12],
+		"state:    diverged",
+		"recorded: ralph/login (base " + base[:12] + ", head " + commits[1][:12] + ")",
+		"tip:      " + tip[:12],
+		"T-2   trailer  " + rebased[1][:12] + "  Logout",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("diverged report lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "applied:") {
+		t.Errorf("report without flags claims changes:\n%s", out)
+	}
+	if got := state(); got != recorded {
+		t.Errorf("reconcile without flags changed records:\n%s\nwant:\n%s", got, recorded)
+	}
+
+	// --json without flags: after is null.
+	out, _, err = h.run("", "--json", "milestone", "reconcile", "M-1")
+	if !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("--json report: err = %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatalf("decoding %q: %v", out, err)
+	}
+	if string(raw["after"]) != "null" {
+		t.Errorf("after = %s, want null", raw["after"])
+	}
+
+	// --accept resolves it.
+	out = h.ok("milestone", "reconcile", "M-1", "--accept")
+	for _, want := range []string{
+		"applied:\n  accepted ralph/login at " + tip[:12] + ", base " + base[:12] + "\n  T-1 commit " + rebased[0][:12] + "\n  T-2 commit " + rebased[1][:12] + "\n",
+		"after:\nM-1 branch ralph/login is at its recorded head " + tip[:12],
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("accept output lacks %q:\n%s", want, out)
+		}
+	}
+	var m struct {
+		HeadCommit string `json:"head_commit"`
+		Tasks      []struct {
+			Commit string `json:"commit"`
+		} `json:"tasks"`
+	}
+	h.json(&m, "milestone", "show", "M-1")
+	if m.HeadCommit != tip || m.Tasks[0].Commit != rebased[0] || m.Tasks[1].Commit != rebased[1] {
+		t.Errorf("after accept: %+v", m)
+	}
+
+	// --json with --accept on a branch that is ahead.
+	extra := commit("manual.txt", "Manual tweak")
+	var res struct {
+		Before map[string]any `json:"before"`
+		After  map[string]any `json:"after"`
+	}
+	h.json(&res, "milestone", "reconcile", "M-1", "--accept")
+	if res.Before["state"] != "ahead" || res.After["state"] != "unchanged" {
+		t.Errorf("states = %v → %v", res.Before["state"], res.After["state"])
+	}
+	for _, r := range []map[string]any{res.Before, res.After} {
+		for _, k := range []string{"milestone", "branch", "base_ref", "recorded", "tip", "state", "remote_branch_exists", "tasks", "unattributed_commits", "proposed_base"} {
+			if _, ok := r[k]; !ok {
+				t.Errorf("report lacks %q: %v", k, r)
+			}
+		}
+	}
+	if extras, _ := res.Before["extra_commits"].([]any); len(extras) != 1 || extras[0].(map[string]any)["hash"] != extra {
+		t.Errorf("before extra_commits = %v", res.Before["extra_commits"])
+	}
+
+	// A reset drops T-2's work: invalid reopen requests change nothing, a
+	// valid one reopens it.
+	git("reset", "--quiet", "--hard", rebased[0])
+	recorded = state()
+	for _, args := range [][]string{
+		{"--reopen", "T-2", "--accept"},
+		{"--reopen", "T-2,T-9", "--reason", "lost"},
+		{"--reopen", "M-1", "--reason", "lost"},
+		{"--branch", "", "--accept"},
+		{"--branch", "nope", "--accept"},
+	} {
+		_, _, err := h.run("", append([]string{"milestone", "reconcile", "M-1"}, args...)...)
+		if err == nil || errors.Is(err, errs.ErrNeedsHuman) {
+			t.Errorf("%v: err = %v, want a usage error", args, err)
+		}
+		if got := state(); got != recorded {
+			t.Errorf("%v changed records", args)
+		}
+	}
+	out = h.ok("milestone", "reconcile", "M-1", "--reopen", "T-2", "--reopen", "T-2", "--reason", "lost in a reset", "--accept")
+	if !strings.Contains(out, "applied:\n  reopened T-2 (now TODO)\n  accepted ralph/login at "+rebased[0][:12]) {
+		t.Errorf("reopen output:\n%s", out)
+	}
+	var task struct {
+		Status string `json:"status"`
+		Commit string `json:"commit"`
+	}
+	h.json(&task, "task", "show", "T-2")
+	if task.Status != "TODO" || task.Commit != "" {
+		t.Errorf("T-2 = %+v", task)
+	}
+}

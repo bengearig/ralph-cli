@@ -169,3 +169,32 @@ func TestDefaultPromptRendersWithoutNotes(t *testing.T) {
 		t.Errorf("optional sections rendered:\n%s", out)
 	}
 }
+
+func TestCommitSubject(t *testing.T) {
+	i, m := Ref{ID: "I-1", Slug: "sso", Title: "SSO"}, Ref{ID: "M-2", Slug: "login", Title: "Login"}
+	task := service.TaskView{ID: "T-3", Title: "Add route"}
+	for _, tc := range []struct{ tmpl, want string }{
+		{"{{.Task.ID}}: {{.Task.Title}}", "T-3: Add route"},
+		{"{{.Milestone.ID}} {{.Task.ID}}: {{.Task.Title}}\n\nBody for {{.Initiative.Slug}}", "M-2 T-3: Add route"},
+		{"  {{.Task.ID}}  \n{{.Task.Title}}\n\nbody", "T-3 Add route"},
+		{"{{if false}}x{{end}}", "T-3: Add route"},
+	} {
+		subject, err := CommitSubject(tc.tmpl, i, m)
+		if err != nil {
+			t.Fatalf("%q: %v", tc.tmpl, err)
+		}
+		if got := subject(task); got != tc.want {
+			t.Errorf("%q: subject = %q, want %q", tc.tmpl, got, tc.want)
+		}
+	}
+	if _, err := CommitSubject("{{.Task", i, m); err == nil || !strings.Contains(err.Error(), "loop.commit_template") {
+		t.Errorf("bad template: err = %v", err)
+	}
+	subject, err := CommitSubject("{{.Task.Nope}}", i, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := subject(task); got != "" {
+		t.Errorf("failing template: subject = %q, want empty", got)
+	}
+}
