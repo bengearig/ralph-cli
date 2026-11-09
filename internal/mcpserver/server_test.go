@@ -23,15 +23,23 @@ func connect(t *testing.T) *mcp.ClientSession {
 
 func connectWith(t *testing.T, opts Options) *mcp.ClientSession {
 	t.Helper()
-	ctx := context.Background()
-	st, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "r.db"))
+	return connectService(t, newService(t), opts)
+}
+
+func newService(t *testing.T) *service.Service {
+	t.Helper()
+	st, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "r.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
 	ix := &search.Index{Store: st, Embedder: fake.New(), Chunker: search.Chunker{MaxChars: 1000, OverlapChars: 100}}
-	svc := service.New(st, ix, service.Options{StallThreshold: 3})
+	return service.New(st, ix, service.Options{StallThreshold: 3})
+}
 
+func connectService(t *testing.T, svc *service.Service, opts Options) *mcp.ClientSession {
+	t.Helper()
+	ctx := context.Background()
 	srvT, cliT := mcp.NewInMemoryTransports()
 	ss, err := New(svc, "test", nil, opts).Connect(ctx, srvT, nil)
 	if err != nil {
@@ -97,11 +105,23 @@ func TestToolsAreListedWithSchemas(t *testing.T) {
 		}
 		if tool.Annotations == nil || tool.Annotations.Title == "" {
 			t.Errorf("tool %s lacks annotations", tool.Name)
+			continue
+		}
+		switch tool.Name {
+		case "milestone_drift":
+			if !tool.Annotations.ReadOnlyHint {
+				t.Errorf("milestone_drift is not read-only: %+v", tool.Annotations)
+			}
+		case "milestone_reconcile":
+			a := tool.Annotations
+			if a.ReadOnlyHint || a.DestructiveHint == nil || !*a.DestructiveHint || a.OpenWorldHint == nil || *a.OpenWorldHint {
+				t.Errorf("milestone_reconcile annotations = %+v, want destructive and closed-world", a)
+			}
 		}
 	}
 	for _, want := range []string{
 		"initiative_create", "initiative_list", "initiative_get", "initiative_update",
-		"milestone_create", "milestone_list", "milestone_get", "milestone_update",
+		"milestone_create", "milestone_list", "milestone_get", "milestone_update", "milestone_drift", "milestone_reconcile",
 		"task_create", "task_list", "task_get", "task_update", "task_set_status", "task_add_note", "task_next",
 		"doc_create", "doc_list", "doc_get", "doc_update", "search", "status",
 	} {

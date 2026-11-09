@@ -3,6 +3,7 @@
 package mcpserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/bengearig/ralph/internal/domain"
+	"github.com/bengearig/ralph/internal/drift"
 	"github.com/bengearig/ralph/internal/service"
 	"github.com/bengearig/ralph/internal/store"
 )
@@ -36,6 +38,8 @@ Receive instructions → Articulate a solution → Loop over tasks → Pull requ
 type Options struct {
 	// ConfirmOutline is receive.confirm_outline: whether Receive asks before creating a new initiative's outline.
 	ConfirmOutline bool
+	// DriftInput builds the drift check input for a milestone. Nil disables milestone_drift and milestone_reconcile.
+	DriftInput func(ctx context.Context, milestoneID int64) (drift.Input, error)
 }
 
 // New builds an MCP server over svc.
@@ -44,7 +48,7 @@ func New(svc *service.Service, version string, log *slog.Logger, opts Options) *
 		Instructions: instructions,
 		Logger:       log,
 	})
-	t := &tools{svc: svc, confirmOutline: opts.ConfirmOutline}
+	t := &tools{svc: svc, confirmOutline: opts.ConfirmOutline, newDriftInput: opts.DriftInput}
 	t.register(s)
 	return s
 }
@@ -52,6 +56,7 @@ func New(svc *service.Service, version string, log *slog.Logger, opts Options) *
 type tools struct {
 	svc            *service.Service
 	confirmOutline bool
+	newDriftInput  func(ctx context.Context, milestoneID int64) (drift.Input, error)
 }
 
 // toolError rewrites service errors into guidance an agent can act on.
@@ -85,6 +90,10 @@ func write(title string) *mcp.ToolAnnotations {
 	return &mcp.ToolAnnotations{Title: title, DestructiveHint: boolPtr(false), OpenWorldHint: boolPtr(false)}
 }
 
+func destructive(title string) *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{Title: title, DestructiveHint: boolPtr(true), OpenWorldHint: boolPtr(false)}
+}
+
 func (t *tools) register(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_create", Annotations: write("Create initiative"),
 		Description: "Record a newly received set of instructions as an initiative. Put the instructions verbatim in brief. " +
@@ -104,6 +113,11 @@ func (t *tools) register(s *mcp.Server) {
 		Description: "Get a milestone with its tasks in loop order."}, t.milestoneGet)
 	mcp.AddTool(s, &mcp.Tool{Name: "milestone_update", Annotations: write("Update milestone"),
 		Description: "Edit a milestone's title, description, or position. Omitted fields are unchanged."}, t.milestoneUpdate)
+	mcp.AddTool(s, &mcp.Tool{Name: "milestone_drift", Annotations: readOnly("Check milestone drift"),
+		Description: "Compare a milestone's recorded git state with its branch and report drift per task. Read-only."}, t.milestoneDrift)
+	mcp.AddTool(s, &mcp.Tool{Name: "milestone_reconcile", Annotations: destructive("Reconcile milestone drift"),
+		Description: "Resolve a milestone's drift: point it at a branch, reopen DONE tasks whose work is gone (reason required), " +
+			"and/or accept the current branch tip. Get the user's approval first."}, t.milestoneReconcile)
 
 	mcp.AddTool(s, &mcp.Tool{Name: "task_create", Annotations: write("Propose task"),
 		Description: "Propose a task in a milestone. It starts PROPOSED; refine it, then promote it to TODO with task_set_status."}, t.taskCreate)

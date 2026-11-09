@@ -1,9 +1,13 @@
 package cli
 
 import (
+	"context"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 
+	"github.com/bengearig/ralph/internal/drift"
+	"github.com/bengearig/ralph/internal/loop"
 	"github.com/bengearig/ralph/internal/mcpserver"
 	"github.com/bengearig/ralph/internal/version"
 )
@@ -25,7 +29,16 @@ Logs go to stderr because stdout carries the protocol.`,
 			if err != nil {
 				return err
 			}
-			srv := mcpserver.New(svc, version.Get().Version, a.logger(), mcpserver.Options{ConfirmOutline: l.Config.Receive.ConfirmOutline})
+			p, err := a.findProject()
+			if err != nil {
+				return err
+			}
+			srv := mcpserver.New(svc, version.Get().Version, a.logger(), mcpserver.Options{
+				ConfirmOutline: l.Config.Receive.ConfirmOutline,
+				DriftInput: func(ctx context.Context, milestoneID int64) (drift.Input, error) {
+					return loop.DriftInput(ctx, svc, l.Config, p.Root, milestoneID)
+				},
+			})
 			return srv.Run(cmd.Context(), &mcp.StdioTransport{})
 		},
 	}

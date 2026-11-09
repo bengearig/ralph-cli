@@ -2,10 +2,15 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/bengearig/ralph/internal/domain"
+	"github.com/bengearig/ralph/internal/drift"
 	"github.com/bengearig/ralph/internal/service"
 )
 
@@ -140,6 +145,78 @@ func (t *tools) milestoneUpdate(ctx context.Context, _ *mcp.CallToolRequest, in 
 	}
 	v, err := t.svc.UpdateMilestone(ctx, id, service.MilestonePatch{Title: in.Title, Description: in.Description, Position: in.Position})
 	return nil, v, toolError(err)
+}
+
+type milestoneDriftIn struct {
+	MilestoneID string `json:"milestone_id" jsonschema:"milestone ID, for example M-1"`
+}
+
+var errDriftUnavailable = errors.New("drift checking is unavailable in this server; run ralph milestone reconcile from the project instead")
+
+// driftInput parses the milestone ID and builds its drift check input.
+func (t *tools) driftInput(ctx context.Context, milestoneID string) (drift.Input, error) {
+	if t.newDriftInput == nil {
+		return drift.Input{}, errDriftUnavailable
+	}
+	id, err := domain.ParseID(domain.KindMilestone, milestoneID)
+	if err != nil {
+		return drift.Input{}, err
+	}
+	in, err := t.newDriftInput(ctx, id)
+	return in, toolError(err)
+}
+
+func (t *tools) milestoneDrift(ctx context.Context, _ *mcp.CallToolRequest, in milestoneDriftIn) (*mcp.CallToolResult, drift.Report, error) {
+	din, err := t.driftInput(ctx, in.MilestoneID)
+	if err != nil {
+		return nil, drift.Report{}, err
+	}
+	r, err := drift.Check(ctx, din)
+	return nil, r, toolError(err)
+}
+
+type milestoneReconcileIn struct {
+	MilestoneID string   `json:"milestone_id" jsonschema:"milestone ID, for example M-1"`
+	Branch      *string  `json:"branch,omitempty" jsonschema:"point the record at this existing local branch, e.g. after a rename"`
+	Reopen      []string `json:"reopen,omitempty" jsonschema:"DONE tasks of the milestone to send back to TODO, for example T-3"`
+	Reason      string   `json:"reason,omitempty" jsonschema:"why the tasks are reopened; required with reopen and recorded on each task"`
+	Accept      bool     `json:"accept,omitempty" jsonschema:"record the branch tip, base and each DONE task's matched commit"`
+}
+
+type milestoneReconcileOut struct {
+	Before drift.Report `json:"before" jsonschema:"the drift report before any action"`
+	After  drift.Report `json:"after" jsonschema:"the drift report after the actions; equal to before when no action was given"`
+}
+
+func (t *tools) milestoneReconcile(ctx context.Context, _ *mcp.CallToolRequest, in milestoneReconcileIn) (*mcp.CallToolResult, milestoneReconcileOut, error) {
+	din, err := t.driftInput(ctx, in.MilestoneID)
+	if err != nil {
+		return nil, milestoneReconcileOut{}, err
+	}
+	var a drift.Actions
+	if in.Branch != nil {
+		if a.Branch = strings.TrimSpace(*in.Branch); a.Branch == "" {
+			return nil, milestoneReconcileOut{}, fmt.Errorf("%w: branch must not be empty; omit it to keep the recorded branch", domain.ErrInvalid)
+		}
+	}
+	for _, s := range in.Reopen {
+		id, err := domain.ParseID(domain.KindTask, s)
+		if err != nil {
+			return nil, milestoneReconcileOut{}, fmt.Errorf("reopen: %w", err)
+		}
+		if !slices.Contains(a.Reopen, id) {
+			a.Reopen = append(a.Reopen, id)
+		}
+	}
+	a.Reason, a.Accept = in.Reason, in.Accept
+	before, after, err := drift.Apply(ctx, din, a)
+	if err != nil {
+		if errors.Is(err, domain.ErrInvalid) {
+			return nil, milestoneReconcileOut{}, fmt.Errorf("%v (nothing was changed; review the report from milestone_drift, then adjust branch, reopen, reason, or accept)", err)
+		}
+		return nil, milestoneReconcileOut{}, toolError(err)
+	}
+	return nil, milestoneReconcileOut{Before: before, After: after}, nil
 }
 
 // ---- tasks ----
