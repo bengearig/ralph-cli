@@ -43,7 +43,7 @@ func TestInstallFreshAndIdempotent(t *testing.T) {
 	got := actions(changes)
 	for _, p := range []string{".mcp.json", ".claude/settings.json", "CLAUDE.md",
 		".claude/commands/ralph/receive.md", ".claude/commands/ralph/articulate.md", ".claude/commands/ralph/status.md",
-		".claude/commands/ralph/search.md"} {
+		".claude/commands/ralph/search.md", ".claude/commands/ralph/reconcile.md"} {
 		if got[filepath.FromSlash(p)] != harness.Created {
 			t.Errorf("%s: %q", p, got[filepath.FromSlash(p)])
 		}

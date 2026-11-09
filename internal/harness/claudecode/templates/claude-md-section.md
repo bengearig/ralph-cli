@@ -13,6 +13,8 @@ request → **H**uman review. The plan lives in ralph's store, reached through t
   description and acceptance criteria let an agent with no other context implement and verify it.
 - Kick work back instead of guessing: `BLOCKED` (with a reason) when stuck, `PROPOSED` when it needs re-articulation.
 - Search the store (`search`) before writing new documents or tasks.
+- Before a pull request, resolve any branch drift (the branch no longer matching ralph's record) with
+  `/ralph:reconcile` or `ralph milestone reconcile`.
 
-Slash commands: `/ralph:receive`, `/ralph:articulate`, `/ralph:status`, `/ralph:search`. The loop runs outside this
-session via `ralph loop --milestone <ID>`.
+Slash commands: `/ralph:receive`, `/ralph:articulate`, `/ralph:status`, `/ralph:search`, `/ralph:reconcile`. The loop
+runs outside this session via `ralph loop --milestone <ID>`.
