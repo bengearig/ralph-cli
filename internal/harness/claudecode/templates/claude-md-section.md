@@ -12,5 +12,5 @@ request → **H**uman review. The plan lives in ralph's store, reached through t
 - Kick work back instead of guessing: `BLOCKED` (with a reason) when stuck, `PROPOSED` when it needs re-articulation.
 - Search the store (`search`) before writing new documents or tasks.
 
-Slash commands: `/ralph:receive`, `/ralph:articulate`, `/ralph:status`. The loop runs outside this session via
-`ralph loop --milestone <ID>`.
+Slash commands: `/ralph:receive`, `/ralph:articulate`, `/ralph:status`, `/ralph:search`. The loop runs outside this
+session via `ralph loop --milestone <ID>`.

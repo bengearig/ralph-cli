@@ -12,7 +12,7 @@ Claude Code is the first supported harness (`harness.default: claude_code`). It 
 |---|---|---|
 | `.mcp.json` | Adds `mcpServers.ralph` → `{"type": "stdio", "command": "ralph", "args": ["mcp"]}`. Other servers and keys are preserved. | Yes, so the team shares it. |
 | `.claude/settings.json` | Adds `mcp__ralph` to `permissions.allow`, so ralph's tools run without a prompt each time. Other settings are preserved. | Yes |
-| `.claude/commands/ralph/*.md` | The `/ralph:receive`, `/ralph:articulate`, and `/ralph:status` slash commands. | Yes |
+| `.claude/commands/ralph/*.md` | The `/ralph:receive`, `/ralph:articulate`, `/ralph:status`, and `/ralph:search` slash commands. | Yes |
 | `CLAUDE.md` | A RALPH section between `<!-- ralph:begin -->` and `<!-- ralph:end -->`. Text outside the markers is left alone; the section is replaced on rerun. | Yes |
 | `.ralph/config.yaml` | Project config template, every setting commented out. | Yes |
 | `.ralph/ralph.db` | The store. | No, it is git-ignored. |
@@ -48,6 +48,9 @@ instructions if the server is not approved.
 4. **Loop.** Run `ralph loop --milestone M-1` in a terminal. Preview it first with `--dry-run --show-prompt`; see
    [the loop](loop.md).
 5. **Pull request.** Run `ralph pr create --milestone M-1`. Planned.
+
+At any point, `/ralph:search <question>` searches the store, reads the best matches, and answers with their IDs.
+It changes nothing. `ralph search` is the terminal equivalent.
 
 ## Headless invocation
 

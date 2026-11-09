@@ -43,6 +43,7 @@ Then, in Claude Code:
 /ralph:receive <paste the instructions you were given>
 /ralph:articulate I-1
 /ralph:status
+/ralph:search how do we handle auth tokens
 ```
 
 And in a terminal:
