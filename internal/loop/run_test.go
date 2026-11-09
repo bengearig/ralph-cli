@@ -740,29 +740,177 @@ func TestRunUsesRecordedBranch(t *testing.T) {
 	e.assertHead(t)
 }
 
-func TestRunRecordedBranchMissingFallsBackToTemplate(t *testing.T) {
+// newRecordedEnv loops T-1 to DONE and T-2 to BLOCKED, then returns T-2 to
+// TODO, leaving the milestone recorded on ralph/oidc-login at T-1's commit.
+func newRecordedEnv(t *testing.T) *runEnv {
+	t.Helper()
+	e := newRunEnv(t, "a", "b")
+	ctx := context.Background()
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) {
+		if id == 1 {
+			return e.complete(id)
+		}
+		_, err := e.svc.SetTaskStatus(ctx, id, domain.StatusBlocked, "stop here")
+		return harness.Result{Completed: true}, err
+	}}
+	if _, err := e.run(t, ctx, h); !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("setup run: %v\n%s", err, e.out.String())
+	}
+	if _, err := e.svc.SetTaskStatus(ctx, 2, domain.StatusTodo, ""); err != nil {
+		t.Fatal(err)
+	}
+	if head := e.assertHead(t); head != e.status(t, 1).Commit {
+		t.Fatalf("setup head %q is not T-1's commit %q", head, e.status(t, 1).Commit)
+	}
+	e.out.Reset()
+	return e
+}
+
+func (e *runEnv) tasks(t *testing.T) []service.TaskView {
+	t.Helper()
+	ts, err := e.svc.ListTasks(context.Background(), service.TaskFilter{MilestoneID: e.mID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ts
+}
+
+// assertDriftRefusal runs the loop and checks that it refuses with a message
+// containing want, before switching branches, starting a session, or
+// changing any task or the milestone record.
+func (e *runEnv) assertDriftRefusal(t *testing.T, want string) {
+	t.Helper()
+	branch := gitCmd(t, e.root, "branch", "--show-current")
+	head := gitCmd(t, e.root, "rev-parse", "HEAD")
+	tasks, record := e.tasks(t), e.milestone(t)
+	h := &fakeHarness{script: func(int, int64, harness.Request) (harness.Result, error) {
+		t.Error("no session should start on a drifted branch")
+		return harness.Result{}, nil
+	}}
+	out, err := e.run(t, context.Background(), h)
+	if !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("err = %v, want ErrNeedsHuman\n%s", err, e.out.String())
+	}
+	msg := "; run: ralph milestone reconcile M-1"
+	if !strings.Contains(err.Error(), want) || !strings.HasSuffix(err.Error(), msg) {
+		t.Errorf("err = %q, want it to contain %q and end with %q", err, want, msg)
+	}
+	if line := strings.TrimPrefix(err.Error(), errs.ErrNeedsHuman.Error()+": "); !strings.Contains(e.out.String(), "■ "+line+"\n") {
+		t.Errorf("feed lacks the refusal %q:\n%s", line, e.out.String())
+	}
+	if out.StopReason != StopNeedsHuman || out.Iterations != 0 || h.calls != 0 {
+		t.Errorf("outcome = %+v, sessions = %d", out, h.calls)
+	}
+	if b, hd := gitCmd(t, e.root, "branch", "--show-current"), gitCmd(t, e.root, "rev-parse", "HEAD"); b != branch || hd != head {
+		t.Errorf("on %q at %s, want %q at %s", b, hd, branch, head)
+	}
+	if strings.Contains(e.out.String(), "switching to") || strings.Contains(e.out.String(), "creating ") {
+		t.Errorf("feed shows a branch change:\n%s", e.out.String())
+	}
+	after := e.tasks(t)
+	if len(after) != len(tasks) {
+		t.Fatalf("tasks = %d, want %d", len(after), len(tasks))
+	}
+	for i, v := range after {
+		if v.Status != tasks[i].Status || v.Commit != tasks[i].Commit || v.FailureCount != tasks[i].FailureCount {
+			t.Errorf("%s changed from %s %q to %s %q", v.ID, tasks[i].Status, tasks[i].Commit, v.Status, v.Commit)
+		}
+	}
+	if m := e.milestone(t); m.Branch != record.Branch || m.BaseCommit != record.BaseCommit || m.HeadCommit != record.HeadCommit {
+		t.Errorf("record changed from %+v to %+v", record, m)
+	}
+}
+
+func TestRunRefusesDivergedBranch(t *testing.T) {
+	e := newRecordedEnv(t)
+	recorded := e.milestone(t).HeadCommit
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	e.commitFile(t, "main-moves-on.txt")
+	gitCmd(t, e.root, "switch", "--quiet", "ralph/oidc-login")
+	gitCmd(t, e.root, "rebase", "--quiet", "main")
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	if err := os.WriteFile(filepath.Join(e.root, "README.md"), []byte("local edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.assertDriftRefusal(t, "M-1 has diverged from its recorded head "+recorded[:12])
+	if strings.Contains(e.out.String(), "uncommitted changes") {
+		t.Errorf("the drift refusal should come before the dirty-tree one:\n%s", e.out.String())
+	}
+}
+
+func TestRunRefusesBranchBehind(t *testing.T) {
+	e := newRecordedEnv(t)
+	gitCmd(t, e.root, "reset", "--quiet", "--hard", "HEAD~1")
+	e.assertDriftRefusal(t, "M-1 branch ralph/oidc-login is 1 commit behind its recorded head")
+}
+
+func TestRunRefusesMergedBranch(t *testing.T) {
+	e := newRecordedEnv(t)
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	gitCmd(t, e.root, "merge", "--quiet", "--ff-only", "ralph/oidc-login")
+	e.assertDriftRefusal(t, "M-1 branch ralph/oidc-login is already merged into main")
+}
+
+func TestRunRefusesMissingRecordedBranch(t *testing.T) {
 	e := newRunEnv(t, "a")
-	mainHash := gitCmd(t, e.root, "rev-parse", "main")
 	stale := strings.Repeat("ab", 20)
 	if err := e.svc.RecordMilestoneGit(context.Background(), e.mID, domain.MilestoneGit{Branch: "gone/branch", BaseCommit: stale, HeadCommit: stale}); err != nil {
 		t.Fatal(err)
 	}
-	var prompts []string
-	out, err := e.run(t, context.Background(), e.blocker(&prompts))
-	if !errors.Is(err, errs.ErrNeedsHuman) {
-		t.Fatalf("err = %v\n%s", err, e.out.String())
+	e.assertDriftRefusal(t, "M-1 branch gone/branch does not exist locally")
+	if list := gitCmd(t, e.root, "branch", "--list", "ralph/oidc-login"); list != "" {
+		t.Errorf("template branch was created: %q", list)
 	}
-	if !strings.Contains(e.out.String(), "! recorded branch gone/branch not found; using ralph/oidc-login from loop.branch_template") {
-		t.Errorf("feed:\n%s", e.out.String())
+}
+
+func TestRunAdoptsCommitsAheadOfRecordedHead(t *testing.T) {
+	e := newRecordedEnv(t)
+	record := e.milestone(t)
+	e.commitFile(t, "manual.txt")
+	tip := gitCmd(t, e.root, "rev-parse", "HEAD")
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) {
+		if got := e.milestone(t).HeadCommit; got != tip {
+			t.Errorf("recorded head during the session = %q, want the tip %q", got, tip)
+		}
+		return e.complete(id)
+	}}
+	out, err := e.run(t, context.Background(), h)
+	if err != nil || out.StopReason != StopCompleted || h.calls != 1 {
+		t.Fatalf("out = %+v, err = %v\n%s", out, err, e.out.String())
 	}
-	if b := gitCmd(t, e.root, "branch", "--show-current"); b != "ralph/oidc-login" || out.Branch != "ralph/oidc-login" {
-		t.Errorf("checked out %q, outcome branch %q", b, out.Branch)
+	want := "! M-1 branch has 1 commit(s) beyond the recorded head:\n  " + tip[:12] + " add manual.txt\n"
+	if !strings.Contains(e.out.String(), want) {
+		t.Errorf("feed lacks %q:\n%s", want, e.out.String())
 	}
-	if len(prompts) == 0 || !strings.Contains(prompts[0], "Branch: ralph/oidc-login") {
-		t.Errorf("prompt should name the checked-out branch: %q", prompts)
+	if head := e.assertHead(t); head == tip || gitCmd(t, e.root, "rev-parse", "HEAD~1") != tip {
+		t.Errorf("head %s should be T-2's commit on top of %s", head, tip)
 	}
-	if m := e.milestone(t); m.Branch != "ralph/oidc-login" || m.BaseCommit != mainHash || m.HeadCommit != mainHash {
-		t.Errorf("record = %q base %q head %q; want base and head %q", m.Branch, m.BaseCommit, m.HeadCommit, mainHash)
+	if m := e.milestone(t); m.Branch != record.Branch || m.BaseCommit != record.BaseCommit {
+		t.Errorf("record = %q base %q, want %q base %q", m.Branch, m.BaseCommit, record.Branch, record.BaseCommit)
+	}
+}
+
+func TestRunResumesUnchangedBranch(t *testing.T) {
+	e := newRecordedEnv(t)
+	record := e.milestone(t)
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+	out, err := e.run(t, context.Background(), h)
+	if err != nil || out.StopReason != StopCompleted || len(out.Commits) != 1 {
+		t.Fatalf("out = %+v, err = %v\n%s", out, err, e.out.String())
+	}
+	feed := e.out.String()
+	if !strings.HasPrefix(feed, "switching to ralph/oidc-login\n▶ [1/10] T-2 b\n") || strings.Contains(feed, "!") || strings.Contains(feed, "reconcile") {
+		t.Errorf("feed:\n%s", feed)
+	}
+	if b := gitCmd(t, e.root, "branch", "--show-current"); b != "ralph/oidc-login" {
+		t.Errorf("branch = %q", b)
+	}
+	if head := e.assertHead(t); gitCmd(t, e.root, "rev-parse", "HEAD~1") != record.HeadCommit || head != e.status(t, 2).Commit {
+		t.Errorf("head %s should be T-2's commit on top of %s", head, record.HeadCommit)
+	}
+	if m := e.milestone(t); m.Branch != record.Branch || m.BaseCommit != record.BaseCommit {
+		t.Errorf("record = %q base %q, want %q base %q", m.Branch, m.BaseCommit, record.Branch, record.BaseCommit)
 	}
 }
 

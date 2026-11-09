@@ -13,6 +13,7 @@ import (
 
 	"github.com/bengearig/ralph/internal/config"
 	"github.com/bengearig/ralph/internal/domain"
+	"github.com/bengearig/ralph/internal/drift"
 	"github.com/bengearig/ralph/internal/errs"
 	"github.com/bengearig/ralph/internal/git"
 	"github.com/bengearig/ralph/internal/harness"
@@ -135,6 +136,9 @@ func (r Runner) Run(ctx context.Context, plan Plan) (Outcome, error) {
 		plan.Branch, out.Branch = branch, branch
 	}
 	if err != nil {
+		if errors.Is(err, errs.ErrNeedsHuman) {
+			out.StopReason = StopNeedsHuman
+		}
 		return out, err
 	}
 
@@ -299,9 +303,10 @@ func (r Runner) Run(ctx context.Context, plan Plan) (Outcome, error) {
 
 // prepareBranch checks out the milestone branch, creating it from the base
 // branch when needed, and records the branch when the milestone has no
-// record yet. It returns the branch actually checked out. Uncommitted changes
-// are allowed only when already on the milestone branch, where they are the
-// previous run's unfinished work.
+// record yet. A recorded branch must first pass the drift check. It returns
+// the branch actually checked out. Uncommitted changes are allowed only when
+// already on the milestone branch, where they are the previous run's
+// unfinished work.
 func (r Runner) prepareBranch(ctx context.Context, plan Plan, milestoneID int64, f feed) (git.Repo, string, error) {
 	repo, err := ResolveRepo(ctx, r.Root)
 	if err != nil {
@@ -317,22 +322,15 @@ func (r Runner) prepareBranch(ctx context.Context, plan Plan, milestoneID int64,
 		return repo, "", fmt.Errorf("%s's recorded branch %s differs from the planned %s; rerun to plan again", m.ID, recorded, branch)
 	}
 
+	if recorded != "" {
+		if err := r.checkDrift(ctx, milestoneID, f); err != nil {
+			return repo, "", err
+		}
+	}
+
 	current, err := repo.CurrentBranch(ctx)
 	if err != nil {
 		return repo, "", err
-	}
-	if recorded != "" && current != recorded {
-		exists, err := repo.BranchExists(ctx, recorded)
-		if err != nil {
-			return repo, "", err
-		}
-		if !exists {
-			if branch, err = BranchName(r.Config.Loop.BranchTemplate, plan.Initiative, plan.Milestone); err != nil {
-				return repo, "", err
-			}
-			f.printf("! recorded branch %s not found; using %s from loop.branch_template\n", recorded, branch)
-			recorded = ""
-		}
 	}
 
 	start, err := r.checkout(ctx, repo, plan, branch, current, f)
@@ -354,6 +352,36 @@ func (r Runner) prepareBranch(ctx context.Context, plan Plan, milestoneID int64,
 		return repo, branch, r.recordBranch(ctx, milestoneID, g)
 	}
 	return repo, branch, nil
+}
+
+// checkDrift applies the loop's drift policy to a recorded branch before
+// anything touches the working tree: unchanged and unrecorded proceed, ahead
+// is adopted as the new head, and every other state needs a person.
+func (r Runner) checkDrift(ctx context.Context, milestoneID int64, f feed) error {
+	in, err := DriftInput(ctx, r.Service, r.Config, r.Root, milestoneID)
+	if err != nil {
+		return err
+	}
+	report, err := drift.Check(ctx, in)
+	if err != nil {
+		return fmt.Errorf("checking the milestone branch for drift: %w", err)
+	}
+	switch report.State {
+	case drift.StateUnchanged, drift.StateUnrecorded:
+		return nil
+	case drift.StateAhead:
+		f.printf("! %s branch has %d commit(s) beyond the recorded head:\n", report.Milestone, len(report.ExtraCommits))
+		for _, c := range report.ExtraCommits {
+			f.printf("  %s %s\n", c.Hash[:min(len(c.Hash), 12)], c.Subject)
+		}
+		if err := r.Service.RecordMilestoneHead(ctx, milestoneID, report.Tip); err != nil {
+			return fmt.Errorf("recording the milestone head: %w", err)
+		}
+		return nil
+	}
+	msg := fmt.Sprintf("%s; run: ralph milestone reconcile %s", report.Summary(), report.Milestone)
+	f.printf("■ %s\n", msg)
+	return fmt.Errorf("%w: %s", errs.ErrNeedsHuman, msg)
 }
 
 // checkout puts the work tree on branch. It returns the start ref when it
