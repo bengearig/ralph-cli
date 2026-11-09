@@ -15,7 +15,7 @@ flowchart LR
 
 | Phase | Who | What ralph provides |
 |---|---|---|
-| **Receive** | Person and agent, interactive | High-level planning. `/ralph:receive` stores the instructions verbatim as an *initiative's* brief and resolves the high-level questions: goals, scope, constraints, and delivery order. Once the person agrees to an outline, it creates the *milestones* and each milestone's *unplanned tasks*. |
+| **Receive** | Person and agent, interactive | High-level planning. `/ralph:receive` stores the instructions verbatim as an *initiative's* brief and resolves the high-level questions: goals, scope, constraints, and delivery order. It then creates the *milestones* and each milestone's *unplanned tasks* right away, or after the person approves the outline in plan mode when they ask for that or `receive.confirm_outline` is set. Revising an initiative always goes through plan-mode approval. |
 | **Articulate** | Person and agent, interactive | Low-level planning. `/ralph:articulate` works through the unplanned tasks one at a time, asking about the details until each has a self-contained description and verifiable acceptance criteria, then promotes it from `PROPOSED` to `TODO`. Detailed design is recorded as *documents*. |
 | **Loop** | Agent, headless | `ralph loop --milestone M-n` starts a fresh harness session for each `TODO` task. Each session reads its context from the store, implements one task, verifies it, and records the outcome. ralph commits each finished task on the milestone's branch. |
 | **Pull request** | ralph | `ralph pr create --milestone M-n` opens one pull request per milestone on the configured host. *Planned; the dry run works today.* |

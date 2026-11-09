@@ -1,6 +1,6 @@
 # 14. Receive plans at a high level, Articulate at a low level
 
-- Status: Accepted
+- Status: Accepted; refined by [15. Receive creates outlines without waiting](0015-receive-creates-outlines-without-waiting.md)
 - Date: 2026-11-09
 - Refines: [8. Initiative → Milestone → Task](0008-initiative-milestone-task-model.md)
 

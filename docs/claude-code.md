@@ -42,9 +42,11 @@ instructions if the server is not approved.
 
 1. **Receive.** Run `/ralph:receive <paste or dictate the instructions>`. This is high-level planning. The agent
    searches for related work, creates the initiative with the brief verbatim, and asks about goals, scope,
-   constraints, and delivery order. Answers are stored as `brief` or `decision` documents. It then proposes an outline
-   of milestones and their unplanned tasks, and creates them once you agree. To revise an initiative's plan later,
-   for example after a kickback, run `/ralph:receive I-1`.
+   constraints, and delivery order. Answers are stored as `brief` or `decision` documents. It then creates an outline
+   of milestones and their unplanned tasks right away and shows it with its IDs, so you can ask for changes. If you
+   ask it to, or if [`receive.confirm_outline`](configuration.md#receive) is set, it first presents the outline for
+   approval in plan mode and creates it once you approve the plan. To revise an initiative's plan later, for example
+   after a kickback, run `/ralph:receive I-1`; revisions always go through plan-mode approval.
 2. **Articulate.** Run `/ralph:articulate I-1`, or pass a milestone (`M-2`) or a single task (`T-3`). This is
    low-level planning. The agent takes the `PROPOSED` tasks one at a time, asks about the details, writes each
    task's description and acceptance criteria, and promotes it to `TODO` as soon as they are settled. It may add,
