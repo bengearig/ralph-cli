@@ -1,2 +1,9 @@
 /ralph
 /dist/
+# ralph local files (database, loop logs, loop lock)
+/.ralph/ralph.db*
+/.ralph/runs/
+/.ralph/loop.lock
+# local IDE and Claude Code settings
+/.idea/
+/.claude/settings.local.json
