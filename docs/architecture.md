@@ -12,6 +12,10 @@ flowchart TD
     LOOP --> H
     LOOP --> GIT["git"]
     CLI --> LOOP
+    CLI --> DRIFT["drift<br/>(drift check, reconcile)"]
+    LOOP --> DRIFT
+    DRIFT --> SVC
+    DRIFT --> GIT
     CLI --> PR["pr<br/>(provider registry)"]
     CLI --> H["harness<br/>(harness registry)"]
     SVC["service<br/>(use cases, rules, indexing)"] --> ST["store<br/>(interface)"]
@@ -30,7 +34,7 @@ flowchart TD
 
 | Package | Responsibility |
 |---|---|
-| `cmd/ralph` | Entry point. Maps `errs.ErrNotImplemented` to exit code 2 and every other error to 1. |
+| `cmd/ralph` | Entry point. Maps `errs.ErrNotImplemented` to exit code 2, `errs.ErrNeedsHuman` to exit code 3, and every other error to 1. |
 | `internal/cli` | Cobra command tree. Resolves the project, loads configuration, opens the service lazily, and renders tables or `--json`. |
 | `internal/config` | The `Config` struct, built-in defaults (`defaults.yaml`, embedded), layered loading with koanf, strict decoding, validation, and per-step resolution. |
 | `internal/project` | Finds the project root (the nearest `.ralph/`) and the git work-tree root. |
@@ -42,7 +46,8 @@ flowchart TD
 | `internal/service` | Use cases shared by the CLI and MCP: validation, slug allocation, status transitions, the Stall Statute, indexing on write, and JSON views. |
 | `internal/mcpserver` | MCP tools as thin adapters over `service`, built with the official Go SDK. |
 | `internal/harness` | The harness interface, installer interface, and registry. `harness/claudecode` runs headless `claude` sessions, parsing their stream-json output, and installs the Claude Code wiring. |
-| `internal/loop` | Plans a milestone's loop (branch, ordered tasks, command, prompt) and runs it: project lock, branch preparation, one harness session per task, commits with the `Ralph-Task` trailer, recording the branch, base, head, and task commits, stashing unfinished work, and stop conditions. |
+| `internal/loop` | Plans a milestone's loop (branch, ordered tasks, command, prompt) and runs it: project lock, branch preparation, one harness session per task, commits with the `Ralph-Task` trailer, recording the branch, base, head, and task commits, stashing unfinished work, and stop conditions. When it resumes on a recorded branch, it checks for drift first. It also provides the `ResolveRepo`, `DriftInput`, and `CommitSubject` helpers that `ralph milestone reconcile` and `ralph pr create` share. |
+| `internal/drift` | The read-only drift check (`Check`, `Report`) that compares a milestone's recorded git state with its branch, and the reconcile actions (`Apply`). See [Drift and reconcile](loop.md#drift-and-reconcile). |
 | `internal/git` | The git commands the loop needs, run through the `git` CLI, always excluding `.ralph/`. |
 | `internal/pr` | The pull-request provider interface, registry, and milestone request builder. `pr/bitbucketcloud` validates its configuration; creation is stubbed. |
 | `internal/errs` | Sentinel errors shared across packages. |
