@@ -10,6 +10,7 @@ import (
 
 	"github.com/bengearig/ralph/internal/config"
 	"github.com/bengearig/ralph/internal/harness"
+	"github.com/bengearig/ralph/internal/workflow"
 )
 
 func actions(changes []harness.Change) map[string]string {
@@ -233,7 +234,7 @@ func TestInstallUpdatesEarlierShippedCommands(t *testing.T) {
 			if a := got[filepath.FromSlash(".claude/commands/ralph/status.md")]; a != harness.Skipped {
 				t.Errorf("edited status.md action = %q", a)
 			}
-			want, _ := templates.ReadFile("templates/commands/receive.md")
+			want, _ := workflow.RenderCommand("receive")
 			if data, _ := os.ReadFile(filepath.Join(dir, "receive.md")); string(data) != string(want) {
 				t.Error("receive.md not replaced with the current template")
 			}
@@ -241,11 +242,39 @@ func TestInstallUpdatesEarlierShippedCommands(t *testing.T) {
 	}
 }
 
+func TestInstalledCommandsMatchGoldens(t *testing.T) {
+	root := t.TempDir()
+	if _, err := New(config.ClaudeCodeConfig{Binary: "claude"}).Install(root, harness.InstallOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	goldens, err := filepath.Glob(filepath.Join("..", "..", "workflow", "testdata", "*.md"))
+	if err != nil || len(goldens) == 0 {
+		t.Fatalf("goldens: %v, %v", goldens, err)
+	}
+	for _, g := range goldens {
+		want, err := os.ReadFile(g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(filepath.Join(root, ".claude", "commands", "ralph", filepath.Base(g)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != string(want) {
+			t.Errorf("%s: installed command differs from golden", filepath.Base(g))
+		}
+	}
+	entries, _ := os.ReadDir(filepath.Join(root, ".claude", "commands", "ralph"))
+	if len(entries) != len(goldens) {
+		t.Errorf("%d installed commands for %d goldens", len(entries), len(goldens))
+	}
+}
+
 func TestShippedCommandDigestsAreEarlierVersions(t *testing.T) {
 	for name, digests := range shippedCommands {
-		cur, err := templates.ReadFile("templates/commands/" + name)
+		cur, err := workflow.RenderCommand(strings.TrimSuffix(name, ".md"))
 		if err != nil {
-			t.Errorf("%s: no such template", name)
+			t.Errorf("%s: no such workflow", name)
 			continue
 		}
 		if slices.Contains(digests, commandDigest(cur)) {

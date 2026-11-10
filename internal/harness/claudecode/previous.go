@@ -26,7 +26,7 @@ var shippedCommands = map[string][]string{
 		"c8bfba8d98e924d00b7c98e14122f15ce3bb749f6909f3ae99ab59e4509c2841",
 		"88c675052399dd7c3f5ecbe75da31ab217c00a93ab8018ea05fc7bbd5cab4b43",
 	},
-	"search.md":    {"f31792b544902dd76bc6527c9f7e4c8cc79026d61114395afb68242f1f3fce12"},
+	"search.md": {"f31792b544902dd76bc6527c9f7e4c8cc79026d61114395afb68242f1f3fce12"},
 	"status.md": {
 		"4f33c088218bdecdea0ab6c011051de21bf952659e9bb38cd2eb7de717557aee",
 		"804db40ea1985fa8d2d0d0fcad1c1071142700a6dc157ab037e8583e5e7bac2b",

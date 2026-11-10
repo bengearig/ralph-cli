@@ -1,0 +1,132 @@
+package workflow
+
+import (
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"testing/fstest"
+)
+
+func TestRenderCommandMatchesGoldens(t *testing.T) {
+	ws := List()
+	if len(ws) == 0 {
+		t.Fatal("no workflows")
+	}
+	for _, w := range ws {
+		want, err := os.ReadFile(filepath.Join("testdata", w.Name+".md"))
+		if err != nil {
+			t.Fatalf("%s: %v", w.Name, err)
+		}
+		got, err := RenderCommand(w.Name)
+		if err != nil {
+			t.Fatalf("%s: %v", w.Name, err)
+		}
+		if string(got) != string(want) {
+			t.Errorf("%s: rendered command differs from testdata/%s.md", w.Name, w.Name)
+		}
+	}
+	goldens, _ := filepath.Glob("testdata/*.md")
+	if len(goldens) != len(ws) {
+		t.Errorf("%d goldens for %d workflows", len(goldens), len(ws))
+	}
+}
+
+func TestListSortedWithMetadata(t *testing.T) {
+	want := map[string]string{
+		"articulate": "scope", "receive": "instructions", "reconcile": "milestone",
+		"search": "query", "status": "initiative",
+	}
+	var names []string
+	for _, w := range List() {
+		names = append(names, w.Name)
+		if arg, ok := want[w.Name]; !ok || w.Argument != arg {
+			t.Errorf("%s: argument %q, want %q", w.Name, w.Argument, arg)
+		}
+		if w.Description == "" || w.ArgumentHint == "" || w.ArgumentDescription == "" {
+			t.Errorf("%s: incomplete metadata %+v", w.Name, w)
+		}
+	}
+	if !slices.IsSorted(names) {
+		t.Errorf("not sorted: %v", names)
+	}
+	if len(names) != len(want) {
+		t.Errorf("names = %v", names)
+	}
+}
+
+func fixture(files map[string]string) fstest.MapFS {
+	m := fstest.MapFS{}
+	for name, content := range files {
+		m["workflows/"+name+".md.tmpl"] = &fstest.MapFile{Data: []byte(content)}
+	}
+	return m
+}
+
+const validHeader = "---\ndescription: d\nargument: a\nargument-hint: \"<h>\"\nargument-description: ad\n---\n\n"
+
+func TestLoadValidation(t *testing.T) {
+	cases := map[string]struct {
+		files map[string]string
+		want  string
+	}{
+		"ok":              {map[string]string{"one": validHeader + "x {{args}} {{cmd \"one\"}}"}, ""},
+		"missing key":     {map[string]string{"one": "---\ndescription: d\nargument: a\nargument-hint: h\n---\nx"}, "missing key \"argument-description\""},
+		"unknown key":     {map[string]string{"one": strings.Replace(validHeader, "---\n\n", "extra: 1\n---\n\n", 1)}, "unknown key \"extra\""},
+		"duplicate key":   {map[string]string{"one": strings.Replace(validHeader, "---\n\n", "argument: b\n---\n\n", 1)}, "duplicate key"},
+		"no header":       {map[string]string{"one": "body"}, "must start with"},
+		"unclosed":        {map[string]string{"one": "---\ndescription: d"}, "not closed"},
+		"missing cmd":     {map[string]string{"one": validHeader + "{{cmd \"nope\"}}"}, "unknown workflow \"nope\""},
+		"bad template":    {map[string]string{"one": validHeader + "{{if}}"}, "workflow one"},
+		"cmd to partial":  {map[string]string{"one": validHeader + "{{cmd \"_p\"}}", "_p": "{{define \"p\"}}x{{end}}"}, "unknown workflow \"_p\""},
+		"partial allowed": {map[string]string{"one": validHeader + "{{template \"p\"}}", "_p": "{{define \"p\"}}x{{end}}"}, ""},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := load(fixture(c.files))
+			switch {
+			case c.want == "" && err != nil:
+				t.Fatalf("unexpected error: %v", err)
+			case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+				t.Fatalf("error = %v, want containing %q", err, c.want)
+			}
+		})
+	}
+}
+
+func TestNeutralRendering(t *testing.T) {
+	for _, w := range List() {
+		out, err := Render(w.Name, Data{Target: Neutral})
+		if err != nil {
+			t.Fatalf("%s: %v", w.Name, err)
+		}
+		for _, bad := range []string{"$ARGUMENTS", "/ralph:"} {
+			if strings.Contains(out, bad) {
+				t.Errorf("%s: neutral rendering contains %q", w.Name, bad)
+			}
+		}
+		if !strings.Contains(out, noArgument) {
+			t.Errorf("%s: empty argument not rendered as %q", w.Name, noArgument)
+		}
+		given, err := Render(w.Name, Data{Target: Neutral, Args: "UNIQUE-ARG-VALUE"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(given, "UNIQUE-ARG-VALUE") {
+			t.Errorf("%s: argument not substituted", w.Name)
+		}
+	}
+}
+
+func TestRenderErrors(t *testing.T) {
+	if _, err := Render("nope", Data{Target: Neutral}); err == nil {
+		t.Error("unknown workflow: want error")
+	}
+	if _, err := Render("receive", Data{Target: "other"}); err == nil {
+		t.Error("unknown target: want error")
+	}
+	if _, err := RenderCommand("nope"); err == nil {
+		t.Error("unknown command: want error")
+	}
+}

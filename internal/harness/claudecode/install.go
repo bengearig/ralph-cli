@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 
 	"github.com/bengearig/ralph/internal/harness"
+	"github.com/bengearig/ralph/internal/workflow"
 )
 
 //go:embed templates
@@ -234,21 +234,18 @@ func installClaudeMD(root string) (harness.Change, error) {
 }
 
 func installCommands(root string, force bool) ([]harness.Change, error) {
-	entries, err := fs.ReadDir(templates, "templates/commands")
-	if err != nil {
-		return nil, err
-	}
 	dir := filepath.Join(root, ".claude", "commands", "ralph")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
 	var changes []harness.Change
-	for _, e := range entries {
-		want, err := templates.ReadFile(path.Join("templates/commands", e.Name()))
+	for _, w := range workflow.List() {
+		file := w.Name + ".md"
+		want, err := workflow.RenderCommand(w.Name)
 		if err != nil {
 			return changes, err
 		}
-		p := filepath.Join(dir, e.Name())
+		p := filepath.Join(dir, file)
 		c := harness.Change{Path: rel(root, p)}
 		cur, err := os.ReadFile(p)
 		switch {
@@ -258,7 +255,7 @@ func installCommands(root string, force bool) ([]harness.Change, error) {
 			return changes, err
 		case bytes.Equal(cur, want):
 			c.Action = harness.Unchanged
-		case shippedEarlier(e.Name(), cur):
+		case shippedEarlier(file, cur):
 			c.Action = harness.Updated
 			c.Note = "updated from an earlier ralph version"
 		case force:
