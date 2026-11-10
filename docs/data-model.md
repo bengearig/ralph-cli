@@ -94,6 +94,19 @@ in git. The loop page describes when each one is written: at
   its choosing. Recording them does not change `updated_at`.
 - In the schema, the task field is the column `tasks.commit_hash`, because `COMMIT` is an SQL keyword.
 
+## Card records
+
+The `cards` table records an initiative's, milestone's, or task's card in an external task manager. It is keyed by
+(`kind`, `entity_id`, `provider`), so each resource has at most one row per provider. Columns: `card_key` and `url`
+(the provider's key and link), `content_hash` (what was last pushed), `last_error` and `attempted_at` (the latest
+failure and attempt), and `synced_at` (the last success). Empty strings mean unset.
+
+- A row with an empty `card_key` means creation has been tried and has not succeeded. A failed update keeps the key,
+  URL, hash, and `synced_at`.
+- The entity is polymorphic, so there is no foreign key. `DeleteInitiative`, `DeleteMilestone`, and `DeleteTask`
+  remove the cards of the deleted resource and of everything the delete cascades to, in the same transaction.
+- Whether a card needs creating or updating is derived from these rows, not stored.
+
 ## Task state machine
 
 ```mermaid

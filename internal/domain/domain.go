@@ -262,3 +262,17 @@ func ValidCommit(s string) error {
 	}
 	return nil
 }
+
+// Card is the record of a resource's card in an external task manager. An empty Key means the card has not been
+// created. A zero AttemptedAt or SyncedAt means never.
+type Card struct {
+	Kind        Kind
+	EntityID    int64
+	Provider    string
+	Key         string
+	URL         string
+	ContentHash string
+	LastError   string
+	AttemptedAt time.Time
+	SyncedAt    time.Time
+}

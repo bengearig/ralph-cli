@@ -122,6 +122,16 @@ type Store interface {
 	SetDocumentArchived(ctx context.Context, id int64, at time.Time) error
 	DeleteDocument(ctx context.Context, id int64) error
 
+	// GetCard returns ErrNotFound when the entity has no card row for the provider.
+	GetCard(ctx context.Context, kind domain.Kind, entityID int64, provider string) (domain.Card, error)
+	// SetCard inserts the card or replaces the row with the same kind, entity, and provider.
+	SetCard(ctx context.Context, c *domain.Card) error
+	// ListCards lists a provider's cards ordered by kind, then entity ID.
+	ListCards(ctx context.Context, provider string) ([]domain.Card, error)
+	// DeleteCards removes the entity's cards under every provider; it is a no-op when there are none.
+	// DeleteInitiative, DeleteMilestone, and DeleteTask already remove the cards they cascade to.
+	DeleteCards(ctx context.Context, kind domain.Kind, entityID int64) error
+
 	// CountCascade counts what deleting the initiative, milestone, or task
 	// with the given ID would remove. It returns ErrNotFound for a missing ID.
 	CountCascade(ctx context.Context, kind domain.Kind, id int64) (Cascade, error)

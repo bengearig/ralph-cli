@@ -119,7 +119,10 @@ func (s *Store) UpdateInitiative(ctx context.Context, i *domain.Initiative) erro
 }
 
 func (s *Store) DeleteInitiative(ctx context.Context, id int64) error {
-	return s.deleteByID(ctx, "initiatives", domain.KindInitiative, id)
+	return s.deleteWithCards(ctx, "initiatives", domain.KindInitiative, id,
+		cardsOf(domain.KindTask, `SELECT t.id FROM tasks t JOIN milestones m ON m.id = t.milestone_id WHERE m.initiative_id = ?`),
+		cardsOf(domain.KindMilestone, `SELECT id FROM milestones WHERE initiative_id = ?`),
+		cardsOf(domain.KindInitiative, `SELECT ?`))
 }
 
 // ---- milestones ----
@@ -222,7 +225,9 @@ func (s *Store) SetMilestoneGit(ctx context.Context, id int64, g domain.Mileston
 }
 
 func (s *Store) DeleteMilestone(ctx context.Context, id int64) error {
-	return s.deleteByID(ctx, "milestones", domain.KindMilestone, id)
+	return s.deleteWithCards(ctx, "milestones", domain.KindMilestone, id,
+		cardsOf(domain.KindTask, `SELECT id FROM tasks WHERE milestone_id = ?`),
+		cardsOf(domain.KindMilestone, `SELECT ?`))
 }
 
 // ---- tasks ----
@@ -503,11 +508,32 @@ func collect[T any](rows *sql.Rows, scan func(scanner) (T, error)) ([]T, error) 
 }
 
 func (s *Store) DeleteTask(ctx context.Context, id int64) error {
-	return s.deleteByID(ctx, "tasks", domain.KindTask, id)
+	return s.deleteWithCards(ctx, "tasks", domain.KindTask, id, cardsOf(domain.KindTask, `SELECT ?`))
 }
 
 func (s *Store) DeleteDocument(ctx context.Context, id int64) error {
 	return s.deleteByID(ctx, "documents", domain.KindDocument, id)
+}
+
+// cardScope selects card rows of one kind whose entity IDs come from a subquery taking the deleted ID.
+type cardScope struct {
+	kind domain.Kind
+	ids  string
+}
+
+func cardsOf(kind domain.Kind, ids string) cardScope { return cardScope{kind, ids} }
+
+// deleteWithCards removes the cards in scope, then the row, in one transaction. A missing row rolls it back.
+func (s *Store) deleteWithCards(ctx context.Context, table string, kind domain.Kind, id int64, scopes ...cardScope) error {
+	return s.inTx(ctx, func(tx *Store) error {
+		for _, sc := range scopes {
+			if _, err := tx.q.ExecContext(ctx,
+				`DELETE FROM cards WHERE kind = ? AND entity_id IN (`+sc.ids+`)`, string(sc.kind), id); err != nil {
+				return mapErr(err, "deleting cards of "+domain.FormatID(kind, id))
+			}
+		}
+		return tx.deleteByID(ctx, table, kind, id)
+	})
 }
 
 func (s *Store) deleteByID(ctx context.Context, table string, kind domain.Kind, id int64) error {
