@@ -112,6 +112,15 @@ func TestToolsAreListedWithSchemas(t *testing.T) {
 			continue
 		}
 		switch tool.Name {
+		case "import_list", "import_get":
+			if !tool.Annotations.ReadOnlyHint {
+				t.Errorf("%s is not read-only: %+v", tool.Name, tool.Annotations)
+			}
+		case "import_queue", "import_resolve":
+			a := tool.Annotations
+			if a.ReadOnlyHint || a.DestructiveHint == nil || *a.DestructiveHint {
+				t.Errorf("%s annotations = %+v, want non-destructive write", tool.Name, a)
+			}
 		case "milestone_drift":
 			if !tool.Annotations.ReadOnlyHint {
 				t.Errorf("milestone_drift is not read-only: %+v", tool.Annotations)
@@ -130,6 +139,7 @@ func TestToolsAreListedWithSchemas(t *testing.T) {
 		"doc_create", "doc_list", "doc_get", "doc_update", "search", "status",
 		"initiative_delete", "milestone_delete", "task_delete", "doc_delete", "note_delete",
 		"initiative_archive", "initiative_unarchive", "doc_archive", "doc_unarchive",
+		"import_queue", "import_list", "import_get", "import_resolve",
 	} {
 		if !slices.Contains(names, want) {
 			t.Errorf("missing tool %s", want)

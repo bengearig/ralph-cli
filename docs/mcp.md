@@ -114,6 +114,27 @@ An error is returned when no task manager is configured. A failed item is in the
 tools return `cards` (each card's `id`, `key`, `url`, `moved`, and `error`) when cards were moved to
 `task_manager.jira.canceled_status` before the delete. See [Jira](jira.md).
 
+### Imports
+
+Four tools drive [imports](data-model.md#imports). Records are addressed by project-relative `path`.
+
+| Tool | Purpose |
+|---|---|
+| `import_queue` | Queue project-relative files or directories (`paths`). Missing, outside, too large, or non-text paths are skipped with a reason, not failed. Returns per-file outcomes (`new`, `changed`, `unchanged`, `queued`), `skipped`, and `warnings`. With `as_new`, and optionally `kind`, `initiative_id` and `again`, it is the fast path: each file becomes one document verbatim and is marked done, as `ralph import --as-new` does. |
+| `import_list` | Records without content, optionally filtered by `statuses`. `pending` and `deferred` still need work. Read-only. |
+| `import_get` | One record with its content snapshot and linked documents. Read-only. |
+| `import_resolve` | Finish a `pending` or `deferred` record as `done`, `skipped`, or `deferred`, with `links` to the documents created, updated, or decided. `skipped` and `deferred` require a `note`. |
+
+The workflow:
+
+1. `import_queue` the files.
+2. For each `pending` or `deferred` record in `import_list`, call `import_get` and read the snapshot.
+3. Integrate it: create or update documents with `doc_create` and `doc_update`.
+4. Call `import_resolve`, linking every document created or updated.
+
+After an import, ralph's documents are the source of truth, not the imported files. With `as_new`, steps 2 to 4 are
+skipped. The tool descriptions and server instructions repeat this workflow.
+
 ### Search and status
 
 | Tool | Purpose |

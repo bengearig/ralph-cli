@@ -73,6 +73,10 @@ receive:
   # right away and then shown. Revisions always ask.
   confirm_outline: false
 
+import:
+  # Largest file `ralph import` will queue, in bytes; bigger files are skipped.
+  max_file_bytes: 1048576
+
 loop:
   # Hard cap on iterations in one loop run.
   max_iterations: 50

@@ -716,3 +716,259 @@ func TestArchivedViews(t *testing.T) {
 		t.Errorf("initiative archived_at = %q", in.ArchivedAt)
 	}
 }
+
+func importStatus(t *testing.T, e env, p string) ImportView {
+	t.Helper()
+	v, err := e.svc.GetImport(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func queueOne(t *testing.T, e env, p, content string) string {
+	t.Helper()
+	out, err := e.svc.QueueImports(context.Background(), []ImportFile{{Path: p, Content: content}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].Path != p {
+		t.Fatalf("outcomes = %+v", out)
+	}
+	return out[0].Outcome
+}
+
+func TestQueueImports(t *testing.T) {
+	e := newEnv(t)
+	if got := queueOne(t, e, "docs/a.md", "one"); got != "new" {
+		t.Fatalf("outcome = %s", got)
+	}
+	if v := importStatus(t, e, "docs/a.md"); v.Status != "pending" || v.Size != 3 || v.Changed {
+		t.Fatalf("view = %+v", v)
+	}
+	if got := queueOne(t, e, "docs/a.md", "one"); got != "queued" {
+		t.Fatalf("requeue outcome = %s", got)
+	}
+}
+
+func TestImportDoneAndChanged(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	queueOne(t, e, "a.md", "one")
+	doc, err := e.svc.CreateDocument(ctx, DocumentInput{Title: "Doc", Kind: domain.DocReference, Body: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	links := []ImportLinkInput{{Document: doc.ID, Relation: domain.ImportCreated}}
+	done, err := e.svc.ResolveImport(ctx, "a.md", domain.ImportDone, "", links)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done.Status != "done" || done.ProcessedAt == "" || done.Changed || len(done.Links) != 1 {
+		t.Fatalf("done view = %+v", done)
+	}
+	im, err := e.svc.Store().GetImportByPath(ctx, "a.md")
+	if err != nil || im.LastDoneHash != im.ContentHash || im.LastDoneHash == "" {
+		t.Fatalf("last done hash = %q, err %v", im.LastDoneHash, err)
+	}
+	if got := queueOne(t, e, "a.md", "one"); got != "unchanged" {
+		t.Fatalf("outcome = %s", got)
+	}
+	if got := queueOne(t, e, "a.md", "two"); got != "changed" {
+		t.Fatalf("outcome = %s", got)
+	}
+	v := importStatus(t, e, "a.md")
+	if v.Status != "pending" || !v.Changed || v.Note != "" || v.ProcessedAt != "" || len(v.Links) != 1 ||
+		v.ContentHash == done.ContentHash || v.Content != "two" {
+		t.Fatalf("changed view = %+v", v)
+	}
+}
+
+func TestImportInvalidPaths(t *testing.T) {
+	e := newEnv(t)
+	for _, p := range []string{"../x", "/abs", "a/../b", `a\b`, "", ".", "a//b", "a/", "./a"} {
+		_, err := e.svc.QueueImports(context.Background(), []ImportFile{{Path: p, Content: "x"}})
+		if !errors.Is(err, domain.ErrInvalid) {
+			t.Errorf("path %q: err = %v", p, err)
+		}
+	}
+}
+
+func TestQueueImportsAtomic(t *testing.T) {
+	e := newEnv(t)
+	_, err := e.svc.QueueImports(context.Background(), []ImportFile{{Path: "ok.md", Content: "x"}, {Path: "../bad", Content: "y"}})
+	if !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("err = %v", err)
+	}
+	if list, _ := e.svc.ListImports(context.Background(), nil); len(list) != 0 {
+		t.Fatalf("list = %+v", list)
+	}
+}
+
+func TestResolveImport(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	queueOne(t, e, "a.md", "one")
+
+	if _, err := e.svc.ResolveImport(ctx, "a.md", domain.ImportDeferred, " ", nil); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("deferred without note: %v", err)
+	}
+	if _, err := e.svc.ResolveImport(ctx, "a.md", domain.ImportSkipped, "", nil); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("skipped without note: %v", err)
+	}
+	if _, err := e.svc.ResolveImport(ctx, "a.md", domain.ImportPending, "n", nil); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("resolve to pending: %v", err)
+	}
+	v, err := e.svc.ResolveImport(ctx, "a.md", domain.ImportDeferred, "open items", nil)
+	if err != nil || v.Status != "deferred" || v.Note != "open items" || v.ProcessedAt != "" {
+		t.Fatalf("deferred: %+v, %v", v, err)
+	}
+
+	doc, err := e.svc.CreateDocument(ctx, DocumentInput{Title: "Doc", Kind: domain.DocReference, Body: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.ResolveImport(ctx, "a.md", domain.ImportDone, "",
+		[]ImportLinkInput{{Document: doc.ID, Relation: domain.ImportCreated}, {Document: "D-999", Relation: domain.ImportUpdated}}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown document: %v", err)
+	}
+	if v := importStatus(t, e, "a.md"); v.Status != "deferred" || len(v.Links) != 0 {
+		t.Fatalf("after failed resolve: %+v", v)
+	}
+
+	link := ImportLinkInput{Document: doc.ID, Relation: domain.ImportCreated}
+	v, err = e.svc.ResolveImport(ctx, "a.md", domain.ImportDone, "", []ImportLinkInput{link, link})
+	if err != nil || v.Status != "done" || v.ProcessedAt == "" || len(v.Links) != 1 {
+		t.Fatalf("done: %+v, %v", v, err)
+	}
+	_, err = e.svc.ResolveImport(ctx, "a.md", domain.ImportDone, "", nil)
+	if !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), "done") {
+		t.Fatalf("re-resolve: %v", err)
+	}
+	if _, err := e.svc.ResolveImport(ctx, "missing.md", domain.ImportDone, "", nil); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing: %v", err)
+	}
+}
+
+func TestImportViews(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	queueOne(t, e, "a.md", "alpha")
+	queueOne(t, e, "b.md", "beta")
+	if _, err := e.svc.ResolveImport(ctx, "b.md", domain.ImportSkipped, "not needed", nil); err != nil {
+		t.Fatal(err)
+	}
+	if v := importStatus(t, e, "a.md"); v.Content != "alpha" {
+		t.Fatalf("get content = %q", v.Content)
+	}
+	all, err := e.svc.ListImports(ctx, nil)
+	if err != nil || len(all) != 2 {
+		t.Fatalf("list: %+v, %v", all, err)
+	}
+	for _, v := range all {
+		if v.Content != "" {
+			t.Fatalf("list view has content: %+v", v)
+		}
+	}
+	skipped, err := e.svc.ListImports(ctx, []domain.ImportStatus{domain.ImportSkipped})
+	if err != nil || len(skipped) != 1 || skipped[0].Path != "b.md" {
+		t.Fatalf("filtered: %+v, %v", skipped, err)
+	}
+	raw, _ := json.Marshal(all[0])
+	if strings.Contains(string(raw), `"content"`) {
+		t.Fatalf("json has content: %s", raw)
+	}
+}
+
+func TestImportAsNew(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	ini, err := e.svc.CreateInitiative(ctx, InitiativeInput{Title: "Docs", Brief: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	iid, _ := domain.ParseID(domain.KindInitiative, ini.ID)
+	md := "intro\n```\n# not a title\n```\n# Heading\nbody\n"
+	files := []ImportFile{{Path: "docs/a.md", Content: md}, {Path: "docs/notes.txt", Content: "plain text"}, {Path: "cfg/app.json", Content: `{"a":1}`}}
+	out, err := e.svc.ImportAsNew(ctx, files, AsNewOptions{Kind: domain.DocDesign, InitiativeID: iid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, o := range out {
+		if o.Outcome != AsNewCreated || o.Document == "" {
+			t.Fatalf("outcome %d = %+v", i, o)
+		}
+	}
+	for i, want := range []string{"Heading", "notes", "app"} {
+		d, err := e.svc.GetDocument(ctx, int64(i+1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Title != want || d.Kind != "design" || d.InitiativeID != ini.ID || d.Body != strings.TrimSpace(files[i].Content) {
+			t.Errorf("doc %d = %+v", i, d)
+		}
+	}
+	v := importStatus(t, e, "docs/a.md")
+	if v.Status != "done" || len(v.Links) != 1 || v.Links[0].Relation != "created" {
+		t.Fatalf("record = %+v", v)
+	}
+
+	out, _ = e.svc.ImportAsNew(ctx, files[:1], AsNewOptions{Kind: domain.DocDesign, InitiativeID: iid})
+	if out[0].Outcome != AsNewSkipped || out[0].Reason != "already imported" {
+		t.Fatalf("rerun = %+v", out[0])
+	}
+	changed := []ImportFile{{Path: "docs/a.md", Content: md + "more\n"}}
+	out, _ = e.svc.ImportAsNew(ctx, changed, AsNewOptions{Kind: domain.DocDesign, InitiativeID: iid})
+	if out[0].Outcome != AsNewRefused || out[0].Reason != AsNewChangedHint {
+		t.Fatalf("changed = %+v", out[0])
+	}
+	out, _ = e.svc.ImportAsNew(ctx, changed, AsNewOptions{Kind: domain.DocDesign, InitiativeID: iid, Again: true})
+	if out[0].Outcome != AsNewCreated {
+		t.Fatalf("again = %+v", out[0])
+	}
+	v = importStatus(t, e, "docs/a.md")
+	if v.Status != "done" || len(v.Links) != 2 {
+		t.Fatalf("record after again = %+v", v)
+	}
+	if docs, _ := e.svc.ListDocuments(ctx, DocumentFilter{}); len(docs) != 4 {
+		t.Fatalf("documents = %d", len(docs))
+	}
+}
+
+func TestImportAsNewUpFrontErrors(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	f := []ImportFile{{Path: "a.md", Content: "# A"}}
+	if _, err := e.svc.ImportAsNew(ctx, f, AsNewOptions{Kind: "bogus"}); !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("kind err = %v", err)
+	}
+	if _, err := e.svc.ImportAsNew(ctx, f, AsNewOptions{Kind: domain.DocReference, InitiativeID: 99}); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("initiative err = %v", err)
+	}
+	ini, _ := e.svc.CreateInitiative(ctx, InitiativeInput{Title: "X", Brief: "b"})
+	if _, err := e.svc.ArchiveInitiative(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.ImportAsNew(ctx, f, AsNewOptions{Kind: domain.DocReference, InitiativeID: 1}); err == nil {
+		t.Errorf("archived initiative %s accepted", ini.ID)
+	}
+	if list, _ := e.svc.ListImports(ctx, nil); len(list) != 0 {
+		t.Errorf("records = %+v", list)
+	}
+}
+
+func TestImportAsNewIsolatesFailures(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	files := []ImportFile{{Path: "a.md", Content: "# A"}, {Path: "docs/.md", Content: "no title"}, {Path: "c.md", Content: "# C"}}
+	out, err := e.svc.ImportAsNew(ctx, files, AsNewOptions{Kind: domain.DocReference})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out[0].Outcome != AsNewCreated || out[1].Outcome != AsNewFailed || out[1].Reason == "" || out[2].Outcome != AsNewCreated {
+		t.Fatalf("out = %+v", out)
+	}
+	if list, _ := e.svc.ListImports(ctx, nil); len(list) != 2 {
+		t.Fatalf("records = %+v", list)
+	}
+}

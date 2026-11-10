@@ -257,3 +257,41 @@ type DeletedCard struct {
 	Moved bool   `json:"moved"`
 	Error string `json:"error,omitempty"`
 }
+
+type ImportLinkView struct {
+	Document string `json:"document"`
+	Relation string `json:"relation"`
+}
+
+type ImportView struct {
+	Path        string           `json:"path"`
+	Status      string           `json:"status"`
+	ContentHash string           `json:"content_hash"`
+	Size        int64            `json:"size"`
+	Note        string           `json:"note,omitempty"`
+	QueuedAt    string           `json:"queued_at"`
+	ProcessedAt string           `json:"processed_at,omitempty"`
+	Changed     bool             `json:"changed"`
+	Links       []ImportLinkView `json:"links"`
+	Content     string           `json:"content,omitempty"`
+}
+
+func importView(im domain.Import, links []ImportLinkView, withContent bool) ImportView {
+	v := ImportView{
+		Path:        im.Path,
+		Status:      string(im.Status),
+		ContentHash: im.ContentHash,
+		Size:        im.Size,
+		Note:        im.Note,
+		QueuedAt:    ts(im.QueuedAt),
+		Changed:     im.LastDoneHash != "" && im.LastDoneHash != im.ContentHash,
+		Links:       links,
+	}
+	if !im.ProcessedAt.IsZero() {
+		v.ProcessedAt = ts(im.ProcessedAt)
+	}
+	if withContent {
+		v.Content = im.Content
+	}
+	return v
+}

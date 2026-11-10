@@ -1339,3 +1339,290 @@ func TestSetArchived(t *testing.T) {
 		}
 	})
 }
+
+func tableCols(t *testing.T, db *sql.DB, table string) map[string]string {
+	t.Helper()
+	rows, err := db.Query(`SELECT name, type, "notnull", IFNULL(dflt_value, ''), pk FROM pragma_table_info(?)`, table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var name, typ, dflt string
+		var nn, pk int
+		if err := rows.Scan(&name, &typ, &nn, &dflt, &pk); err != nil {
+			t.Fatal(err)
+		}
+		out[name] = fmt.Sprintf("%s notnull=%d default=%s pk=%d", typ, nn, dflt, pk)
+	}
+	return out
+}
+
+func TestImportSchema(t *testing.T) {
+	s := openTest(t)
+	wantImports := map[string]string{
+		"id":             "INTEGER notnull=0 default= pk=1",
+		"path":           "TEXT notnull=1 default= pk=0",
+		"status":         "TEXT notnull=1 default= pk=0",
+		"content":        "TEXT notnull=1 default= pk=0",
+		"content_hash":   "TEXT notnull=1 default= pk=0",
+		"size":           "INTEGER notnull=1 default= pk=0",
+		"last_done_hash": "TEXT notnull=1 default='' pk=0",
+		"note":           "TEXT notnull=1 default='' pk=0",
+		"queued_at":      "TEXT notnull=1 default= pk=0",
+		"processed_at":   "TEXT notnull=1 default='' pk=0",
+	}
+	wantLinks := map[string]string{
+		"import_id":   "INTEGER notnull=1 default= pk=1",
+		"document_id": "INTEGER notnull=1 default= pk=2",
+		"relation":    "TEXT notnull=1 default= pk=3",
+		"created_at":  "TEXT notnull=1 default= pk=0",
+	}
+	for table, want := range map[string]map[string]string{"imports": wantImports, "import_documents": wantLinks} {
+		got := tableCols(t, s.db, table)
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("%s columns = %v; want %v", table, got, want)
+		}
+	}
+
+	rows, err := s.db.Query(`SELECT "table", "from", "to", on_delete FROM pragma_foreign_key_list('import_documents') ORDER BY "from"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fks []string
+	for rows.Next() {
+		var tbl, from, to, onDelete string
+		if err := rows.Scan(&tbl, &from, &to, &onDelete); err != nil {
+			t.Fatal(err)
+		}
+		fks = append(fks, fmt.Sprintf("%s->%s.%s %s", from, tbl, to, onDelete))
+	}
+	rows.Close()
+	if want := "[document_id->documents.id CASCADE import_id->imports.id CASCADE]"; fmt.Sprint(fks) != want {
+		t.Errorf("foreign keys = %v; want %s", fks, want)
+	}
+
+	var autoinc string
+	if err := s.db.QueryRow(`SELECT sql FROM sqlite_master WHERE name = 'imports'`).Scan(&autoinc); err != nil || !strings.Contains(autoinc, "AUTOINCREMENT") {
+		t.Errorf("imports lacks AUTOINCREMENT: %v", err)
+	}
+
+	const ins = `INSERT INTO imports (path, status, content, content_hash, size, queued_at) VALUES (?, ?, '', '', 0, 't')`
+	if _, err := s.db.Exec(ins, "a", "bogus"); err == nil {
+		t.Error("CHECK should reject an invalid status")
+	}
+	if _, err := s.db.Exec(ins, "a", "pending"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(ins, "a", "done"); err == nil {
+		t.Error("UNIQUE should reject a duplicate path")
+	}
+	if _, err := s.db.Exec(`INSERT INTO import_documents (import_id, document_id, relation, created_at) VALUES (1, 1, 'bogus', 't')`); err == nil {
+		t.Error("CHECK should reject an invalid relation")
+	}
+}
+
+func TestParseImportStatus(t *testing.T) {
+	for _, st := range domain.ImportStatuses() {
+		if got, err := domain.ParseImportStatus(" " + strings.ToUpper(string(st)) + " "); err != nil || got != st {
+			t.Errorf("ParseImportStatus(%q) = %q, %v", st, got, err)
+		}
+	}
+	if _, err := domain.ParseImportStatus("nope"); !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("unknown status: %v", err)
+	}
+}
+
+func TestImportCRUD(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	q0 := time.Date(2026, 1, 2, 3, 4, 5, 6, time.UTC)
+	mk := func(path string, st domain.ImportStatus) *domain.Import {
+		return &domain.Import{Path: path, Status: st, Content: "body of " + path, ContentHash: "h-" + path, Size: 42, QueuedAt: q0}
+	}
+	b, a, c := mk("docs/b.md", domain.ImportPending), mk("a.md", domain.ImportDone), mk("docs/c.md", domain.ImportDeferred)
+	a.LastDoneHash, a.ProcessedAt = "h-a.md", q0.Add(time.Hour)
+	c.Note = "open items"
+	for _, im := range []*domain.Import{b, a, c} {
+		if err := s.CreateImport(ctx, im); err != nil || im.ID == 0 {
+			t.Fatalf("CreateImport(%s): id=%d, %v", im.Path, im.ID, err)
+		}
+	}
+	if err := s.CreateImport(ctx, mk("a.md", domain.ImportPending)); !errors.Is(err, store.ErrConflict) {
+		t.Errorf("duplicate path: %v; want ErrConflict", err)
+	}
+
+	for _, want := range []*domain.Import{a, b, c} {
+		got, err := s.GetImportByPath(ctx, want.Path)
+		if err != nil || got != *want {
+			t.Errorf("GetImportByPath(%s) = %+v, %v; want %+v", want.Path, got, err, *want)
+		}
+	}
+	if got, _ := s.GetImportByPath(ctx, "a.md"); got.ProcessedAt.IsZero() {
+		t.Error("processed_at did not round-trip")
+	}
+	if got, _ := s.GetImportByPath(ctx, "docs/b.md"); !got.ProcessedAt.IsZero() || got.LastDoneHash != "" {
+		t.Errorf("zero values should round-trip as empty: %+v", got)
+	}
+	if _, err := s.GetImportByPath(ctx, "missing.md"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("unknown path: %v; want ErrNotFound", err)
+	}
+
+	paths := func(ims []domain.Import) string {
+		var ps []string
+		for _, im := range ims {
+			ps = append(ps, im.Path)
+		}
+		return strings.Join(ps, ",")
+	}
+	all, err := s.ListImports(ctx, nil)
+	if err != nil || paths(all) != "a.md,docs/b.md,docs/c.md" {
+		t.Errorf("list all = %s, %v", paths(all), err)
+	}
+	some, err := s.ListImports(ctx, []domain.ImportStatus{domain.ImportPending, domain.ImportDeferred})
+	if err != nil || paths(some) != "docs/b.md,docs/c.md" {
+		t.Errorf("list filtered = %s, %v", paths(some), err)
+	}
+	if none, err := s.ListImports(ctx, []domain.ImportStatus{domain.ImportSkipped}); err != nil || len(none) != 0 {
+		t.Errorf("list skipped = %v, %v", none, err)
+	}
+
+	id := b.ID
+	upd := domain.Import{
+		ID: 999, Path: "docs/b.md", Status: domain.ImportDone, Content: "new", ContentHash: "h2", Size: 3,
+		LastDoneHash: "h2", Note: "n", QueuedAt: q0.Add(2 * time.Hour), ProcessedAt: q0.Add(3 * time.Hour),
+	}
+	if err := s.UpdateImport(ctx, &upd); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetImportByPath(ctx, "docs/b.md")
+	upd.ID = id
+	if err != nil || got != upd {
+		t.Errorf("after update = %+v, %v; want %+v", got, err, upd)
+	}
+	if err := s.UpdateImport(ctx, &domain.Import{Path: "missing.md", Status: domain.ImportPending}); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("update unknown path: %v; want ErrNotFound", err)
+	}
+	if err := s.CreateImport(ctx, &domain.Import{Path: "x.md", Status: "bogus"}); err == nil {
+		t.Error("CHECK should reject an invalid status")
+	}
+}
+
+func TestImportLinks(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	tick := 0
+	s.now = func() time.Time { tick++; return base.Add(time.Duration(tick) * time.Second) }
+
+	im := domain.Import{Path: "a.md", Status: domain.ImportPending, QueuedAt: base}
+	if err := s.CreateImport(ctx, &im); err != nil {
+		t.Fatal(err)
+	}
+	var docs []domain.Document
+	for _, slug := range []string{"one", "two", "three"} {
+		d := domain.Document{Kind: domain.DocReference, Slug: slug, Title: slug}
+		if err := s.CreateDocument(ctx, &d); err != nil {
+			t.Fatal(err)
+		}
+		docs = append(docs, d)
+	}
+
+	if err := s.AddImportLink(ctx, im.ID, docs[1].ID, domain.ImportCreated); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddImportLink(ctx, im.ID, docs[0].ID, domain.ImportUpdated); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := s.ListImportLinks(ctx, im.ID)
+	if err := s.AddImportLink(ctx, im.ID, docs[1].ID, domain.ImportCreated); err != nil {
+		t.Errorf("repeated link: %v; want no-op", err)
+	}
+	if err := s.AddImportLink(ctx, im.ID, docs[1].ID, domain.ImportDecision); err != nil {
+		t.Fatal(err)
+	}
+	links, err := s.ListImportLinks(ctx, im.ID)
+	if err != nil || len(links) != 3 {
+		t.Fatalf("links = %+v, %v; want 3", links, err)
+	}
+	if links[0] != before[0] || links[1] != before[1] {
+		t.Errorf("repeat changed existing links: %+v vs %+v", links[:2], before)
+	}
+	want := []struct {
+		doc int64
+		rel domain.ImportRelation
+	}{{docs[1].ID, domain.ImportCreated}, {docs[0].ID, domain.ImportUpdated}, {docs[1].ID, domain.ImportDecision}}
+	for i, w := range want {
+		if links[i].DocumentID != w.doc || links[i].Relation != w.rel {
+			t.Errorf("link %d = %+v; want doc %d %s", i, links[i], w.doc, w.rel)
+		}
+	}
+
+	// Equal timestamps order by document ID.
+	s.now = func() time.Time { return base.Add(time.Hour) }
+	for _, d := range []domain.Document{docs[2], docs[0]} {
+		if err := s.AddImportLink(ctx, im.ID, d.ID, domain.ImportDecision); err != nil {
+			t.Fatal(err)
+		}
+	}
+	links, _ = s.ListImportLinks(ctx, im.ID)
+	if n := len(links); n != 5 || links[3].DocumentID != docs[0].ID || links[4].DocumentID != docs[2].ID {
+		t.Errorf("tie order = %+v", links)
+	}
+
+	if err := s.AddImportLink(ctx, im.ID, 9999, domain.ImportCreated); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("missing document: %v; want ErrNotFound", err)
+	}
+	if links, err := s.ListImportLinks(ctx, 9999); err != nil || len(links) != 0 {
+		t.Errorf("links of unknown import = %v, %v", links, err)
+	}
+}
+
+func TestImportLinkCascades(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	mkImport := func(path string) domain.Import {
+		im := domain.Import{Path: path, Status: domain.ImportPending, QueuedAt: time.Now().UTC()}
+		if err := s.CreateImport(ctx, &im); err != nil {
+			t.Fatal(err)
+		}
+		return im
+	}
+	mkDoc := func(slug string) domain.Document {
+		d := domain.Document{Kind: domain.DocReference, Slug: slug, Title: slug}
+		if err := s.CreateDocument(ctx, &d); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	i1, i2 := mkImport("a.md"), mkImport("b.md")
+	d1, d2 := mkDoc("one"), mkDoc("two")
+	for _, im := range []domain.Import{i1, i2} {
+		for _, d := range []domain.Document{d1, d2} {
+			if err := s.AddImportLink(ctx, im.ID, d.ID, domain.ImportCreated); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	linkCount := func() int { return count(t, s.db, `SELECT COUNT(*) FROM import_documents`) }
+	if linkCount() != 4 {
+		t.Fatalf("links = %d; want 4", linkCount())
+	}
+
+	if err := s.DeleteDocument(ctx, d1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, s.db, fmt.Sprintf(`SELECT COUNT(*) FROM import_documents WHERE document_id = %d`, d1.ID)); n != 0 || linkCount() != 2 {
+		t.Errorf("after deleting a document: its links = %d, total = %d; want 0 and 2", n, linkCount())
+	}
+	if _, err := s.db.Exec(`DELETE FROM imports WHERE id = ?`, i1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if links, _ := s.ListImportLinks(ctx, i1.ID); len(links) != 0 || linkCount() != 1 {
+		t.Errorf("after deleting an import: its links = %v, total = %d; want none and 1", links, linkCount())
+	}
+	if _, err := s.GetImportByPath(ctx, "b.md"); err != nil {
+		t.Errorf("deleting a document removed an import: %v", err)
+	}
+}

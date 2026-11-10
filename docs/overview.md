@@ -24,9 +24,11 @@ flowchart LR
 ## The pieces
 
 - **Store.** A SQLite database inside the repository at `.ralph/ralph.db`. It is git-ignored, so each clone has its
-  own. It holds initiatives, documents, milestones, tasks, and task notes.
+  own. It holds initiatives, documents, milestones, tasks, task notes, and import records.
 - **Search.** Everything in the store is chunked and embedded through a local Ollama model. Search ranks results by
   vector similarity and falls back to keyword search when embeddings are unavailable.
+- **Import.** Existing text files can be queued with `ralph import` and integrated into documents, so ralph holds
+  the knowledge rather than copies of the files. See [Imports](data-model.md#imports).
 - **MCP server.** `ralph mcp` exposes the store to the agent harness over stdio. Claude Code is the first supported
   harness.
 - **CLI.** Every MCP capability is also available as a `ralph` subcommand, for people and scripts.

@@ -57,6 +57,9 @@ func TestDefaults(t *testing.T) {
 		j.IssueTypes != (JiraIssueTypes{Initiative: "Epic", Milestone: "Task", Task: "Sub-task"}) {
 		t.Errorf("jira defaults = %+v", j)
 	}
+	if cfg.Import.MaxFileBytes != 1048576 {
+		t.Errorf("import.max_file_bytes = %d", cfg.Import.MaxFileBytes)
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("default config should validate: %v", err)
 	}
@@ -291,6 +294,7 @@ func TestValidateReportsAllProblems(t *testing.T) {
 	cfg.Embeddings.Timeout = 0
 	cfg.Embeddings.Chunk.OverlapChars = cfg.Embeddings.Chunk.MaxChars
 	cfg.Search.Limit = 0
+	cfg.Import.MaxFileBytes = 0
 	cfg.Steps.Loop.Harness = "codex"
 	cfg.Loop.StallThreshold = 0
 	cfg.Loop.BranchTemplate = "ralph/{{.Milestone"
@@ -305,7 +309,7 @@ func TestValidateReportsAllProblems(t *testing.T) {
 	}
 	for _, key := range []string{
 		"log.level", "embeddings.provider", "embeddings.timeout", "embeddings.chunk.overlap_chars",
-		"search.limit", "steps.loop.harness", "loop.stall_threshold", "loop.branch_template",
+		"search.limit", "import.max_file_bytes", "steps.loop.harness", "loop.stall_threshold", "loop.branch_template",
 		"pr.provider", "pr.base_branch", "harness.claude_code.max_budget_usd", "loop.commit_template",
 	} {
 		if !strings.Contains(err.Error(), key+":") {
@@ -486,5 +490,23 @@ func TestStatusMapDefaultsAndLayers(t *testing.T) {
 	m = l.Config.TaskManager.Jira.StatusMap
 	if v, ok := m["DONE"]; !ok || v != "" || m["TODO"] != "To Do" {
 		t.Errorf("blanking a default: %v", m)
+	}
+}
+
+func TestImportMaxFileBytes(t *testing.T) {
+	project := writeFile(t, t.TempDir(), "p.yaml", "import:\n  max_file_bytes: 2048\n")
+	l, err := Load(Sources{ProjectFile: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Config.Import.MaxFileBytes != 2048 {
+		t.Errorf("file: import.max_file_bytes = %d", l.Config.Import.MaxFileBytes)
+	}
+	l, err = Load(Sources{ProjectFile: project, Environ: []string{"RALPH_IMPORT__MAX_FILE_BYTES=4096"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Config.Import.MaxFileBytes != 4096 {
+		t.Errorf("env: import.max_file_bytes = %d", l.Config.Import.MaxFileBytes)
 	}
 }

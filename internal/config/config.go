@@ -60,6 +60,7 @@ type Config struct {
 	Harness    HarnessConfig    `koanf:"harness"`
 	Steps      StepsConfig      `koanf:"steps"`
 	Receive    ReceiveConfig    `koanf:"receive"`
+	Import     ImportConfig     `koanf:"import"`
 	Loop       LoopConfig       `koanf:"loop"`
 	PR         PRConfig         `koanf:"pr"`
 
@@ -129,6 +130,10 @@ type StepConfig struct {
 
 type ReceiveConfig struct {
 	ConfirmOutline bool `koanf:"confirm_outline"`
+}
+
+type ImportConfig struct {
+	MaxFileBytes int `koanf:"max_file_bytes"`
 }
 
 type LoopConfig struct {
@@ -303,6 +308,10 @@ func (c *Config) Validate() error {
 		if sc.Harness != "" {
 			oneOf("steps."+string(step)+".harness", sc.Harness, knownHarnesses)
 		}
+	}
+
+	if c.Import.MaxFileBytes < 1 {
+		bad("import.max_file_bytes", "must be at least 1")
 	}
 
 	if c.Loop.MaxIterations < 1 {
