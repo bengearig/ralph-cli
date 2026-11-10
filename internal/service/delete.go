@@ -118,6 +118,31 @@ func (s *Service) DeleteDocument(ctx context.Context, id int64) (DeleteView, err
 	return v, err
 }
 
+// DeleteNote removes one task note. Notes are history, so any task status
+// allows it, but a running loop's milestone does not. Notes are not indexed.
+func (s *Service) DeleteNote(ctx context.Context, id int64) (DeleteView, error) {
+	var v DeleteView
+	err := s.InTx(ctx, func(tx *Service) error {
+		n, err := tx.store.GetTaskNote(ctx, id)
+		if err != nil {
+			return err
+		}
+		t, err := tx.store.GetTask(ctx, n.TaskID)
+		if err != nil {
+			return err
+		}
+		if err := tx.guardLoop(domain.FormatID(domain.KindNote, id), []int64{t.MilestoneID}); err != nil {
+			return err
+		}
+		if err := tx.store.DeleteTaskNote(ctx, id); err != nil {
+			return err
+		}
+		v = deleteView(domain.KindNote, id, store.Cascade{Notes: 1})
+		return nil
+	})
+	return v, err
+}
+
 // guardLoop refuses a delete that touches the milestone a running loop holds,
 // whatever force says. An unparsable holder is assumed to touch everything.
 func (s *Service) guardLoop(what string, milestoneIDs []int64) error {

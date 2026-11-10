@@ -291,7 +291,7 @@ func (a *app) printTask(v service.TaskView) error {
 	if len(v.Notes) > 0 {
 		var b strings.Builder
 		for _, n := range v.Notes {
-			b.WriteString(n.CreatedAt + " " + n.Kind + ": " + n.Body + "\n")
+			b.WriteString(n.CreatedAt + " " + n.ID + " " + n.Kind + ": " + n.Body + "\n")
 		}
 		return a.section("Notes", b.String())
 	}

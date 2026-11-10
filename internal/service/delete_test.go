@@ -311,3 +311,128 @@ func TestDeleteLoopLockGuard(t *testing.T) {
 		t.Errorf("guarded task was deleted: %v", err)
 	}
 }
+
+func TestGetTaskViewsIncludeNoteIDs(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	_, ms := e.scaffold(t)
+	tk := e.task(t, ms, domain.StatusProposed)
+	if _, err := e.svc.AddTaskNote(ctx, tk, domain.NoteIteration, "second"); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := e.svc.Store().ListTaskNotes(ctx, tk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := e.svc.GetTask(ctx, tk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Notes) != len(rows) || len(rows) != 2 {
+		t.Fatalf("notes = %+v, rows = %+v", v.Notes, rows)
+	}
+	for i, n := range v.Notes {
+		if want := domain.FormatID(domain.KindNote, rows[i].ID); n.ID != want {
+			t.Errorf("note %d ID = %q, want %q", i, n.ID, want)
+		}
+	}
+}
+
+func TestDeleteNote(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	_, ms := e.scaffold(t)
+	tk := e.task(t, ms, domain.StatusDone)
+	for _, body := range []string{"middle", "newest"} {
+		if _, err := e.svc.AddTaskNote(ctx, tk, domain.NoteGeneral, body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := e.svc.Store().ListTaskNotes(ctx, tk)
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("rows = %+v, %v", rows, err)
+	}
+	mid, newest := rows[1], rows[2]
+
+	got, err := e.svc.DeleteNote(ctx, mid.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDeleted(t, got, domain.FormatID(domain.KindNote, mid.ID), "note", map[string]int{"notes": 1})
+	left, err := e.svc.Store().ListTaskNotes(ctx, tk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 2 || left[0].ID != rows[0].ID || left[1].ID != newest.ID {
+		t.Errorf("remaining notes = %+v", left)
+	}
+	if _, err := e.svc.Store().GetTask(ctx, tk); err != nil {
+		t.Errorf("task gone: %v", err)
+	}
+
+	if _, err := e.svc.DeleteNote(ctx, mid.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("repeat delete err = %v", err)
+	}
+	if _, err := e.svc.DeleteNote(ctx, 9999); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("unknown note err = %v", err)
+	}
+
+	if _, err := e.svc.DeleteNote(ctx, newest.ID); err != nil {
+		t.Fatal(err)
+	}
+	v, err := e.svc.AddTaskNote(ctx, tk, domain.NoteGeneral, "after")
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := v.Notes[len(v.Notes)-1]
+	if id := mustID(t, domain.KindNote, last.ID); id <= newest.ID {
+		t.Errorf("note ID %d reused or lowered (deleted newest %d)", id, newest.ID)
+	}
+}
+
+func TestDeleteNoteLoopLockGuard(t *testing.T) {
+	ctx := context.Background()
+	st, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "r.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	lockPath := filepath.Join(t.TempDir(), "loop.lock")
+	ix := &search.Index{Store: st, Chunker: search.Chunker{MaxChars: 1000, OverlapChars: 100}}
+	e := env{svc: New(st, ix, Options{LoopLockPath: lockPath})}
+	ini, ms := e.scaffold(t)
+	other, err := e.svc.CreateMilestone(ctx, MilestoneInput{InitiativeID: ini, Title: "Other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inMs := e.task(t, ms, domain.StatusProposed)
+	inOther := e.task(t, mustID(t, domain.KindMilestone, other.ID), domain.StatusProposed)
+	held, err := st.ListTaskNotes(ctx, inMs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	free, err := st.ListTaskNotes(ctx, inOther)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lock, err := looplock.Acquire(lockPath, "milestone "+domain.FormatID(domain.KindMilestone, ms))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, isHeld, _ := looplock.Probe(lockPath); !isHeld {
+		lock.Release()
+		t.Skip("locking is a no-op on this platform")
+	}
+	defer lock.Release()
+
+	if _, err := e.svc.DeleteNote(ctx, held[0].ID); !errors.Is(err, looplock.ErrLoopRunning) {
+		t.Errorf("held milestone: err = %v", err)
+	}
+	if _, err := st.GetTaskNote(ctx, held[0].ID); err != nil {
+		t.Errorf("guarded note was deleted: %v", err)
+	}
+	if _, err := e.svc.DeleteNote(ctx, free[0].ID); err != nil {
+		t.Errorf("note in another milestone: %v", err)
+	}
+}

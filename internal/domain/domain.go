@@ -25,9 +25,10 @@ const (
 	KindMilestone  Kind = "milestone"
 	KindTask       Kind = "task"
 	KindDocument   Kind = "document"
+	KindNote       Kind = "note"
 )
 
-// Kinds returns every entity kind.
+// Kinds returns the searchable entity kinds; KindNote is not among them.
 func Kinds() []Kind { return []Kind{KindInitiative, KindMilestone, KindTask, KindDocument} }
 
 // Prefix is the display-ID prefix for the kind.
@@ -41,6 +42,8 @@ func (k Kind) Prefix() string {
 		return "T"
 	case KindDocument:
 		return "D"
+	case KindNote:
+		return "N"
 	}
 	return "?"
 }

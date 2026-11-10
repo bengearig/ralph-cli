@@ -87,6 +87,19 @@ func TestWorkflowThroughCLI(t *testing.T) {
 	h.ok("task", "create", "--milestone", "M-1", "--title", "Route", "--description", "Add route", "--criteria", "Tests pass")
 	h.ok("task", "status", "T-1", "todo", "--reason", "articulated")
 
+	h.ok("task", "note", "T-1", "first note")
+	h.ok("task", "note", "T-1", "second note")
+	if out := h.ok("task", "show", "T-1"); !strings.Contains(out, " N-2 NOTE: first note") || !strings.Contains(out, " N-3 NOTE: second note") {
+		t.Errorf("task show lacks note IDs:\n%s", out)
+	}
+	var shown struct {
+		Notes []struct{ ID, Body string }
+	}
+	h.json(&shown, "task", "show", "T-1")
+	if len(shown.Notes) != 3 || shown.Notes[0].ID != "N-1" || shown.Notes[2].ID != "N-3" {
+		t.Errorf("task show --json notes = %+v", shown.Notes)
+	}
+
 	var next struct{ ID, Status string }
 	h.json(&next, "task", "next", "--milestone", "M-1")
 	if next.ID != "T-1" || next.Status != "TODO" {

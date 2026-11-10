@@ -179,6 +179,16 @@ func TestArticulateThenLoopFlow(t *testing.T) {
 	if len(task.Notes) != 3 {
 		t.Errorf("notes = %+v", task.Notes)
 	}
+	for _, n := range task.Notes {
+		if !strings.HasPrefix(n.ID, "N-") {
+			t.Errorf("note ID = %q, want N-<n>", n.ID)
+		}
+	}
+	var fetched service.TaskView
+	mustOK(t, cs, "task_get", map[string]any{"id": task.ID}, &fetched)
+	if len(fetched.Notes) != 3 || fetched.Notes[0].ID != task.Notes[0].ID || fetched.Notes[0].ID == "" {
+		t.Errorf("task_get notes = %+v", fetched.Notes)
+	}
 	var none struct {
 		Task    *service.TaskView `json:"task"`
 		Message string            `json:"message"`

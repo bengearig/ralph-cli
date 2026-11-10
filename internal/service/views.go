@@ -55,6 +55,7 @@ type TaskView struct {
 }
 
 type NoteView struct {
+	ID        string `json:"id"`
 	Kind      string `json:"kind"`
 	Body      string `json:"body"`
 	CreatedAt string `json:"created_at"`
@@ -155,7 +156,7 @@ func taskView(t domain.Task, notes []domain.TaskNote) TaskView {
 		UpdatedAt:          ts(t.UpdatedAt),
 	}
 	for _, n := range notes {
-		v.Notes = append(v.Notes, NoteView{Kind: string(n.Kind), Body: n.Body, CreatedAt: ts(n.CreatedAt)})
+		v.Notes = append(v.Notes, NoteView{ID: domain.FormatID(domain.KindNote, n.ID), Kind: string(n.Kind), Body: n.Body, CreatedAt: ts(n.CreatedAt)})
 	}
 	return v
 }

@@ -19,6 +19,20 @@ func TestParseID(t *testing.T) {
 			t.Errorf("ParseID(%q) err = %v, want ErrInvalid", in, err)
 		}
 	}
+	for in, want := range map[string]int64{"N-42": 42, "n-42": 42, "42": 42} {
+		if got, err := ParseID(KindNote, in); err != nil || got != want {
+			t.Errorf("ParseID(KindNote, %q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	if _, err := ParseID(KindNote, "T-42"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("ParseID(KindNote, T-42) err = %v, want ErrInvalid", err)
+	}
+	if FormatID(KindNote, 42) != "N-42" {
+		t.Error("FormatID(KindNote) wrong")
+	}
+	if _, err := ParseKind("note"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("ParseKind(note) err = %v, want ErrInvalid", err)
+	}
 	if FormatID(KindMilestone, 3) != "M-3" || FormatID(KindDocument, 1) != "D-1" || FormatID(KindInitiative, 9) != "I-9" {
 		t.Error("FormatID prefixes wrong")
 	}

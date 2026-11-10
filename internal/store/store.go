@@ -100,6 +100,8 @@ type Store interface {
 	SetTaskCommit(ctx context.Context, id int64, hash string) error
 	AddTaskNote(ctx context.Context, n *domain.TaskNote) error
 	ListTaskNotes(ctx context.Context, taskID int64) ([]domain.TaskNote, error)
+	GetTaskNote(ctx context.Context, id int64) (domain.TaskNote, error)
+	DeleteTaskNote(ctx context.Context, id int64) error
 	// DeleteTask removes a task with its notes.
 	DeleteTask(ctx context.Context, id int64) error
 

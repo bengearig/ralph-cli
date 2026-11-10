@@ -319,6 +319,24 @@ func (s *Store) ListTaskNotes(ctx context.Context, taskID int64) ([]domain.TaskN
 	})
 }
 
+func (s *Store) GetTaskNote(ctx context.Context, id int64) (domain.TaskNote, error) {
+	var n domain.TaskNote
+	var kind, created string
+	err := s.q.QueryRowContext(ctx,
+		`SELECT id, task_id, kind, body, created_at FROM task_notes WHERE id = ?`, id).
+		Scan(&n.ID, &n.TaskID, &kind, &n.Body, &created)
+	if err != nil {
+		return n, mapErr(err, domain.FormatID(domain.KindNote, id))
+	}
+	n.Kind = domain.NoteKind(kind)
+	n.CreatedAt, err = parseTime(created)
+	return n, err
+}
+
+func (s *Store) DeleteTaskNote(ctx context.Context, id int64) error {
+	return s.deleteByID(ctx, "task_notes", domain.KindNote, id)
+}
+
 // ---- documents ----
 
 const documentCols = `id, initiative_id, kind, slug, title, body, created_at, updated_at`
