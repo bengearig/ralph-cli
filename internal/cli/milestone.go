@@ -367,7 +367,7 @@ func (a *app) printDriftReport(r drift.Report) error {
 		recorded = branchLine(service.MilestoneView{Branch: r.Recorded.Branch, BaseCommit: r.Recorded.BaseCommit, HeadCommit: r.Recorded.HeadCommit})
 	}
 	tip := shortCommit(r.Tip)
-	if r.State == drift.StateBranchMissing {
+	if !r.BranchExists {
 		tip = "(branch does not exist locally)"
 		if r.RemoteBranchExists {
 			tip = fmt.Sprintf("(branch does not exist locally; origin/%s does)", r.Branch)

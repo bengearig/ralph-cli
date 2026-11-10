@@ -263,6 +263,9 @@ func TestUnchanged(t *testing.T) {
 	if !r.Clean() {
 		t.Error("Clean() = false for unchanged")
 	}
+	if !r.BranchExists {
+		t.Error("branch_exists = false for an existing branch")
+	}
 	wantTasks(t, r, want{MatchPresent, c1}, want{MatchPresent, c2})
 	wantCommits(t, "unattributed", r.UnattributedCommits)
 	if r.Milestone != domain.FormatID(domain.KindMilestone, e.mID) || r.Branch != branch || r.BaseRef != "refs/heads/main" {
@@ -294,10 +297,13 @@ func TestReportJSON(t *testing.T) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"milestone", "branch", "base_ref", "recorded", "tip", "state", "remote_branch_exists", "tasks", "unattributed_commits", "proposed_base"} {
+	for _, k := range []string{"milestone", "branch", "base_ref", "recorded", "tip", "branch_exists", "state", "remote_branch_exists", "tasks", "unattributed_commits", "proposed_base"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("JSON lacks %q: %s", k, data)
 		}
+	}
+	if m["branch_exists"] != true {
+		t.Errorf("branch_exists = %v, want true", m["branch_exists"])
 	}
 	rec := m["recorded"].(map[string]any)
 	for _, k := range []string{"branch", "base_commit", "head_commit"} {
@@ -310,6 +316,19 @@ func TestReportJSON(t *testing.T) {
 		if _, ok := task[k]; !ok {
 			t.Errorf("task finding lacks %q: %s", k, data)
 		}
+	}
+
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	gitCmd(t, e.root, "branch", "--quiet", "-D", branch)
+	if data, err = json.Marshal(e.check(e.input())); err != nil {
+		t.Fatal(err)
+	}
+	m = nil
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := m["branch_exists"]; !ok || v != false {
+		t.Errorf("branch_exists = %v (present %v), want false: %s", v, ok, data)
 	}
 }
 
@@ -471,9 +490,92 @@ func TestMerged(t *testing.T) {
 	r := e.check(e.input())
 	wantState(t, r, StateMerged)
 	wantTasks(t, r, want{MatchPresent, c1})
-	if s := r.Summary(); !strings.Contains(s, "already merged into main") {
+	if !r.BranchExists {
+		t.Error("branch_exists = false for an existing branch")
+	}
+	if s := r.Summary(); !strings.Contains(s, "already merged into main") || strings.Contains(s, "branch deleted") {
 		t.Errorf("summary = %q", s)
 	}
+}
+
+func TestMergedBranchDeleted(t *testing.T) {
+	for _, mode := range []string{"fast-forward", "no-ff"} {
+		t.Run(mode, func(t *testing.T) {
+			e := newEnv(t, "login", "logout")
+			c1, c2 := e.do(0, true), e.do(1, true)
+			e.recordHere()
+			gitCmd(t, e.root, "switch", "--quiet", "main")
+			if mode == "no-ff" {
+				gitCmd(t, e.root, "merge", "--quiet", "--no-ff", "-m", "Merge", branch)
+			} else {
+				gitCmd(t, e.root, "merge", "--quiet", "--ff-only", branch)
+			}
+			gitCmd(t, e.root, "branch", "--quiet", "-D", branch)
+
+			r := e.check(e.input())
+			wantState(t, r, StateMerged)
+			if r.BranchExists || r.Tip != "" || r.ProposedBase != "" {
+				t.Errorf("branch_exists %v, tip %q, proposed base %q", r.BranchExists, r.Tip, r.ProposedBase)
+			}
+			wantTasks(t, r, want{MatchPresent, c1}, want{MatchPresent, c2})
+			if s := r.Summary(); !strings.Contains(s, "already merged into main (branch deleted)") {
+				t.Errorf("summary = %q", s)
+			}
+		})
+	}
+}
+
+func TestMergedBranchDeletedWithOrigin(t *testing.T) {
+	e := newEnv(t, "login")
+	e.do(0, true)
+	e.recordHere()
+	remote := t.TempDir()
+	gitCmd(t, remote, "init", "--quiet", "--bare")
+	gitCmd(t, e.root, "remote", "add", "origin", remote)
+	gitCmd(t, e.root, "push", "--quiet", "origin", branch)
+	gitCmd(t, e.root, "fetch", "--quiet", "origin")
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	gitCmd(t, e.root, "merge", "--quiet", "--no-ff", "-m", "Merge", branch)
+	gitCmd(t, e.root, "branch", "--quiet", "-D", branch)
+
+	r := e.check(e.input())
+	wantState(t, r, StateMerged)
+	if !r.RemoteBranchExists {
+		t.Error("remote_branch_exists = false with origin/" + branch)
+	}
+}
+
+func TestBranchDeletedNotMerged(t *testing.T) {
+	t.Run("head equals base", func(t *testing.T) {
+		e := newEnv(t)
+		e.recordHere()
+		gitCmd(t, e.root, "switch", "--quiet", "main")
+		gitCmd(t, e.root, "branch", "--quiet", "-D", branch)
+		r := e.check(e.input())
+		wantState(t, r, StateBranchMissing)
+		if r.BranchExists {
+			t.Error("branch_exists = true")
+		}
+	})
+	t.Run("head object missing", func(t *testing.T) {
+		e := newEnv(t, "login")
+		e.do(0, true)
+		e.record(domain.MilestoneGit{Branch: branch, BaseCommit: e.base, HeadCommit: strings.Repeat("a", 40)})
+		gitCmd(t, e.root, "switch", "--quiet", "main")
+		gitCmd(t, e.root, "branch", "--quiet", "-D", branch)
+		r := e.check(e.input())
+		wantState(t, r, StateBranchMissing)
+		wantTasks(t, r, want{MatchMissing, ""})
+	})
+	t.Run("empty head", func(t *testing.T) {
+		e := newEnv(t, "login")
+		e.do(0, true)
+		gitCmd(t, e.root, "switch", "--quiet", "main")
+		gitCmd(t, e.root, "branch", "--quiet", "-D", branch)
+		r := e.check(e.input())
+		wantState(t, r, StateBranchMissing)
+		wantTasks(t, r, want{MatchMissing, ""})
+	})
 }
 
 func TestFreshBranchNotMerged(t *testing.T) {
@@ -498,6 +600,10 @@ func TestBranchMissing(t *testing.T) {
 
 	r := e.check(e.input())
 	wantState(t, r, StateBranchMissing)
+	if r.BranchExists {
+		t.Error("branch_exists = true for a deleted branch")
+	}
+	wantTasks(t, r, want{MatchMissing, ""})
 	if r.RemoteBranchExists {
 		t.Error("remote_branch_exists = true without a remote")
 	}
@@ -798,6 +904,15 @@ func TestApplyRefusesAcceptOnMergedAndBranchMissing(t *testing.T) {
 		gitCmd(t, e.root, "merge", "--quiet", "--no-ff", "-m", "Merge", branch)
 		e.wantRefused(Actions{Accept: true}, "already merged")
 		e.wantRefused(Actions{Reopen: []int64{e.tasks[0]}, Reason: "r", Accept: true}, "already merged")
+	})
+	t.Run("merged and deleted", func(t *testing.T) {
+		e := newEnv(t, "login")
+		e.do(0, true)
+		e.recordHere()
+		gitCmd(t, e.root, "switch", "--quiet", "main")
+		gitCmd(t, e.root, "merge", "--quiet", "--no-ff", "-m", "Merge", branch)
+		gitCmd(t, e.root, "branch", "--quiet", "-D", branch)
+		e.wantRefused(Actions{Accept: true}, "branch deleted")
 	})
 	t.Run("branch_missing", func(t *testing.T) {
 		e := newEnv(t, "login")

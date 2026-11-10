@@ -89,8 +89,10 @@ type Report struct {
 	BaseRef   string   `json:"base_ref"`
 	Recorded  Recorded `json:"recorded"`
 	// Tip is the branch's current commit, or "" when the branch is missing.
-	Tip   string `json:"tip"`
-	State State  `json:"state"`
+	Tip string `json:"tip"`
+	// BranchExists reports whether the local branch exists.
+	BranchExists bool  `json:"branch_exists"`
+	State        State `json:"state"`
 	// RemoteBranchExists reports, for branch_missing, whether
 	// origin/<branch> exists.
 	RemoteBranchExists bool `json:"remote_branch_exists"`
@@ -121,7 +123,11 @@ func (r Report) Summary() string {
 	case StateUnrecorded:
 		return fmt.Sprintf("%s has no recorded head for branch %s (tip %s)", r.Milestone, r.Branch, short(r.Tip))
 	case StateMerged:
-		return fmt.Sprintf("%s branch %s is already merged into %s", r.Milestone, r.Branch, shortRef(r.BaseRef))
+		s := fmt.Sprintf("%s branch %s is already merged into %s", r.Milestone, r.Branch, shortRef(r.BaseRef))
+		if !r.BranchExists {
+			s += " (branch deleted)"
+		}
+		return s
 	case StateUnchanged:
 		return fmt.Sprintf("%s branch %s is at its recorded head %s", r.Milestone, r.Branch, head)
 	case StateAhead:
@@ -200,11 +206,23 @@ func check(ctx context.Context, in Input, branch string) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
+	r.BranchExists = exists
 	if !exists {
-		r.State = StateBranchMissing
 		if r.RemoteBranchExists, err = in.Repo.RefExists(ctx, "refs/remotes/origin/"+r.Branch); err != nil {
 			return Report{}, err
 		}
+		wasMerged, err := merged(ctx, in.Repo, r.Recorded.HeadCommit, r.Recorded.BaseCommit, r.BaseRef)
+		if err != nil {
+			return Report{}, err
+		}
+		if wasMerged {
+			r.State = StateMerged
+			if err := findTasks(ctx, in, &r, r.Recorded.HeadCommit, tasks); err != nil {
+				return Report{}, err
+			}
+			return r, nil
+		}
+		r.State = StateBranchMissing
 		for _, t := range tasks {
 			r.Tasks = append(r.Tasks, TaskFinding{ID: t.ID, Title: t.Title, RecordedCommit: t.Commit, Match: MatchMissing})
 		}
@@ -229,7 +247,7 @@ func check(ctx context.Context, in Input, branch string) (Report, error) {
 			return Report{}, err
 		}
 	}
-	if err := findTasks(ctx, in, &r, tasks); err != nil {
+	if err := findTasks(ctx, in, &r, r.Tip, tasks); err != nil {
 		return Report{}, err
 	}
 	return r, nil
@@ -278,6 +296,16 @@ func isAncestor(ctx context.Context, repo git.Repo, ancestor, descendant string)
 	return repo.IsAncestor(ctx, ancestor, descendant)
 }
 
+// merged reports whether head is already in baseRef: it exists, is not the
+// recorded base (a branch with no commits of its own), and is an ancestor of
+// baseRef. A missing head is not merged.
+func merged(ctx context.Context, repo git.Repo, head, base, baseRef string) (bool, error) {
+	if head == "" || (base != "" && head == base) {
+		return false, nil
+	}
+	return isAncestor(ctx, repo, head, baseRef)
+}
+
 func state(ctx context.Context, repo git.Repo, r *Report) (State, error) {
 	head := r.Recorded.HeadCommit
 	if head == "" {
@@ -287,14 +315,12 @@ func state(ctx context.Context, repo git.Repo, r *Report) (State, error) {
 	if base == "" {
 		base = r.ProposedBase
 	}
-	if r.Tip != base {
-		merged, err := repo.IsAncestor(ctx, r.Tip, r.BaseRef)
-		if err != nil {
-			return "", err
-		}
-		if merged {
-			return StateMerged, nil
-		}
+	wasMerged, err := merged(ctx, repo, r.Tip, base, r.BaseRef)
+	if err != nil {
+		return "", err
+	}
+	if wasMerged {
+		return StateMerged, nil
 	}
 	if r.Tip == head {
 		return StateUnchanged, nil
@@ -328,9 +354,9 @@ func commits(ctx context.Context, repo git.Repo, rangeSpec string) ([]Commit, er
 }
 
 // findTasks runs the matchers for each DONE task against the candidates
-// <base ref>..<tip>, newest first, and lists the candidates no task claims.
-func findTasks(ctx context.Context, in Input, r *Report, tasks []service.TaskView) error {
-	candidates, err := in.Repo.Log(ctx, r.BaseRef+".."+r.Tip, TrailerKey)
+// <base ref>..<head>, newest first, and lists the candidates no task claims.
+func findTasks(ctx context.Context, in Input, r *Report, head string, tasks []service.TaskView) error {
+	candidates, err := in.Repo.Log(ctx, r.BaseRef+".."+head, TrailerKey)
 	if err != nil {
 		return err
 	}
@@ -350,7 +376,7 @@ func findTasks(ctx context.Context, in Input, r *Report, tasks []service.TaskVie
 	claimed := map[string]bool{}
 	for _, t := range tasks {
 		f := TaskFinding{ID: t.ID, Title: t.Title, RecordedCommit: t.Commit, Match: MatchMissing}
-		f.Match, f.Commit, err = match(ctx, in, r.Tip, t, candidates, patchID)
+		f.Match, f.Commit, err = match(ctx, in, head, t, candidates, patchID)
 		if err != nil {
 			return fmt.Errorf("matching %s: %w", t.ID, err)
 		}
@@ -367,7 +393,7 @@ func findTasks(ctx context.Context, in Input, r *Report, tasks []service.TaskVie
 	return nil
 }
 
-func match(ctx context.Context, in Input, tip string, t service.TaskView, candidates []git.LogCommit,
+func match(ctx context.Context, in Input, head string, t service.TaskView, candidates []git.LogCommit,
 	patchID func(string) (string, error)) (Match, string, error) {
 	recordedExists := false
 	if t.Commit != "" {
@@ -377,7 +403,7 @@ func match(ctx context.Context, in Input, tip string, t service.TaskView, candid
 		}
 		recordedExists = ok
 		if ok {
-			present, err := in.Repo.IsAncestor(ctx, t.Commit, tip)
+			present, err := in.Repo.IsAncestor(ctx, t.Commit, head)
 			if err != nil {
 				return "", "", err
 			}
