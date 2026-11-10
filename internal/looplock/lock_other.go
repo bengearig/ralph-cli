@@ -1,6 +1,6 @@
 //go:build !unix && !windows
 
-package loop
+package looplock
 
 import "os"
 

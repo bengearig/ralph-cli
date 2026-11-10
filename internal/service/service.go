@@ -25,6 +25,7 @@ type Service struct {
 	// Zero disables it.
 	stallThreshold int
 	searchLimit    int
+	loopLockPath   string
 }
 
 // Options configures a Service.
@@ -33,6 +34,9 @@ type Options struct {
 	// SearchLimit is the result count when a search does not specify one.
 	SearchLimit int
 	Log         *slog.Logger
+	// LoopLockPath is the loop's lock file; deletes touching the held
+	// milestone are refused. Empty disables the guard.
+	LoopLockPath string
 }
 
 // New returns a Service. The index must share the store.
@@ -45,7 +49,8 @@ func New(st store.Store, ix *search.Index, opts Options) *Service {
 	if limit < 1 {
 		limit = 10
 	}
-	return &Service{store: st, index: ix, log: log, stallThreshold: opts.StallThreshold, searchLimit: limit}
+	return &Service{store: st, index: ix, log: log, stallThreshold: opts.StallThreshold, searchLimit: limit,
+		loopLockPath: opts.LoopLockPath}
 }
 
 // Store exposes the underlying store for read-only orchestration such as

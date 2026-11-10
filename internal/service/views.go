@@ -212,3 +212,11 @@ func MilestoneStatus(tasks []domain.Task) string {
 	}
 	return MilestoneReady
 }
+
+// DeleteView reports a delete: the target and the rows removed per kind
+// (initiatives, milestones, tasks, notes, documents); zero counts are omitted.
+type DeleteView struct {
+	ID      string         `json:"id"`
+	Kind    string         `json:"kind"`
+	Deleted map[string]int `json:"deleted"`
+}

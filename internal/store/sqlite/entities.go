@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -72,6 +73,10 @@ func (s *Store) UpdateInitiative(ctx context.Context, i *domain.Initiative) erro
 	}
 	i.UpdatedAt = now
 	return nil
+}
+
+func (s *Store) DeleteInitiative(ctx context.Context, id int64) error {
+	return s.deleteByID(ctx, "initiatives", domain.KindInitiative, id)
 }
 
 // ---- milestones ----
@@ -164,6 +169,10 @@ func (s *Store) SetMilestoneGit(ctx context.Context, id int64, g domain.Mileston
 		return mapErr(err, "recording git state of "+what)
 	}
 	return checkAffected(res, what)
+}
+
+func (s *Store) DeleteMilestone(ctx context.Context, id int64) error {
+	return s.deleteByID(ctx, "milestones", domain.KindMilestone, id)
 }
 
 // ---- tasks ----
@@ -414,4 +423,64 @@ func collect[T any](rows *sql.Rows, scan func(scanner) (T, error)) ([]T, error) 
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) DeleteTask(ctx context.Context, id int64) error {
+	return s.deleteByID(ctx, "tasks", domain.KindTask, id)
+}
+
+func (s *Store) DeleteDocument(ctx context.Context, id int64) error {
+	return s.deleteByID(ctx, "documents", domain.KindDocument, id)
+}
+
+func (s *Store) deleteByID(ctx context.Context, table string, kind domain.Kind, id int64) error {
+	res, err := s.q.ExecContext(ctx, `DELETE FROM `+table+` WHERE id = ?`, id)
+	what := domain.FormatID(kind, id)
+	if err != nil {
+		return mapErr(err, "deleting "+what)
+	}
+	return checkAffected(res, what)
+}
+
+func (s *Store) CountCascade(ctx context.Context, kind domain.Kind, id int64) (store.Cascade, error) {
+	what := domain.FormatID(kind, id)
+	var (
+		c     store.Cascade
+		query string
+		dest  []any
+	)
+	switch kind {
+	case domain.KindInitiative:
+		c.Initiatives = 1
+		query = `SELECT
+			(SELECT COUNT(*) FROM milestones WHERE initiative_id = ?1),
+			(SELECT COUNT(*) FROM tasks t JOIN milestones m ON m.id = t.milestone_id WHERE m.initiative_id = ?1),
+			(SELECT COUNT(*) FROM task_notes n JOIN tasks t ON t.id = n.task_id
+				JOIN milestones m ON m.id = t.milestone_id WHERE m.initiative_id = ?1),
+			(SELECT COUNT(*) FROM documents WHERE initiative_id = ?1)
+			WHERE EXISTS (SELECT 1 FROM initiatives WHERE id = ?1)`
+		dest = []any{&c.Milestones, &c.Tasks, &c.Notes, &c.Documents}
+	case domain.KindMilestone:
+		c.Milestones = 1
+		query = `SELECT
+			(SELECT COUNT(*) FROM tasks WHERE milestone_id = ?1),
+			(SELECT COUNT(*) FROM task_notes n JOIN tasks t ON t.id = n.task_id WHERE t.milestone_id = ?1)
+			WHERE EXISTS (SELECT 1 FROM milestones WHERE id = ?1)`
+		dest = []any{&c.Tasks, &c.Notes}
+	case domain.KindTask:
+		c.Tasks = 1
+		query = `SELECT (SELECT COUNT(*) FROM task_notes WHERE task_id = ?1)
+			WHERE EXISTS (SELECT 1 FROM tasks WHERE id = ?1)`
+		dest = []any{&c.Notes}
+	default:
+		return c, fmt.Errorf("counting cascade of %s: unsupported kind", kind)
+	}
+	err := s.q.QueryRowContext(ctx, query, id).Scan(dest...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return store.Cascade{}, fmt.Errorf("%s: %w", what, store.ErrNotFound)
+	}
+	if err != nil {
+		return store.Cascade{}, mapErr(err, "counting what deleting "+what+" removes")
+	}
+	return c, nil
 }

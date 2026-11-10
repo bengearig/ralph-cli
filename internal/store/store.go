@@ -60,6 +60,15 @@ type KeywordHit struct {
 	Score float64
 }
 
+// Cascade counts the rows a delete removes, the target included.
+type Cascade struct {
+	Initiatives int
+	Milestones  int
+	Tasks       int
+	Notes       int
+	Documents   int
+}
+
 // Store persists entities and the search index. Implementations must be safe
 // for concurrent use by multiple processes against the same database.
 type Store interface {
@@ -67,6 +76,8 @@ type Store interface {
 	GetInitiative(ctx context.Context, id int64) (domain.Initiative, error)
 	ListInitiatives(ctx context.Context) ([]domain.Initiative, error)
 	UpdateInitiative(ctx context.Context, i *domain.Initiative) error
+	// DeleteInitiative removes an initiative with its milestones, tasks, notes, and documents.
+	DeleteInitiative(ctx context.Context, id int64) error
 
 	CreateMilestone(ctx context.Context, m *domain.Milestone) error
 	GetMilestone(ctx context.Context, id int64) (domain.Milestone, error)
@@ -76,6 +87,8 @@ type Store interface {
 	UpdateMilestone(ctx context.Context, m *domain.Milestone) error
 	// SetMilestoneGit replaces a milestone's git record without changing updated_at.
 	SetMilestoneGit(ctx context.Context, id int64, g domain.MilestoneGit) error
+	// DeleteMilestone removes a milestone with its tasks and their notes.
+	DeleteMilestone(ctx context.Context, id int64) error
 
 	CreateTask(ctx context.Context, t *domain.Task) error
 	GetTask(ctx context.Context, id int64) (domain.Task, error)
@@ -87,11 +100,18 @@ type Store interface {
 	SetTaskCommit(ctx context.Context, id int64, hash string) error
 	AddTaskNote(ctx context.Context, n *domain.TaskNote) error
 	ListTaskNotes(ctx context.Context, taskID int64) ([]domain.TaskNote, error)
+	// DeleteTask removes a task with its notes.
+	DeleteTask(ctx context.Context, id int64) error
 
 	CreateDocument(ctx context.Context, d *domain.Document) error
 	GetDocument(ctx context.Context, id int64) (domain.Document, error)
 	ListDocuments(ctx context.Context, f DocumentFilter) ([]domain.Document, error)
 	UpdateDocument(ctx context.Context, d *domain.Document) error
+	DeleteDocument(ctx context.Context, id int64) error
+
+	// CountCascade counts what deleting the initiative, milestone, or task
+	// with the given ID would remove. It returns ErrNotFound for a missing ID.
+	CountCascade(ctx context.Context, kind domain.Kind, id int64) (Cascade, error)
 
 	// ReplaceChunks swaps an owner's chunks for a new set, keeping the
 	// embedding of any chunk whose content hash and model are unchanged.

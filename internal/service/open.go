@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 
 	"github.com/bengearig/ralph/internal/config"
 	"github.com/bengearig/ralph/internal/embed"
 	"github.com/bengearig/ralph/internal/embed/ollama"
+	"github.com/bengearig/ralph/internal/project"
 	"github.com/bengearig/ralph/internal/search"
 	"github.com/bengearig/ralph/internal/store/sqlite"
 )
@@ -48,6 +50,7 @@ func Open(ctx context.Context, cfg *config.Config, root string, log *slog.Logger
 		Timeout:  cfg.Embeddings.Timeout,
 		Log:      log,
 	}
-	svc := New(st, ix, Options{StallThreshold: cfg.Loop.StallThreshold, SearchLimit: cfg.Search.Limit, Log: log})
+	svc := New(st, ix, Options{StallThreshold: cfg.Loop.StallThreshold, SearchLimit: cfg.Search.Limit, Log: log,
+		LoopLockPath: filepath.Join(root, project.DirName, "loop.lock")})
 	return svc, st.Close, nil
 }

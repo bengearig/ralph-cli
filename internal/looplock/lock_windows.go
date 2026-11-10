@@ -1,6 +1,6 @@
 //go:build windows
 
-package loop
+package looplock
 
 import (
 	"errors"

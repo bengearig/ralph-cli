@@ -16,6 +16,7 @@ import (
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/errs"
 	"github.com/bengearig/ralph/internal/harness"
+	"github.com/bengearig/ralph/internal/looplock"
 	"github.com/bengearig/ralph/internal/project"
 	"github.com/bengearig/ralph/internal/search"
 	"github.com/bengearig/ralph/internal/service"
@@ -357,16 +358,16 @@ func TestRunToolsUnavailableCountsNoFailure(t *testing.T) {
 
 func TestRunLockContention(t *testing.T) {
 	e := newRunEnv(t, "a")
-	lock, err := acquireLock(filepath.Join(e.root, ".ralph", "loop.lock"), "milestone M-9")
+	lock, err := looplock.Acquire(filepath.Join(e.root, ".ralph", "loop.lock"), "milestone M-9")
 	if err != nil {
 		t.Fatal(err)
 	}
 	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
 	_, err = e.run(t, context.Background(), h)
-	if !errors.Is(err, ErrLoopRunning) || !strings.Contains(err.Error(), "milestone M-9") {
+	if !errors.Is(err, looplock.ErrLoopRunning) || !strings.Contains(err.Error(), "milestone M-9") {
 		t.Fatalf("err = %v", err)
 	}
-	if err := lock.release(); err != nil {
+	if err := lock.Release(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.run(t, context.Background(), h); err != nil {
@@ -512,23 +513,6 @@ func TestSessionReason(t *testing.T) {
 	if n := len([]rune(long)); n > 400 {
 		t.Errorf("reason too long: %d runes", n)
 	}
-}
-
-func TestLockReleasedForNextHolder(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "loop.lock")
-	a, err := acquireLock(p, "first")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := acquireLock(p, "second"); !errors.Is(err, ErrLoopRunning) || !strings.Contains(err.Error(), "first") {
-		t.Errorf("contention = %v", err)
-	}
-	a.release()
-	b, err := acquireLock(p, "second")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b.release()
 }
 
 func TestRunStashesUnfinishedWorkBeforeNextTask(t *testing.T) {

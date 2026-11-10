@@ -17,6 +17,7 @@ import (
 	"github.com/bengearig/ralph/internal/errs"
 	"github.com/bengearig/ralph/internal/git"
 	"github.com/bengearig/ralph/internal/harness"
+	"github.com/bengearig/ralph/internal/looplock"
 	"github.com/bengearig/ralph/internal/project"
 	"github.com/bengearig/ralph/internal/service"
 )
@@ -125,11 +126,11 @@ func (r Runner) Run(ctx context.Context, plan Plan) (Outcome, error) {
 	}
 
 	ralphDir := filepath.Join(r.Root, project.DirName)
-	lock, err := acquireLock(filepath.Join(ralphDir, "loop.lock"), "milestone "+plan.Milestone.ID)
+	lock, err := looplock.Acquire(filepath.Join(ralphDir, "loop.lock"), "milestone "+plan.Milestone.ID)
 	if err != nil {
 		return out, err
 	}
-	defer lock.release()
+	defer lock.Release()
 
 	repo, branch, err := r.prepareBranch(ctx, plan, milestoneID, f)
 	if branch != "" {
