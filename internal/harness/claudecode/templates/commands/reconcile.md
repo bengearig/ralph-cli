@@ -24,7 +24,8 @@ Milestone: $ARGUMENTS
      report rebuilds what it can, and `proposed_base` is the base that accepting would record.
    - `branch_missing`: the recorded branch does not exist locally. Say whether `origin/<branch>` exists
      (`remote_branch_exists`). Ask whether the branch was renamed, and if so, ask the user for its new name.
-   - `merged`: the branch is already merged into the base branch, so there is nothing to open a pull request for.
+   - `merged`: the branch is already merged into the base branch, so there is nothing to open a pull request for. The
+     branch may already be deleted (`branch_exists` is false), which is fine.
 
    Then go through each entry in `tasks` and say where that `DONE` task's work is now, by its `match`:
    - `present`: its recorded commit is still on the branch.

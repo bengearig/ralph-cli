@@ -470,13 +470,16 @@ The states are checked in this order, and the first that applies wins:
 
 | State | Condition | `ralph loop` resuming | `ralph pr create` |
 |---|---|---|---|
-| `branch_missing` | The branch doesn't exist locally. The report says whether `origin/<branch>` does. | refuse | refuse |
+| `branch_missing` | The branch doesn't exist locally and its recorded head is not merged. The report says whether `origin/<branch>` does. | refuse | refuse |
 | `unrecorded` | The milestone has no recorded head. [Backfill](#backfill) applies. | record on first use and proceed | refuse |
-| `merged` | The tip is not the recorded base (or the proposed base, when unrecorded) and is already contained in the base ref. A branch with no commits of its own is therefore not `merged`. | refuse | refuse |
+| `merged` | The milestone's head (the tip, or the recorded head when the branch was deleted) is not the recorded base (or the proposed base, when unrecorded) and is contained in the base ref. A branch with no commits of its own is therefore not `merged`. | refuse | refuse |
 | `unchanged` | The tip is the recorded head. | proceed | proceed |
 | `ahead` | The recorded head is an ancestor of the tip: commits were added on top. The report lists them. | warn, record the tip as head, proceed | refuse |
 | `behind` | The tip is an ancestor of the recorded head: recorded commits are no longer on the branch. The report lists them. | refuse | refuse |
 | `diverged` | Anything else: a rebase, amend, squash, or reset onto other work. A recorded head that no longer exists as an object also counts. | refuse | refuse |
+
+For a deleted branch, `merged` is checked before `branch_missing`: deleting a branch after merging it still reports
+`merged`, with `branch_exists` false and the summary ending ` (branch deleted)`.
 
 A refusal exits with code `3`, names the state, and says `run: ralph milestone reconcile <M-n>`.
 `ralph pr create --dry-run` never refuses: it prints a `drift:` line, and the task table when the branch has drifted.

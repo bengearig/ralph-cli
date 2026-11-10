@@ -278,7 +278,7 @@ When flags were given, an `applied:` list of what changed follows, then the repo
 result still needs a person, the error message ends with what to run next. `--json` prints
 `{"before": <report>, "after": <report or null>}`, with full hashes; `after` is `null` without flags. The report's
 fields are those of the drift check: `milestone`, `branch`, `base_ref`, `recorded`, `tip`, `state`,
-`remote_branch_exists`, `extra_commits`, `lost_commits`, `tasks`, `unattributed_commits`, and `proposed_base`.
+`branch_exists`, `remote_branch_exists`, `extra_commits`, `lost_commits`, `tasks`, `unattributed_commits`, and `proposed_base`.
 
 | Exit code | When |
 |---|---|
