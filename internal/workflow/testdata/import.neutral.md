@@ -1,0 +1,57 @@
+Import existing files into ralph's documents using the `ralph` MCP tools. After import, ralph's documents are the
+source of truth, not the imported files. Work one file at a time, so the import can be stopped and resumed. A file's
+content is read from its snapshot, never from disk.
+
+Paths to queue first:
+
+(none given)
+
+1. **Build the queue.** If paths were given above, call `import_queue` with them first. Then call `import_list` with
+   the statuses `deferred` and `pending`. Work the `deferred` records before the `pending` ones, so open
+   contradictions are settled before new work, and each group in path order. If the queue is empty, say so and stop.
+2. **For each file in turn, call `import_get`.** It returns the content snapshot and the links from earlier imports of
+   the same path.
+3. **Understand the content.** Search ralph (`search`, `doc_list`, `doc_get`, and plan reads such as `initiative_get`,
+   `milestone_get`, and `task_list`) for documents and plan items on the same subjects. Documents linked from earlier
+   imports of this path are strong candidates.
+4. **Decide what to do with each part of the file:**
+   - new knowledge with no home: a **new document**, choosing a fitting kind and scope, split by subject if needed;
+   - knowledge that extends an existing document: **merge** it into that document;
+   - a duplicate of what ralph already holds: nothing;
+   - noise: nothing.
+
+   If the whole file has nothing worth importing, call `import_resolve` with `skipped` and a one-line note giving the
+   reason, report it, and go to the next file.
+5. **Apply the additive changes directly.**
+   - Create new documents with `doc_create`.
+   - Merge into existing documents with `doc_update` in the **preserve-then-add** style: keep the existing structure
+     and wording, add the new information in the relevant sections using the source's wording where practical, and
+     mention the source path. `doc_update` replaces the whole body, so carry the existing text over intact.
+6. **Find contradictions and discrepancies.** Compare the file against documents and the plan:
+   - a design that conflicts with a document;
+   - a requirement that conflicts with an initiative's brief or decisions;
+   - work that invalidates `PROPOSED` or `TODO` tasks.
+
+   If there are none, go to step 8. Otherwise get approval for **this file** before changing anything that conflicts.
+   Present each item with the conflicting statements, quoted with their sources (the file path, and `D-n`, `T-n` or
+   `I-n`), the proposed resolution, and the exact documents to change and tasks to kick back.
+   - Get approval in the first of these ways that the harness supports: through its plan or approval mode, presenting the items as the plan (if the user rejects it with feedback, revise and present it again); otherwise through its structured question tool, showing the items and asking for an explicit yes or no; otherwise by presenting the items in a message and waiting for the user to explicitly confirm. In every case, apply nothing until it is approved. If the user declines, apply nothing that conflicts and treat the items as
+     open.
+7. **After approval, apply the resolutions.**
+   - Update the affected documents in the preserve-then-add style, rewriting only what the resolution changes.
+   - Create one `decision` document per resolved contradiction: what conflicted, what was chosen, and why.
+   - Move each affected `TODO` task back to `PROPOSED` with a `KICKBACK` note citing the decision. Add a `NOTE` to each
+     affected `PROPOSED` task.
+   - Never change `IN_PROGRESS`, `DONE` or `CANCELLED` tasks. Mention any conflict with them in the decision.
+8. **Resolve the record** with `import_resolve`:
+   - everything settled: `done`, linking every document created (`created`), merged or updated (`updated`), and every
+     decision document (`decision`);
+   - contradictions left open (declined or deferred): `deferred`, with a note listing each open item, and links for
+     the changes that were applied.
+9. **Report this file's outcome** briefly, then continue with the next file.
+
+When the queue is done, summarise every file's outcome: the documents created, updated and decided, the tasks kicked
+back, the duplicates you noticed, and any deferred records.
+
+Rules: no deletes. Mention duplicates found in ralph to the user instead of deleting them. Deleting is only for
+mistakes, and only with the user's agreement. Never edit the source files on disk.

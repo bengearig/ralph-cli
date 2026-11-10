@@ -714,3 +714,32 @@ func TestGetPromptRendersNeutralWorkflow(t *testing.T) {
 		t.Error("unknown prompt should error")
 	}
 }
+
+func TestImportPromptAndToolPointers(t *testing.T) {
+	cs := connect(t)
+	ctx := context.Background()
+	res, err := cs.GetPrompt(ctx, &mcp.GetPromptParams{Name: "import", Arguments: map[string]string{"paths": "docs"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Messages) != 1 || !strings.Contains(res.Messages[0].Content.(*mcp.TextContent).Text, "docs") {
+		t.Errorf("import prompt does not contain its argument: %+v", res.Messages)
+	}
+	tools, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, tl := range tools.Tools {
+		switch tl.Name {
+		case "import_queue", "import_list", "import_get", "import_resolve":
+			seen++
+			if !strings.Contains(tl.Description, "import MCP prompt") {
+				t.Errorf("%s description does not point at the import prompt", tl.Name)
+			}
+		}
+	}
+	if seen != 4 {
+		t.Errorf("saw %d import tools, want 4", seen)
+	}
+}

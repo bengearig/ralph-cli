@@ -37,7 +37,7 @@ func TestRenderCommandMatchesGoldens(t *testing.T) {
 
 func TestListSortedWithMetadata(t *testing.T) {
 	want := map[string]string{
-		"articulate": "scope", "receive": "instructions", "reconcile": "milestone",
+		"articulate": "scope", "import": "paths", "receive": "instructions", "reconcile": "milestone",
 		"search": "query", "status": "initiative",
 	}
 	var names []string
@@ -136,7 +136,7 @@ func TestRenderErrors(t *testing.T) {
 var update = flag.Bool("update", false, "rewrite testdata/*.neutral.md snapshots")
 
 func TestNeutralApprovalWording(t *testing.T) {
-	for _, name := range []string{"receive", "reconcile"} {
+	for _, name := range []string{"receive", "reconcile", "import"} {
 		out, err := Render(name, Data{Target: Neutral})
 		if err != nil {
 			t.Fatal(err)
@@ -168,6 +168,35 @@ func TestNeutralSnapshots(t *testing.T) {
 		}
 		if got != string(want) {
 			t.Errorf("%s: neutral rendering differs from %s (run go test ./internal/workflow -update)", w.Name, path)
+		}
+	}
+}
+
+func TestImportWorkflowContent(t *testing.T) {
+	w := slices.IndexFunc(List(), func(w Workflow) bool { return w.Name == "import" })
+	if w < 0 {
+		t.Fatal("import workflow missing")
+	}
+	got := List()[w]
+	if got.Description != "RALPH import — integrate queued files into ralph's documents, resolving contradictions with you" ||
+		got.Argument != "paths" ||
+		got.ArgumentHint != `"[files or directories to queue first; empty works the existing queue]"` ||
+		got.ArgumentDescription != "Optional files or directories to queue before working the queue." {
+		t.Errorf("header = %+v", got)
+	}
+	cmd, err := RenderCommand("import")
+	if err != nil {
+		t.Fatal(err)
+	}
+	neutral, err := Render("import", Data{Target: Neutral})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, out := range map[string]string{"claude_code": string(cmd), "neutral": neutral} {
+		for _, want := range []string{"import_queue", "import_list", "import_get", "import_resolve", "deferred", "preserve", "decision", "KICKBACK", "no deletes"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s rendering lacks %q", name, want)
+			}
 		}
 	}
 }

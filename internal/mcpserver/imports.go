@@ -16,7 +16,8 @@ import (
 const importWorkflow = "Import workflow: import_queue the files, then for each pending or deferred record in import_list " +
 	"call import_get, integrate its content into ralph's documents (create or update them with doc_create and doc_update), " +
 	"and finish with import_resolve, linking every document created or updated. " +
-	"After import, ralph's documents are the source of truth, not the imported files. "
+	"After import, ralph's documents are the source of truth, not the imported files. " +
+	"For a thorough import, follow the import MCP prompt (/ralph:import in Claude Code). "
 
 type importQueueIn struct {
 	Paths        []string `json:"paths" jsonschema:"project-relative files or directories to queue"`
