@@ -73,9 +73,9 @@ func TestCreateCardChain(t *testing.T) {
 	}
 	want := []taskmanager.CardRequest{
 		{Kind: domain.KindInitiative, ID: i.ID, Title: "Init", Description: "the brief"},
-		{Kind: domain.KindMilestone, ID: m.ID, Title: "Mile", Description: "mdesc", ParentKey: "FAKE-1"},
-		{Kind: domain.KindTask, ID: withAC.ID, Title: "Task", Description: "tdesc\n\n## Acceptance criteria\n\ndo it", ParentKey: "FAKE-2"},
-		{Kind: domain.KindTask, ID: noAC.ID, Title: "Bare", Description: "only", ParentKey: "FAKE-2"},
+		{Kind: domain.KindMilestone, ID: m.ID, Title: "Mile", Description: "mdesc", ParentKey: "FAKE-1", Status: MilestoneEmpty},
+		{Kind: domain.KindTask, ID: withAC.ID, Title: "Task", Description: "tdesc\n\n## Acceptance criteria\n\ndo it", ParentKey: "FAKE-2", Status: "PROPOSED"},
+		{Kind: domain.KindTask, ID: noAC.ID, Title: "Bare", Description: "only", ParentKey: "FAKE-2", Status: "PROPOSED"},
 	}
 	for n, w := range want {
 		if calls[n].Method != "Create" || calls[n].Request != w {

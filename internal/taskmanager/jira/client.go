@@ -149,6 +149,65 @@ func (c *Client) UpdateIssue(ctx context.Context, key string, f IssueFields) err
 	return err
 }
 
+// TransitionIssue moves a card to the status named statusName, choosing the
+// workflow transition that leads to it. It does nothing when the card is
+// already there.
+func (c *Client) TransitionIssue(ctx context.Context, key, statusName string) error {
+	path := issuePath + "/" + url.PathEscape(key)
+	data, err := c.do(ctx, http.MethodGet, path+"?fields=status", nil)
+	if err != nil {
+		return err
+	}
+	var issue struct {
+		Fields struct {
+			Status struct {
+				Name string `json:"name"`
+			} `json:"status"`
+		} `json:"fields"`
+	}
+	if err := json.Unmarshal(data, &issue); err != nil {
+		return fmt.Errorf("jira: GET %s: response is not valid JSON: %w", path, err)
+	}
+	if strings.EqualFold(issue.Fields.Status.Name, statusName) {
+		return nil
+	}
+
+	tpath := path + "/transitions"
+	data, err = c.do(ctx, http.MethodGet, tpath, nil)
+	if err != nil {
+		return err
+	}
+	var list struct {
+		Transitions []struct {
+			ID string `json:"id"`
+			To struct {
+				Name string `json:"name"`
+			} `json:"to"`
+		} `json:"transitions"`
+	}
+	if err := json.Unmarshal(data, &list); err != nil {
+		return fmt.Errorf("jira: GET %s: response is not valid JSON: %w", tpath, err)
+	}
+	reachable := make([]string, 0, len(list.Transitions))
+	for _, t := range list.Transitions {
+		if strings.EqualFold(t.To.Name, statusName) {
+			body, err := json.Marshal(map[string]any{"transition": map[string]string{"id": t.ID}})
+			if err != nil {
+				return fmt.Errorf("jira: encode transition request: %w", err)
+			}
+			_, err = c.do(ctx, http.MethodPost, tpath, body)
+			return err
+		}
+		reachable = append(reachable, t.To.Name)
+	}
+	sort.Strings(reachable)
+	names := "none"
+	if len(reachable) > 0 {
+		names = strings.Join(reachable, ", ")
+	}
+	return fmt.Errorf("jira: %s: no transition to status %q; reachable statuses: %s", key, statusName, names)
+}
+
 func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]byte, error) {
 	if c.timeout > 0 {
 		var cancel context.CancelFunc

@@ -125,12 +125,18 @@ func buildCardRequest(ctx context.Context, st store.Store, kind domain.Kind, id 
 			return req, err
 		}
 		req.Title, req.Description = m.Title, m.Description
+		tasks, err := st.ListTasks(ctx, store.TaskFilter{MilestoneID: id})
+		if err != nil {
+			return req, err
+		}
+		req.Status = MilestoneStatus(tasks)
 	case domain.KindTask:
 		t, err := st.GetTask(ctx, id)
 		if err != nil {
 			return req, err
 		}
 		req.Title, req.Description = t.Title, t.Description
+		req.Status = string(t.Status)
 		if t.AcceptanceCriteria != "" {
 			req.Description += "\n\n## Acceptance criteria\n\n" + t.AcceptanceCriteria
 		}

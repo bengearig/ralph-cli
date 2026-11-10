@@ -124,3 +124,12 @@ task_manager:
     # Name of the status a card moves to when its resource is cancelled or
     # deleted. Empty leaves the card alone.
     canceled_status: ""
+    # Maps a ralph status (task or milestone) to the name of the Jira status
+    # its card moves to. A blank value means do not move the card; a status
+    # that is not listed leaves the card alone. CANCELLED and deleted
+    # resources use canceled_status, not this map. Entries in other config
+    # files merge with these.
+    status_map:
+      TODO: To Do
+      IN_PROGRESS: In Progress
+      DONE: Done

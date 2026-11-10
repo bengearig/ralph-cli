@@ -306,3 +306,118 @@ func TestBaseURLTrailingSlash(t *testing.T) {
 		t.Errorf("paths = %v", paths)
 	}
 }
+
+type transitionServer struct {
+	*httptest.Server
+	reqs []string
+	post string
+}
+
+func newTransitionServer(t *testing.T, current string, transitions string, status int) *transitionServer {
+	t.Helper()
+	ts := &transitionServer{}
+	ts.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ts.reqs = append(ts.reqs, r.Method+" "+r.URL.RequestURI())
+		if status != 0 {
+			w.WriteHeader(status)
+			io.WriteString(w, `{"errorMessages":["nope"]}`)
+			return
+		}
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/rest/api/3/issue/PROJ-1":
+			io.WriteString(w, `{"fields":{"status":{"name":"`+current+`"}}}`)
+		case r.Method == "GET" && r.URL.Path == "/rest/api/3/issue/PROJ-1/transitions":
+			io.WriteString(w, transitions)
+		case r.Method == "POST" && r.URL.Path == "/rest/api/3/issue/PROJ-1/transitions":
+			b, _ := io.ReadAll(r.Body)
+			ts.post = string(b)
+			w.WriteHeader(204)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL)
+			w.WriteHeader(500)
+		}
+	}))
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+const sampleTransitions = `{"transitions":[{"id":"21","to":{"name":"In Progress"}},{"id":"31","to":{"name":"Done"}}]}`
+
+func TestTransitionIssueAlreadyThere(t *testing.T) {
+	ts := newTransitionServer(t, "DONE", sampleTransitions, 0)
+	c := newTestClient(t, ts.URL, time.Second)
+	if err := c.TransitionIssue(context.Background(), "PROJ-1", "Done"); err != nil {
+		t.Fatal(err)
+	}
+	if len(ts.reqs) != 1 || ts.reqs[0] != "GET /rest/api/3/issue/PROJ-1?fields=status" {
+		t.Errorf("requests = %v", ts.reqs)
+	}
+}
+
+func TestTransitionIssueTransitions(t *testing.T) {
+	ts := newTransitionServer(t, "To Do", sampleTransitions, 0)
+	c := newTestClient(t, ts.URL, time.Second)
+	if err := c.TransitionIssue(context.Background(), "PROJ-1", "done"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"GET /rest/api/3/issue/PROJ-1?fields=status",
+		"GET /rest/api/3/issue/PROJ-1/transitions",
+		"POST /rest/api/3/issue/PROJ-1/transitions",
+	}
+	if strings.Join(ts.reqs, "|") != strings.Join(want, "|") {
+		t.Errorf("requests = %v", ts.reqs)
+	}
+	if ts.post != `{"transition":{"id":"31"}}` {
+		t.Errorf("post body = %s", ts.post)
+	}
+}
+
+func TestTransitionIssueNoMatch(t *testing.T) {
+	ts := newTransitionServer(t, "To Do", `{"transitions":[{"id":"21","to":{"name":"In Progress"}},{"id":"11","to":{"name":"Blocked"}}]}`, 0)
+	c := newTestClient(t, ts.URL, time.Second)
+	err := c.TransitionIssue(context.Background(), "PROJ-1", "Done")
+	if err == nil || !strings.Contains(err.Error(), `no transition to status "Done"`) ||
+		!strings.Contains(err.Error(), "reachable statuses: Blocked, In Progress") {
+		t.Errorf("err = %v", err)
+	}
+	if len(ts.reqs) != 2 {
+		t.Errorf("requests = %v", ts.reqs)
+	}
+
+	ts = newTransitionServer(t, "To Do", `{"transitions":[]}`, 0)
+	c = newTestClient(t, ts.URL, time.Second)
+	err = c.TransitionIssue(context.Background(), "PROJ-1", "Done")
+	if err == nil || !strings.HasSuffix(err.Error(), "reachable statuses: none") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestTransitionIssueAPIErrorNoRetry(t *testing.T) {
+	ts := newTransitionServer(t, "", "", 401)
+	c := newTestClient(t, ts.URL, time.Second)
+	err := c.TransitionIssue(context.Background(), "PROJ-1", "Done")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 401 || !strings.Contains(err.Error(), "check the email and API token") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(ts.reqs) != 1 {
+		t.Errorf("requests = %v", ts.reqs)
+	}
+
+	// 401 on a later call
+	var n int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		if n == 1 {
+			io.WriteString(w, `{"fields":{"status":{"name":"To Do"}}}`)
+			return
+		}
+		w.WriteHeader(401)
+	}))
+	defer srv.Close()
+	c = newTestClient(t, srv.URL, time.Second)
+	if err := c.TransitionIssue(context.Background(), "PROJ-1", "Done"); !errors.As(err, &apiErr) || n != 2 {
+		t.Errorf("err = %v after %d requests", err, n)
+	}
+}

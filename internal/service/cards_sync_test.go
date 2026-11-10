@@ -203,3 +203,25 @@ func TestSyncCardGuards(t *testing.T) {
 	}
 	e.svc.taskManager = tm
 }
+
+func TestBuildCardRequestStatus(t *testing.T) {
+	ctx := context.Background()
+	e, i, m, tk, _ := syncFixture(t)
+	st := e.svc.store
+	ir, err := buildCardRequest(ctx, st, domain.KindInitiative, iid(t, i.ID), "")
+	if err != nil || ir.Status != "" {
+		t.Errorf("initiative status = %q, %v", ir.Status, err)
+	}
+	tr, err := buildCardRequest(ctx, st, domain.KindTask, tid(t, tk.ID), "FAKE-2")
+	if err != nil || tr.Status != string(domain.StatusProposed) {
+		t.Errorf("task status = %q, %v", tr.Status, err)
+	}
+	mr, err := buildCardRequest(ctx, st, domain.KindMilestone, mid(t, m.ID), "FAKE-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mv, err := e.svc.GetMilestone(ctx, mid(t, m.ID))
+	if err != nil || mr.Status == "" || mr.Status != mv.Status {
+		t.Errorf("milestone status = %q, view %q, %v", mr.Status, mv.Status, err)
+	}
+}

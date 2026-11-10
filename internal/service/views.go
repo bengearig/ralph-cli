@@ -206,13 +206,13 @@ func documentView(d domain.Document, withBody, initiativeArchived bool) Document
 
 // Derived milestone statuses.
 const (
-	MilestoneEmpty        = "EMPTY"
-	MilestoneArticulating = "ARTICULATING"
-	MilestoneReady        = "READY"
-	MilestoneInProgress   = "IN_PROGRESS"
-	MilestoneBlocked      = "BLOCKED"
-	MilestoneDone         = "DONE"
-	MilestoneCancelled    = "CANCELLED"
+	MilestoneEmpty        = domain.MilestoneEmpty
+	MilestoneArticulating = domain.MilestoneArticulating
+	MilestoneReady        = domain.MilestoneReady
+	MilestoneInProgress   = domain.MilestoneInProgress
+	MilestoneBlocked      = domain.MilestoneBlocked
+	MilestoneDone         = domain.MilestoneDone
+	MilestoneCancelled    = domain.MilestoneCancelled
 )
 
 // MilestoneStatus derives a milestone's status from its tasks.

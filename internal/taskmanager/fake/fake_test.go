@@ -131,3 +131,45 @@ func TestConcurrent(t *testing.T) {
 		t.Errorf("calls = %d", len(p.Calls()))
 	}
 }
+
+func TestSetStatusRecordedInOrder(t *testing.T) {
+	p := New()
+	if _, err := p.Create(ctx, req("T-1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SetStatus(ctx, "FAKE-1", "IN_PROGRESS"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Update(ctx, "FAKE-1", req("T-1")); err != nil {
+		t.Fatal(err)
+	}
+	calls := p.Calls()
+	if len(calls) != 3 || calls[0].Method != "Create" || calls[1].Method != "SetStatus" || calls[2].Method != "Update" {
+		t.Fatalf("calls = %+v", calls)
+	}
+	if calls[1].Key != "FAKE-1" || calls[1].Request.Status != "IN_PROGRESS" {
+		t.Errorf("SetStatus call = %+v", calls[1])
+	}
+}
+
+func TestSetStatusFailureInjection(t *testing.T) {
+	p := New()
+	boom := errors.New("boom")
+	p.SetError(boom)
+	if err := p.SetStatus(ctx, "K-1", "DONE"); err != boom {
+		t.Errorf("err = %v", err)
+	}
+	p.SetError(nil)
+	p.SetHook(func(n int, method string, _ taskmanager.CardRequest) error {
+		if method == "SetStatus" && n == 2 {
+			return boom
+		}
+		return nil
+	})
+	if err := p.SetStatus(ctx, "K-1", "DONE"); err != boom {
+		t.Errorf("hook err = %v", err)
+	}
+	if len(p.Calls()) != 0 {
+		t.Errorf("failed calls recorded: %+v", p.Calls())
+	}
+}

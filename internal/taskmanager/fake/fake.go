@@ -9,7 +9,8 @@ import (
 	"github.com/bengearig/ralph/internal/taskmanager"
 )
 
-// Call is a recorded successful Create or Update.
+// Call is a recorded successful Create, Update, or SetStatus. SetStatus
+// records the status in Request.Status.
 type Call struct {
 	Method  string
 	Key     string
@@ -47,15 +48,15 @@ func (p *Provider) SetValidateError(err error) {
 	p.validateErr = err
 }
 
-// SetError makes every Create and Update return err; nil clears it.
+// SetError makes every Create, Update, and SetStatus return err; nil clears it.
 func (p *Provider) SetError(err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.err = err
 }
 
-// SetHook installs a per-call check run before each Create and Update. n is
-// the 1-based count of Create and Update calls so far, including this one; a
+// SetHook installs a per-call check run before each Create, Update, and
+// SetStatus. n is the 1-based count of those calls so far, including this one; a
 // non-nil return fails the call.
 func (p *Provider) SetHook(h func(n int, method string, req taskmanager.CardRequest) error) {
 	p.mu.Lock()
@@ -89,6 +90,16 @@ func (p *Provider) Update(_ context.Context, key string, req taskmanager.CardReq
 		return err
 	}
 	p.calls = append(p.calls, Call{Method: "Update", Key: key, Request: req})
+	return nil
+}
+
+func (p *Provider) SetStatus(_ context.Context, key, status string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.check("SetStatus", taskmanager.CardRequest{Status: status}); err != nil {
+		return err
+	}
+	p.calls = append(p.calls, Call{Method: "SetStatus", Key: key, Request: taskmanager.CardRequest{Status: status}})
 	return nil
 }
 

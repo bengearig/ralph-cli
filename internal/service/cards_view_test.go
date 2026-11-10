@@ -57,10 +57,12 @@ func TestViewsShowCardAndDerivedPending(t *testing.T) {
 	}
 	gi, _ := e.svc.GetInitiative(ctx, iid(t, i.ID))
 	gm, _ := e.svc.GetMilestone(ctx, mid(t, m.ID))
-	if gi.Card == nil || gi.Card.Key != "FAKE-1" || gm.Card == nil || gm.Card.Key != "FAKE-2" || gi.Card.Pending != "" || gm.Card.Pending != "" {
+	if gi.Card == nil || gi.Card.Key != "FAKE-1" || gm.Card == nil || gm.Card.Key != "FAKE-2" || gi.Card.Pending != "" || gm.Card.Pending != "update" {
 		t.Fatalf("initiative card %+v, milestone card %+v", gi.Card, gm.Card)
 	}
 
+	// The milestone card was created while the milestone was empty; adding a
+	// task changed its computed status.
 	title := "Renamed"
 	e.svc.taskManager = nil
 	if _, err := e.svc.UpdateTask(ctx, tid(t, tk.ID), TaskPatch{Title: &title}); err != nil {

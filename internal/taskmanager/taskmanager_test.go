@@ -17,6 +17,7 @@ func (stub) Name() string                                      { return "stub" }
 func (stub) Validate() error                                   { return nil }
 func (stub) Create(context.Context, CardRequest) (Card, error) { return Card{}, nil }
 func (stub) Update(context.Context, string, CardRequest) error { return nil }
+func (stub) SetStatus(context.Context, string, string) error   { return nil }
 
 func cfgFor(name string) *config.Config {
 	c := &config.Config{}
@@ -46,6 +47,7 @@ func TestHash(t *testing.T) {
 		"title":       {Kind: domain.KindTask, ID: "T-1", Title: "x", Description: "bc", ParentKey: "P-1"},
 		"description": {Kind: domain.KindTask, ID: "T-1", Title: "a", Description: "x", ParentKey: "P-1"},
 		"parent":      {Kind: domain.KindTask, ID: "T-1", Title: "a", Description: "bc", ParentKey: "P-2"},
+		"status":      {Kind: domain.KindTask, ID: "T-1", Title: "a", Description: "bc", ParentKey: "P-1", Status: "TODO"},
 		"boundary":    {Kind: domain.KindTask, ID: "T-1", Title: "ab", Description: "c", ParentKey: "P-1"},
 	}
 	for name, v := range variants {

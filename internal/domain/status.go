@@ -21,6 +21,22 @@ const (
 	StatusDone      Status = "DONE"
 )
 
+// Derived milestone statuses; a milestone's status is computed from its tasks.
+const (
+	MilestoneEmpty        = "EMPTY"
+	MilestoneArticulating = "ARTICULATING"
+	MilestoneReady        = "READY"
+	MilestoneInProgress   = "IN_PROGRESS"
+	MilestoneBlocked      = "BLOCKED"
+	MilestoneDone         = "DONE"
+	MilestoneCancelled    = "CANCELLED"
+)
+
+// MilestoneStatuses returns every derived milestone status.
+func MilestoneStatuses() []string {
+	return []string{MilestoneEmpty, MilestoneArticulating, MilestoneReady, MilestoneInProgress, MilestoneBlocked, MilestoneDone, MilestoneCancelled}
+}
+
 // Statuses returns every status in lifecycle order.
 func Statuses() []Status {
 	return []Status{StatusProposed, StatusTodo, StatusInProgress, StatusBlocked, StatusCancelled, StatusDone}

@@ -30,13 +30,17 @@ type CardRequest struct {
 	Title       string
 	Description string
 	ParentKey   string
+	// Status is the ralph status of a task or milestone; empty for an initiative.
+	Status string
 }
 
 // Hash returns a deterministic SHA-256 hex digest of the request's content.
+// Adding Status changed every existing hash once, so existing cards show as
+// pending an update until next synced.
 func (r CardRequest) Hash() string {
 	b, _ := json.Marshal(struct {
-		Kind, ID, Title, Description, ParentKey string
-	}{string(r.Kind), r.ID, r.Title, r.Description, r.ParentKey})
+		Kind, ID, Title, Description, ParentKey, Status string
+	}{string(r.Kind), r.ID, r.Title, r.Description, r.ParentKey, r.Status})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
@@ -48,6 +52,9 @@ type Provider interface {
 	Validate() error
 	Create(ctx context.Context, req CardRequest) (Card, error)
 	Update(ctx context.Context, key string, req CardRequest) error
+	// SetStatus moves the card to the state matching a ralph status. It does
+	// nothing and succeeds when the provider has no mapping for status.
+	SetStatus(ctx context.Context, key, status string) error
 }
 
 // Factory builds a provider from configuration.

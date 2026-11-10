@@ -112,6 +112,25 @@ func (p *Provider) Update(ctx context.Context, key string, req taskmanager.CardR
 	return c.UpdateIssue(ctx, key, fields)
 }
 
+// SetStatus moves the card to the Jira status mapped to the ralph status; a
+// blank or missing mapping does nothing.
+func (p *Provider) SetStatus(ctx context.Context, key, status string) error {
+	var target string
+	if status == string(domain.StatusCancelled) {
+		target = p.cfg.CanceledStatus
+	} else {
+		target = p.cfg.StatusMap[status]
+	}
+	if strings.TrimSpace(target) == "" {
+		return nil
+	}
+	c, err := p.getClient()
+	if err != nil {
+		return err
+	}
+	return c.TransitionIssue(ctx, key, strings.TrimSpace(target))
+}
+
 func (p *Provider) getClient() (*Client, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
