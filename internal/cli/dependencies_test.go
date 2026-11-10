@@ -1,10 +1,17 @@
 package cli
 
 import (
+	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/bengearig/ralph/internal/config"
+	"github.com/bengearig/ralph/internal/domain"
+	"github.com/bengearig/ralph/internal/errs"
+	"github.com/bengearig/ralph/internal/pr"
 	"github.com/bengearig/ralph/internal/service"
 )
 
@@ -108,5 +115,107 @@ func TestMilestoneHelpMentionsDependsOn(t *testing.T) {
 				t.Errorf("%s --help lacks %s", c.cmd, w)
 			}
 		}
+	}
+}
+
+func TestLoopAndPRCreateEnforceDependencies(t *testing.T) {
+	h, git, commit := newGitTestEnv(t)
+	bin := filepath.Join(t.TempDir(), "claude")
+	script := "#!/bin/sh\ncat >/dev/null\n" +
+		"printf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"mcp_servers\":[{\"name\":\"ralph\",\"status\":\"connected\"}]}'\n" +
+		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"looked around\",\"num_turns\":2}'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RALPH_HARNESS__CLAUDE_CODE__BINARY", bin)
+	t.Setenv("RALPH_LOOP__STALL_THRESHOLD", "1")
+
+	h.ok("initiative", "create", "--title", "SSO")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Dep")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Looping", "--depends-on", "M-1")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Shipping", "--depends-on", "M-1")
+	finish := func(task string) {
+		h.ok("task", "status", task, "TODO")
+		h.ok("task", "status", task, "IN_PROGRESS")
+		h.ok("task", "status", task, "DONE", "--reason", "done")
+	}
+	h.ok("task", "create", "--milestone", "M-1", "--title", "Dep work", "--description", "d", "--criteria", "c")
+	h.ok("task", "create", "--milestone", "M-2", "--title", "Loop work", "--description", "d", "--criteria", "c")
+	h.ok("task", "status", "T-2", "TODO")
+	h.ok("task", "create", "--milestone", "M-3", "--title", "Ship work", "--description", "d", "--criteria", "c")
+	finish("T-1")
+	finish("T-3")
+
+	base := git("rev-parse", "HEAD")
+	cfg, err := config.Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Embeddings.Provider = config.EmbeddingsNone
+	svc, closeFn, err := service.Open(context.Background(), cfg, h.dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeFn()
+	for id, branch := range map[int64]string{1: "ralph/dep", 3: "ralph/shipping"} {
+		git("switch", "--quiet", "-c", branch)
+		head := commit(branch[6:]+".txt", branch+" work")
+		git("switch", "--quiet", "main")
+		if err := svc.RecordMilestoneGit(context.Background(), id, domain.MilestoneGit{Branch: branch, BaseCommit: base, HeadCommit: head}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake := &fakeProvider{}
+	newPRProvider = func(*config.Config) (pr.Provider, error) { return fake, nil }
+	t.Cleanup(func() { newPRProvider = pr.New })
+
+	want := "M-2 depends on M-1, which branch ralph/dep is not merged into main; ralph milestone merge M-1"
+	_, _, err = h.run("", "loop", "--milestone", "M-2")
+	if !errors.Is(err, errs.ErrNeedsHuman) || !strings.Contains(err.Error(), want) {
+		t.Fatalf("loop err = %v", err)
+	}
+	if git("branch", "--list", "ralph/looping") != "" {
+		t.Error("refused loop created the branch")
+	}
+	_, errOut, err := h.run("", "loop", "--milestone", "M-2", "--dry-run")
+	if err != nil || !strings.Contains(errOut, "warning: "+want) {
+		t.Errorf("dry run: err = %v, stderr = %q", err, errOut)
+	}
+	if git("branch", "--list", "ralph/looping") != "" {
+		t.Error("dry run created the branch")
+	}
+
+	_, _, err = h.run("", "pr", "create", "--milestone", "M-3")
+	wantPR := strings.Replace(want, "M-2", "M-3", 1)
+	if !errors.Is(err, errs.ErrNeedsHuman) || !strings.Contains(err.Error(), wantPR) || fake.created != 0 {
+		t.Fatalf("pr err = %v (created %d)", err, fake.created)
+	}
+	out, errOut, err := h.run("", "pr", "create", "--milestone", "M-3", "--dry-run")
+	if err != nil || !strings.Contains(errOut, "warning: "+wantPR) || !strings.Contains(out, "provider: fake") {
+		t.Errorf("pr dry run: err = %v, out = %q, stderr = %q", err, out, errOut)
+	}
+	var plan struct {
+		Warnings []string `json:"dependency_warnings"`
+	}
+	h.json(&plan, "pr", "create", "--milestone", "M-3", "--dry-run")
+	if len(plan.Warnings) != 1 || plan.Warnings[0] != wantPR {
+		t.Errorf("dependency_warnings = %v", plan.Warnings)
+	}
+	if out, _, err := h.run("", "pr", "create", "--milestone", "M-3", "--force"); err != nil || fake.created != 1 {
+		t.Errorf("pr --force: %q %v (created %d)", out, err, fake.created)
+	}
+
+	_, errOut, err = h.run("", "loop", "--milestone", "M-2", "--force")
+	if err == nil || strings.Contains(err.Error(), "depends on") || !strings.Contains(errOut, "creating ralph/looping from main") {
+		t.Errorf("loop --force: err = %v, stderr = %q", err, errOut)
+	}
+
+	git("switch", "--quiet", "main")
+	git("merge", "--quiet", "--ff-only", "ralph/dep")
+	if _, errOut, err = h.run("", "loop", "--milestone", "M-2", "--dry-run"); err != nil || strings.Contains(errOut, "depends on") {
+		t.Errorf("loop after merge: err = %v, stderr = %q", err, errOut)
+	}
+	if _, _, err := h.run("", "pr", "create", "--milestone", "M-3"); err != nil || fake.created != 2 {
+		t.Errorf("pr after merge: %v (created %d)", err, fake.created)
 	}
 }

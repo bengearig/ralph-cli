@@ -14,7 +14,7 @@ import (
 
 func (a *app) newLoopCommand() *cobra.Command {
 	var milestone string
-	var dryRun, showPrompt bool
+	var dryRun, showPrompt, force bool
 	cmd := &cobra.Command{
 		Use:   "loop",
 		Short: "Run the RALPH loop over a milestone's TODO tasks",
@@ -26,7 +26,10 @@ loop.max_iterations is reached.
 Exit codes: 0 when the milestone is done, 3 when tasks need a person
 (BLOCKED, PROPOSED, or the iteration limit), 1 on errors. An interrupted run
 leaves its task IN_PROGRESS; rerun to resume it. Progress goes to stderr and
-full transcripts to .ralph/runs/.`,
+full transcripts to .ralph/runs/.
+
+The loop refuses (exit code 3) while a milestone this one depends on is not
+merged; --force skips that check, and --dry-run reports it as warnings.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mID, err := parseIDArg(domain.KindMilestone, milestone)
@@ -45,7 +48,7 @@ full transcripts to .ralph/runs/.`,
 			if err != nil {
 				return err
 			}
-			plan, err := loop.Planner{Service: svc, Config: l.Config, Root: p.Root}.Plan(cmd.Context(), mID)
+			plan, err := loop.Planner{Service: svc, Config: l.Config, Root: p.Root, Force: force, WarnOnly: dryRun}.Plan(cmd.Context(), mID)
 			if err != nil {
 				return err
 			}
@@ -84,6 +87,7 @@ full transcripts to .ralph/runs/.`,
 	}
 	cmd.Flags().StringVar(&milestone, "milestone", "", "milestone ID, e.g. M-1 (required)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the plan without running anything")
+	cmd.Flags().BoolVar(&force, "force", false, "ignore unmerged milestone dependencies")
 	cmd.Flags().BoolVar(&showPrompt, "show-prompt", false, "with --dry-run, include the first iteration's prompt")
 	_ = cmd.MarkFlagRequired("milestone")
 	return cmd
