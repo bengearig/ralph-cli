@@ -285,3 +285,19 @@ func (r Repo) Stash(ctx context.Context, message string) (bool, error) {
 	}
 	return true, nil
 }
+
+// ListFiles lists tracked and untracked-but-not-ignored files under pathspec
+// (literal, relative to Dir), as Dir-relative slash-separated paths.
+func (r Repo) ListFiles(ctx context.Context, pathspec string) ([]string, error) {
+	out, err := r.runRaw(ctx, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", ":(literal)"+pathspec)
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, f := range strings.Split(out, "\x00") {
+		if f != "" {
+			files = append(files, f)
+		}
+	}
+	return files, nil
+}

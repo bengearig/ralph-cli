@@ -91,6 +91,19 @@ for the rules.
 | `ralph search <query...> [--kind initiative,milestone,task,document] [--initiative <id>] [--limit n] [--archived]` | Vector search with keyword fallback. The footer, or `mode` in JSON, says which ran. |
 | `ralph index [--rebuild]` | Embed stale chunks; with `--rebuild`, rechunk everything first. |
 
+## Import
+
+| Command | Purpose |
+|---|---|
+| `ralph import [--dir <path>]... [--file <path>]...` | Queue text files for import. At least one `--dir` or `--file` is required. |
+
+In a git work tree a directory contributes its tracked and untracked files, minus ignored ones; elsewhere it is
+walked, with a warning that ignore rules were not applied. `.git` and `.ralph` are never included. Files that are
+larger than [`import.max_file_bytes`](configuration.md#import), not UTF-8 text, symlinks, or outside the project are
+skipped with a reason, and skipped files do not change the exit status. Each queued file is reported as `new`,
+`changed` (its content differs from the queued record), `unchanged` (already imported, same content), or
+`already queued`. `--json` prints `{queued, skipped, warnings}`.
+
 ## Agent integration
 
 | Command | Purpose |
