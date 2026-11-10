@@ -19,7 +19,7 @@ flowchart LR
 | **Articulate** | Person and agent, interactive | Low-level planning. `/ralph:articulate` works through the unplanned tasks one at a time, asking about the details until each has a self-contained description and verifiable acceptance criteria, then promotes it from `PROPOSED` to `TODO`. Detailed design is recorded as *documents*. |
 | **Loop** | Agent, headless | `ralph loop --milestone M-n` starts a fresh harness session for each `TODO` task. Each session reads its context from the store, implements one task, verifies it, and records the outcome. ralph commits each finished task on the milestone's branch. |
 | **Pull request** | ralph | `ralph pr create --milestone M-n` opens one pull request per milestone on the configured host. *Planned; the dry run works today.* It first checks the branch for [drift](loop.md#drift-and-reconcile) from what the loop recorded, and refuses a drifted branch until it is reconciled with `ralph milestone reconcile` or, guided by an agent, `/ralph:reconcile`. |
-| **Human review** | People | Review, merge, and deploy happen outside ralph. Agents propose; people merge. |
+| **Human review** | People | Review and deploy happen outside ralph. Agents propose; people merge, on the hosting service or locally with [`ralph milestone merge`](cli.md#ralph-milestone-merge). |
 
 ## The pieces
 

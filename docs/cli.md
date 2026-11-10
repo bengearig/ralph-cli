@@ -206,6 +206,7 @@ the document is project-wide. The file's record is marked `done` with a `created
 | `ralph loop --milestone <id> --dry-run [--show-prompt]` | Print the loop plan: branch, harness and model, exact command, ordered tasks, policy, and optionally the first prompt. |
 | `ralph loop --milestone <id>` | Run the loop: one fresh harness session per task on the milestone's branch, committing each `DONE` task. The progress feed goes to stderr, transcripts to `.ralph/runs/`. See [the loop](loop.md). |
 | `ralph milestone reconcile <id> [--branch <name>] [--reopen <ids>] [--reason <text>] [--accept]` | Report how the milestone's branch differs from its record and resolve it. See [below](#ralph-milestone-reconcile). |
+| `ralph milestone merge <id> [--dry-run] [--delete-branch]` | Fast-forward the base branch to a finished milestone's branch. See [below](#ralph-milestone-merge). |
 | `ralph pr create --milestone <id> --dry-run` | Print the pull request that would be opened, the drift check's result, and any provider configuration problems. |
 | `ralph pr create --milestone <id>` | Open the pull request. *Not implemented yet (exit code 2).* |
 
@@ -265,6 +266,100 @@ fields are those of the drift check: `milestone`, `branch`, `base_ref`, `recorde
 | `1` | An error, including a flag that failed validation. |
 
 [Drift and reconcile](loop.md#drift-and-reconcile) explains the states and matchers, with worked examples.
+
+### `ralph milestone merge`
+
+```sh
+ralph milestone merge <id> [--dry-run] [--delete-branch]
+```
+
+Fast-forwards the base branch (`pr.base_branch`) to a finished milestone's branch. It is for a milestone whose pull
+request was not merged on the hosting service: the local merge you would otherwise do by hand. Merging stays a
+person's action, so there is no MCP tool for it.
+
+| Flag | Effect |
+|---|---|
+| `--dry-run` | Make every check, print what would happen, and change nothing. |
+| `--delete-branch` | After a successful merge, delete the milestone's branch with git's safe delete only (`git branch -d`). If git refuses, the branch is kept and a warning says so; the merge has already happened. |
+
+The checks run first, in this order, and change nothing. The first one that fails stops the command:
+
+1. The milestone's initiative is not archived and the milestone is `DONE`.
+2. No loop is running: merging switches branches, so a held `.ralph/loop.lock` stops it, naming the holder.
+3. The drift check is clean. A milestone that is already `merged` is reported and succeeds without changing anything.
+   Any other state refuses and says `run: ralph milestone reconcile <M-n>`.
+4. The working tree is clean. The refusal lists the first few uncommitted paths.
+5. The local base branch and the milestone's branch both exist.
+6. A fast-forward is possible: the base branch's tip is an ancestor of the branch's tip. Otherwise the base branch
+   has commits the branch lacks, and the message says to rebase the branch onto the base branch and merge again.
+
+Only then does it switch to the base branch and run `git merge --ff-only`. If that fails, it returns to where it
+started and reports the error. On success the **base branch stays checked out**, as after a merge by hand. It never
+creates a merge commit, never pushes or touches a remote, and never force-deletes a branch. It records nothing: a
+merged milestone is recognised by the drift check from the repository itself.
+
+```text
+$ ralph milestone merge M-1
+merged M-1 into main: 1c77c2cac6a3..60debf7e2275
+branch ralph/login kept
+```
+
+With `--dry-run` the first line starts `would merge`, the branch line says `would keep branch` or
+`would delete branch`, and a final `dry run: nothing changed` follows. With `--delete-branch` the branch line is
+`deleted branch <name>`. Running it again for a merged milestone prints `M-1 is already merged into main`, keeps the
+branch even with `--delete-branch`, and exits `0`.
+
+Refusals are errors on stderr and print nothing on stdout, with or without `--json`:
+
+```text
+$ ralph milestone merge M-1
+ralph: needs a human: main has commits that ralph/login lacks; rebase the branch onto main, then merge
+```
+
+The other refusals that need a person read `M-1 is <status>, not DONE; only a finished milestone can be merged`, the
+drift summary followed by `run: ralph milestone reconcile M-1`, and `the working tree has uncommitted changes
+(<paths>); commit or stash them first`.
+
+| Exit code | When |
+|---|---|
+| `0` | The milestone was merged (or, with `--dry-run`, could be), or it was already merged. |
+| `3` | A person must act: the milestone is not `DONE`, the branch has drifted, the working tree is dirty, or a fast-forward is not possible. |
+| `1` | Any other error: a loop is running, a local base branch or milestone branch is missing, the milestone does not exist, or git failed. |
+
+With `--json` it prints one object, with full hashes. `from` and `to` are the base branch's tip before and after the
+merge (empty for an already merged milestone), and `warnings` is a list, empty when there is nothing to say:
+
+```json
+{
+  "milestone": "M-1",
+  "branch": "ralph/login",
+  "base_branch": "main",
+  "from": "1c77c2cac6a3d5ce4df0be0b969b511ff5516f24",
+  "to": "60debf7e22758ae34182fa75ac7f74a94abf79bb",
+  "dry_run": true,
+  "already_merged": false,
+  "merged": false,
+  "branch_deleted": false,
+  "warnings": []
+}
+```
+
+That is the object for `--dry-run`; a real merge has `dry_run` false and `merged` true. A milestone that is already
+merged has `already_merged` true and empty `from` and `to`.
+
+The command replaces this, which has to be repeated with care for each milestone:
+
+```sh
+git switch main
+git merge --ff-only ralph/login
+git branch -d ralph/login   # optional
+```
+
+Merging by hand still works, and the drift check then reports the milestone as `merged`. The command adds the checks
+above, so that a milestone that is unfinished, drifted, or not fast-forwardable is stopped before git is touched.
+
+A milestone whose branch has been deleted is reported by the drift check as `branch_missing`, not `merged`, so
+`--delete-branch` leaves a milestone in that state; see [ADR 27](adr/0027-merge-milestones-locally-with-fast-forward-only.md).
 
 ## Example session
 

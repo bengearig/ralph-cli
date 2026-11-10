@@ -222,6 +222,27 @@ When it stops, the loop prints a one-line summary on stdout (`--json` prints the
 hashes), and the feed on stderr explains what needs attention. Unfinished changes from the last task are left in the
 working tree, and the feed says so.
 
+### Returning to the starting branch
+
+The loop switches to the milestone's branch to work. When a run ends, however it ends (done, needs a person, an
+error, or Ctrl-C), it switches back to the branch that was checked out when the run began, or to the starting commit
+when `HEAD` was detached, and prints one line on the feed:
+
+```text
+returned to main
+```
+
+It does not switch, and never changes the run's exit code, in these cases:
+
+| Situation | What happens |
+|---|---|
+| The run began on the milestone's own branch | Nothing to do; no line is printed. |
+| The working tree has uncommitted changes, such as the unfinished task's work | It stays where it is and prints `! left on <branch>: uncommitted changes remain (switch back to <start> yourself)`. |
+| The starting branch no longer exists | It detaches at the starting commit if that commit still exists; otherwise it stays where it is and prints `! could not return to <start>: it no longer exists`. |
+| The switch fails, or the branch cannot be read | It stays where it is and prints `! could not return to <start>: <reason>`. |
+
+[`ralph milestone merge`](cli.md#ralph-milestone-merge) is different: it leaves the base branch checked out.
+
 ### Requirements
 
 - **Approve the MCP server once.** Headless sessions use the project's `.mcp.json`. Claude Code requires you to
