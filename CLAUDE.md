@@ -12,7 +12,9 @@ request → **H**uman review. The plan lives in ralph's store, reached through t
   title and maybe a summary). `/ralph:articulate` works out each task's details with the user and promotes it.
 - **Tasks** (`T-n`) move `PROPOSED` → `TODO` → `IN_PROGRESS` → `DONE`. Only promote a task to `TODO` when its
   description and acceptance criteria let an agent with no other context implement and verify it.
-- Kick work back instead of guessing: `BLOCKED` (with a reason) when stuck, `PROPOSED` when it needs re-articulation.
+- Kick work back instead of guessing: `BLOCKED` (with a reason) when stuck, `PROPOSED` when it needs
+  re-articulation. Drop planned work with `CANCELLED`; delete only items created by mistake, and only with the user's
+  agreement.
 - Search the store (`search`) before writing new documents or tasks.
 - Archived initiatives and documents are hidden from lists, status, and search unless `include_archived` is set. An
   archived initiative, and everything under it, must be unarchived before it can be changed.

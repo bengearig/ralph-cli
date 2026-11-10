@@ -88,7 +88,7 @@ Use this when the arguments are an initiative ID, typically after a kickback fro
    above, and once the plan is approved, apply it:
    - new milestones with `milestone_create`, changed ones with `milestone_update`;
    - new unplanned tasks with `task_create`;
-   - drop a task, or a whole milestone's tasks, with `task_set_status` `CANCELLED` and a reason (nothing is deleted);
+   - drop a task, or a whole milestone's tasks, with `task_set_status` `CANCELLED` and a reason. Cancel by default: delete (`task_delete`, `milestone_delete`) only items created by mistake, such as duplicates, and only after asking the user, never with `force` unless they explicitly approve;
    - move `TODO` tasks whose scope changed back to `PROPOSED`, with a reason, so they are articulated again.
 4. Finish as in step 9 above.
 
