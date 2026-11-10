@@ -34,7 +34,9 @@ Logs go to stderr because stdout carries the protocol.`,
 				return err
 			}
 			srv := mcpserver.New(svc, version.Get().Version, a.logger(), mcpserver.Options{
-				ConfirmOutline: l.Config.Receive.ConfirmOutline,
+				ConfirmOutline:     l.Config.Receive.ConfirmOutline,
+				ProjectRoot:        p.Root,
+				ImportMaxFileBytes: l.Config.Import.MaxFileBytes,
 				DriftInput: func(ctx context.Context, milestoneID int64) (drift.Input, error) {
 					return loop.DriftInput(ctx, svc, l.Config, p.Root, milestoneID)
 				},

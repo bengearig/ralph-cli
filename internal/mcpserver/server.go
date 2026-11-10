@@ -43,6 +43,10 @@ type Options struct {
 	ConfirmOutline bool
 	// DriftInput builds the drift check input for a milestone. Nil disables milestone_drift and milestone_reconcile.
 	DriftInput func(ctx context.Context, milestoneID int64) (drift.Input, error)
+	// ProjectRoot is the directory import_queue resolves paths against.
+	ProjectRoot string
+	// ImportMaxFileBytes is import.max_file_bytes.
+	ImportMaxFileBytes int
 }
 
 // New builds an MCP server over svc.
@@ -51,7 +55,7 @@ func New(svc *service.Service, version string, log *slog.Logger, opts Options) *
 		Instructions: instructions,
 		Logger:       log,
 	})
-	t := &tools{svc: svc, confirmOutline: opts.ConfirmOutline, newDriftInput: opts.DriftInput}
+	t := &tools{svc: svc, confirmOutline: opts.ConfirmOutline, newDriftInput: opts.DriftInput, projectRoot: opts.ProjectRoot, importMaxBytes: opts.ImportMaxFileBytes}
 	t.register(s)
 	return s
 }
@@ -60,6 +64,8 @@ type tools struct {
 	svc            *service.Service
 	confirmOutline bool
 	newDriftInput  func(ctx context.Context, milestoneID int64) (drift.Input, error)
+	projectRoot    string
+	importMaxBytes int
 }
 
 // toolError rewrites service errors into guidance an agent can act on.
@@ -184,6 +190,8 @@ func (t *tools) register(s *mcp.Server) {
 		Description: "Reverse doc_archive. A document in an archived initiative stays hidden and read-only until the initiative is unarchived; the view's archived field says so."}, t.docUnarchive)
 	mcp.AddTool(s, &mcp.Tool{Name: "doc_delete", Annotations: destructive("Delete document"),
 		Description: deletePolicy + "Removes only that document and its search index entries; nothing else cascades and nothing blocks it."}, t.docDelete)
+
+	t.registerImports(s)
 
 	mcp.AddTool(s, &mcp.Tool{Name: "search", Annotations: readOnly("Search"),
 		Description: "Semantic search across initiatives, milestones, tasks, and documents. Falls back to keyword search when embeddings are unavailable; the result reports which mode ran. Archived items are excluded unless include_archived is set."}, t.search)
