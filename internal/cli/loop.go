@@ -20,7 +20,7 @@ var newLoopHarness = harness.ForStep
 
 func (a *app) newLoopCommand() *cobra.Command {
 	var milestone, initiative string
-	var dryRun, showPrompt, force bool
+	var dryRun, showPrompt, force, merge bool
 	cmd := &cobra.Command{
 		Use:   "loop (--milestone M-n | --initiative I-n)",
 		Short: "Run the RALPH loop over a milestone's TODO tasks",
@@ -41,10 +41,19 @@ per invocation, after checking that earlier milestones are merged or cancelled;
 that still needs ralph milestone merge.
 
 The loop refuses (exit code 3) while a milestone this one depends on is not
-merged; --force skips that check, and --dry-run reports it as warnings.`,
+merged; --force skips that check, and --dry-run reports it as warnings.
+
+With --merge (only with --initiative) the loop carries on through the
+initiative: it merges each finished milestone into the base branch
+(fast-forward only) and runs the next, until the initiative is complete or
+something needs a person. A milestone that is not DONE is never merged, and
+--force never overrides a merge refusal.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			opts := loopOptions{dryRun: dryRun, showPrompt: showPrompt, force: force}
+			opts := loopOptions{dryRun: dryRun, showPrompt: showPrompt, force: force, merge: merge}
+			if merge && initiative == "" {
+				return errors.New("--merge requires --initiative")
+			}
 			if initiative != "" {
 				return a.loopInitiative(cmd.Context(), initiative, opts)
 			}
@@ -60,6 +69,7 @@ merged; --force skips that check, and --dry-run reports it as warnings.`,
 	cmd.Flags().StringVar(&initiative, "initiative", "", "initiative ID, e.g. I-1: run its next ready milestone")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the plan without running anything")
 	cmd.Flags().BoolVar(&force, "force", false, "ignore unmerged milestone dependencies")
+	cmd.Flags().BoolVar(&merge, "merge", false, "merge each finished milestone into the base branch and continue")
 	cmd.Flags().BoolVar(&showPrompt, "show-prompt", false, "with --dry-run, include the first iteration's prompt")
 	cmd.MarkFlagsOneRequired("milestone", "initiative")
 	cmd.MarkFlagsMutuallyExclusive("milestone", "initiative")
@@ -96,7 +106,7 @@ func (a *app) printPlan(plan loop.Plan, showPrompt bool) error {
 }
 
 type loopOptions struct {
-	dryRun, showPrompt, force bool
+	dryRun, showPrompt, force, merge bool
 }
 
 func (a *app) loopMilestone(ctx context.Context, mID int64, opts loopOptions) (loop.Outcome, error) {
@@ -186,11 +196,14 @@ func (a *app) loopInitiative(ctx context.Context, initiative string, opts loopOp
 		return err
 	}
 	iRef := domain.FormatID(domain.KindInitiative, iID)
-	entries, err := loop.Overview(ctx, svc, l.Config, p.Root, iID, opts.force)
+	entries, err := chainOverview(ctx, svc, l.Config, p.Root, iID, opts.force)
 	if err != nil {
 		return err
 	}
-	step := loop.NextStep(entries, false)
+	if opts.merge && !opts.dryRun {
+		return a.loopChain(ctx, svc, l.Config, p.Root, iID, entries, opts)
+	}
+	step := loop.NextStep(entries, opts.merge)
 	next := newChainNext(step)
 	if opts.dryRun {
 		if a.jsonOut {
@@ -210,8 +223,14 @@ func (a *app) loopInitiative(ctx context.Context, initiative string, opts loopOp
 			}
 		}
 		switch step.Action {
-		case loop.ActionRun:
-			return a.printf("next: run %s\n", next.Milestone)
+		case loop.ActionRun, loop.ActionMerge:
+			if err := a.printf("next: %s %s\n", step.Action, next.Milestone); err != nil {
+				return err
+			}
+			if opts.merge {
+				return a.printf("later steps depend on earlier ones succeeding; nothing was changed\n")
+			}
+			return nil
 		case loop.ActionStop:
 			return a.printf("next: %s\n", next.stopMessage())
 		}

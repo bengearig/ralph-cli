@@ -110,7 +110,7 @@ func TestLoopRequiresExactlyOneOfMilestoneAndInitiative(t *testing.T) {
 			t.Errorf("%v: err = %v", args, err)
 		}
 	}
-	if _, _, err := h.run("", "loop", "--initiative", "I-1", "--merge"); err == nil || !strings.Contains(err.Error(), "unknown flag") {
+	if _, _, err := h.run("", "loop", "--milestone", "M-1", "--merge"); err == nil || err.Error() != "--merge requires --initiative" || errors.Is(err, errs.ErrNeedsHuman) {
 		t.Errorf("--merge err = %v", err)
 	}
 }
