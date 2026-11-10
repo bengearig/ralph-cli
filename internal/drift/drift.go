@@ -172,7 +172,7 @@ func check(ctx context.Context, in Input, branch string) (Report, error) {
 	if branch != "" {
 		m.Branch = branch
 	}
-	tasks, err := in.Service.ListTasks(ctx, service.TaskFilter{MilestoneID: in.MilestoneID, Statuses: []domain.Status{domain.StatusDone}})
+	tasks, err := in.Service.ListTasks(ctx, service.TaskFilter{MilestoneID: in.MilestoneID, IncludeArchived: true, Statuses: []domain.Status{domain.StatusDone}})
 	if err != nil {
 		return Report{}, err
 	}

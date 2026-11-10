@@ -71,7 +71,7 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ms, err := svc.ListMilestones(cmd.Context(), iID)
+			ms, err := svc.ListMilestones(cmd.Context(), iID, service.ListOptions{})
 			if err != nil {
 				return err
 			}
@@ -104,7 +104,7 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			tasks, err := svc.ListTasks(cmd.Context(), service.TaskFilter{MilestoneID: id})
+			tasks, err := svc.ListTasks(cmd.Context(), service.TaskFilter{MilestoneID: id, IncludeArchived: true})
 			if err != nil {
 				return err
 			}

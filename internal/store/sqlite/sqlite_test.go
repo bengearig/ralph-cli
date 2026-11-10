@@ -202,7 +202,7 @@ func TestGitRecordSetters(t *testing.T) {
 	if !gotM.UpdatedAt.Equal(m.UpdatedAt) {
 		t.Errorf("SetMilestoneGit changed updated_at: %v -> %v", m.UpdatedAt, gotM.UpdatedAt)
 	}
-	ms, err := s.ListMilestones(ctx, i.ID)
+	ms, err := s.ListMilestones(ctx, i.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +310,7 @@ func TestInitiativeCRUD(t *testing.T) {
 	if err := s.UpdateInitiative(ctx, &missing); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("update missing: %v", err)
 	}
-	all, err := s.ListInitiatives(ctx)
+	all, err := s.ListInitiatives(ctx, false)
 	if err != nil || len(all) != 1 {
 		t.Errorf("List = %v, %v", all, err)
 	}
@@ -547,7 +547,7 @@ func TestInTxRollback(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v", err)
 	}
-	if all, _ := s.ListInitiatives(ctx); len(all) != 0 {
+	if all, _ := s.ListInitiatives(ctx, false); len(all) != 0 {
 		t.Error("rollback did not discard insert")
 	}
 }
@@ -584,7 +584,7 @@ func TestConcurrentProcessesShareDatabase(t *testing.T) {
 			t.Errorf("concurrent write failed: %v", err)
 		}
 	}
-	all, err := a.ListInitiatives(ctx)
+	all, err := a.ListInitiatives(ctx, false)
 	if err != nil || len(all) != 40 {
 		t.Errorf("initiatives = %d, %v", len(all), err)
 	}
@@ -1288,7 +1288,7 @@ func TestSetArchived(t *testing.T) {
 		if after, _ := s.GetInitiative(ctx, i.ID); !after.ArchivedAt.Equal(at) {
 			t.Errorf("UpdateInitiative changed archived_at to %v", after.ArchivedAt)
 		}
-		all, err := s.ListInitiatives(ctx)
+		all, err := s.ListInitiatives(ctx, false)
 		if err != nil || len(all) != 1 || !all[0].ArchivedAt.Equal(at) {
 			t.Errorf("ListInitiatives = %+v, %v", all, err)
 		}

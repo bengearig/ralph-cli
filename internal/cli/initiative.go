@@ -57,7 +57,7 @@ func (a *app) newInitiativeCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			all, err := svc.ListInitiatives(cmd.Context())
+			all, err := svc.ListInitiatives(cmd.Context(), service.ListOptions{})
 			if err != nil {
 				return err
 			}
@@ -89,7 +89,7 @@ func (a *app) newInitiativeCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			st, err := svc.Status(cmd.Context(), id)
+			st, err := svc.Status(cmd.Context(), id, service.ListOptions{IncludeArchived: true})
 			if err != nil {
 				return err
 			}

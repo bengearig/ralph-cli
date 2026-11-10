@@ -187,6 +187,8 @@ type Query struct {
 	Kinds        []domain.Kind
 	InitiativeID int64
 	Limit        int
+	// IncludeArchived adds chunks of archived initiatives and documents.
+	IncludeArchived bool
 }
 
 // Hit is the best-matching chunk of one entity.
@@ -210,7 +212,7 @@ func (ix *Index) Search(ctx context.Context, q Query) (Result, error) {
 	if q.Limit < 1 {
 		q.Limit = 10
 	}
-	filter := store.ChunkFilter{Kinds: q.Kinds, InitiativeID: q.InitiativeID}
+	filter := store.ChunkFilter{Kinds: q.Kinds, InitiativeID: q.InitiativeID, ExcludeArchived: !q.IncludeArchived}
 	var warnings []string
 
 	if ix.Embedder != nil {

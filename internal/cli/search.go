@@ -118,7 +118,7 @@ func (a *app) newStatusCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			st, err := svc.Status(cmd.Context(), iID)
+			st, err := svc.Status(cmd.Context(), iID, service.ListOptions{})
 			if err != nil {
 				return err
 			}

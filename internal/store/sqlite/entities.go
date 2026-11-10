@@ -16,6 +16,8 @@ type scanner interface{ Scan(dest ...any) error }
 
 // ---- initiatives ----
 
+const archivedInitiativeIDs = `SELECT id FROM initiatives WHERE archived_at <> ''`
+
 const initiativeCols = `id, slug, title, brief, created_at, updated_at, archived_at`
 
 func scanInitiative(sc scanner) (domain.Initiative, error) {
@@ -88,8 +90,12 @@ func (s *Store) GetInitiative(ctx context.Context, id int64) (domain.Initiative,
 	return i, mapErr(err, domain.FormatID(domain.KindInitiative, id))
 }
 
-func (s *Store) ListInitiatives(ctx context.Context) ([]domain.Initiative, error) {
-	rows, err := s.q.QueryContext(ctx, `SELECT `+initiativeCols+` FROM initiatives ORDER BY id`)
+func (s *Store) ListInitiatives(ctx context.Context, excludeArchived bool) ([]domain.Initiative, error) {
+	q := `SELECT ` + initiativeCols + ` FROM initiatives`
+	if excludeArchived {
+		q += ` WHERE archived_at = ''`
+	}
+	rows, err := s.q.QueryContext(ctx, q+` ORDER BY id`)
 	if err != nil {
 		return nil, mapErr(err, "listing initiatives")
 	}
@@ -166,12 +172,19 @@ func (s *Store) GetMilestone(ctx context.Context, id int64) (domain.Milestone, e
 	return m, mapErr(err, domain.FormatID(domain.KindMilestone, id))
 }
 
-func (s *Store) ListMilestones(ctx context.Context, initiativeID int64) ([]domain.Milestone, error) {
+func (s *Store) ListMilestones(ctx context.Context, initiativeID int64, excludeArchived bool) ([]domain.Milestone, error) {
 	q := `SELECT ` + milestoneCols + ` FROM milestones`
+	var where []string
 	var args []any
 	if initiativeID != 0 {
-		q += ` WHERE initiative_id = ?`
+		where = append(where, `initiative_id = ?`)
 		args = append(args, initiativeID)
+	}
+	if excludeArchived {
+		where = append(where, `initiative_id NOT IN (`+archivedInitiativeIDs+`)`)
+	}
+	if len(where) > 0 {
+		q += ` WHERE ` + strings.Join(where, ` AND `)
 	}
 	q += ` ORDER BY initiative_id, position, id`
 	rows, err := s.q.QueryContext(ctx, q, args...)
@@ -281,6 +294,9 @@ func (s *Store) ListTasks(ctx context.Context, f store.TaskFilter) ([]domain.Tas
 		for _, st := range f.Statuses {
 			args = append(args, string(st))
 		}
+	}
+	if f.ExcludeArchived {
+		where = append(where, `m.initiative_id NOT IN (`+archivedInitiativeIDs+`)`)
 	}
 	q := `SELECT ` + taskCols + ` FROM tasks t JOIN milestones m ON m.id = t.milestone_id`
 	if len(where) > 0 {
@@ -441,6 +457,9 @@ func (s *Store) ListDocuments(ctx context.Context, f store.DocumentFilter) ([]do
 	if f.Kind != "" {
 		where = append(where, `kind = ?`)
 		args = append(args, string(f.Kind))
+	}
+	if f.ExcludeArchived {
+		where = append(where, `archived_at = ''`, `(initiative_id IS NULL OR initiative_id NOT IN (`+archivedInitiativeIDs+`))`)
 	}
 	q := `SELECT ` + documentCols + ` FROM documents`
 	if len(where) > 0 {

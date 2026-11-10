@@ -20,6 +20,8 @@ type TaskFilter struct {
 	InitiativeID int64
 	MilestoneID  int64
 	Statuses     []domain.Status
+	// ExcludeArchived drops tasks of archived initiatives.
+	ExcludeArchived bool
 }
 
 // DocumentFilter narrows ListDocuments. ProjectOnly selects documents with no
@@ -28,6 +30,8 @@ type DocumentFilter struct {
 	InitiativeID int64
 	ProjectOnly  bool
 	Kind         domain.DocKind
+	// ExcludeArchived drops documents that are archived or belong to an archived initiative.
+	ExcludeArchived bool
 }
 
 // Owner identifies the entity a chunk was derived from.
@@ -53,6 +57,8 @@ type Chunk struct {
 type ChunkFilter struct {
 	Kinds        []domain.Kind
 	InitiativeID int64
+	// ExcludeArchived drops chunks of archived initiatives and of archived documents.
+	ExcludeArchived bool
 }
 
 // KeywordHit is a full-text match; higher Score is better.
@@ -75,7 +81,7 @@ type Cascade struct {
 type Store interface {
 	CreateInitiative(ctx context.Context, i *domain.Initiative) error
 	GetInitiative(ctx context.Context, id int64) (domain.Initiative, error)
-	ListInitiatives(ctx context.Context) ([]domain.Initiative, error)
+	ListInitiatives(ctx context.Context, excludeArchived bool) ([]domain.Initiative, error)
 	UpdateInitiative(ctx context.Context, i *domain.Initiative) error
 	// SetInitiativeArchived sets archived_at, or clears it when at is zero. It leaves updated_at alone.
 	SetInitiativeArchived(ctx context.Context, id int64, at time.Time) error
@@ -85,7 +91,7 @@ type Store interface {
 	CreateMilestone(ctx context.Context, m *domain.Milestone) error
 	GetMilestone(ctx context.Context, id int64) (domain.Milestone, error)
 	// ListMilestones lists all milestones, or one initiative's when initiativeID is non-zero.
-	ListMilestones(ctx context.Context, initiativeID int64) ([]domain.Milestone, error)
+	ListMilestones(ctx context.Context, initiativeID int64, excludeArchived bool) ([]domain.Milestone, error)
 	// UpdateMilestone never writes the git record; use SetMilestoneGit.
 	UpdateMilestone(ctx context.Context, m *domain.Milestone) error
 	// SetMilestoneGit replaces a milestone's git record without changing updated_at.

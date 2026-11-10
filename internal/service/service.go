@@ -136,7 +136,7 @@ func taskArchived(ctx context.Context, st store.Store, t domain.Task) (bool, err
 
 // archivedInitiatives maps every archived initiative's ID to true, in one query.
 func archivedInitiatives(ctx context.Context, st store.Store) (map[int64]bool, error) {
-	all, err := st.ListInitiatives(ctx)
+	all, err := st.ListInitiatives(ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -251,8 +251,14 @@ func (s *Service) GetInitiative(ctx context.Context, id int64) (InitiativeView, 
 	return initiativeView(i), nil
 }
 
-func (s *Service) ListInitiatives(ctx context.Context) ([]InitiativeView, error) {
-	all, err := s.store.ListInitiatives(ctx)
+// ListOptions widens list and query operations. Archived items are hidden
+// unless IncludeArchived is set.
+type ListOptions struct {
+	IncludeArchived bool
+}
+
+func (s *Service) ListInitiatives(ctx context.Context, opts ListOptions) ([]InitiativeView, error) {
+	all, err := s.store.ListInitiatives(ctx, !opts.IncludeArchived)
 	if err != nil {
 		return nil, err
 	}
@@ -349,17 +355,17 @@ func (s *Service) GetMilestone(ctx context.Context, id int64) (MilestoneView, er
 	return milestoneView(m, tasks, archived), nil
 }
 
-func (s *Service) ListMilestones(ctx context.Context, initiativeID int64) ([]MilestoneView, error) {
+func (s *Service) ListMilestones(ctx context.Context, initiativeID int64, opts ListOptions) ([]MilestoneView, error) {
 	if initiativeID != 0 {
 		if _, err := s.store.GetInitiative(ctx, initiativeID); err != nil {
 			return nil, err
 		}
 	}
-	ms, err := s.store.ListMilestones(ctx, initiativeID)
+	ms, err := s.store.ListMilestones(ctx, initiativeID, !opts.IncludeArchived)
 	if err != nil {
 		return nil, err
 	}
-	tasks, err := s.store.ListTasks(ctx, store.TaskFilter{InitiativeID: initiativeID})
+	tasks, err := s.store.ListTasks(ctx, store.TaskFilter{InitiativeID: initiativeID, ExcludeArchived: !opts.IncludeArchived})
 	if err != nil {
 		return nil, err
 	}
@@ -504,6 +510,8 @@ type TaskFilter struct {
 	InitiativeID int64
 	MilestoneID  int64
 	Statuses     []domain.Status
+	// IncludeArchived adds tasks of archived initiatives.
+	IncludeArchived bool
 }
 
 // CreateTask adds a PROPOSED task; it reaches TODO only through SetTaskStatus
@@ -566,11 +574,13 @@ func (s *Service) ListTasks(ctx context.Context, f TaskFilter) ([]TaskView, erro
 			return nil, err
 		}
 	}
-	tasks, err := s.store.ListTasks(ctx, store.TaskFilter(f))
+	tasks, err := s.store.ListTasks(ctx, store.TaskFilter{
+		InitiativeID: f.InitiativeID, MilestoneID: f.MilestoneID, Statuses: f.Statuses, ExcludeArchived: !f.IncludeArchived,
+	})
 	if err != nil {
 		return nil, err
 	}
-	ms, err := s.store.ListMilestones(ctx, 0)
+	ms, err := s.store.ListMilestones(ctx, 0, false)
 	if err != nil {
 		return nil, err
 	}
@@ -813,6 +823,8 @@ type DocumentFilter struct {
 	InitiativeID int64
 	ProjectOnly  bool
 	Kind         domain.DocKind
+	// IncludeArchived adds archived documents and those of archived initiatives.
+	IncludeArchived bool
 }
 
 func (s *Service) CreateDocument(ctx context.Context, in DocumentInput) (DocumentView, error) {
@@ -874,7 +886,9 @@ func (s *Service) ListDocuments(ctx context.Context, f DocumentFilter) ([]Docume
 			return nil, err
 		}
 	}
-	docs, err := s.store.ListDocuments(ctx, store.DocumentFilter(f))
+	docs, err := s.store.ListDocuments(ctx, store.DocumentFilter{
+		InitiativeID: f.InitiativeID, ProjectOnly: f.ProjectOnly, Kind: f.Kind, ExcludeArchived: !f.IncludeArchived,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -949,7 +963,7 @@ func (s *Service) setInitiativeArchived(ctx context.Context, id int64, archive b
 			out = initiativeView(i)
 			return nil
 		}
-		ms, err := tx.store.ListMilestones(ctx, id)
+		ms, err := tx.store.ListMilestones(ctx, id, false)
 		if err != nil {
 			return err
 		}

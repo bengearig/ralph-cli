@@ -138,7 +138,7 @@ func TestArchivedInitiativeIsReadOnly(t *testing.T) {
 		d, _ := e.svc.GetDocument(ctx, doc)
 		ts, _ := e.svc.ListTasks(ctx, TaskFilter{InitiativeID: ini})
 		ds, _ := e.svc.ListDocuments(ctx, DocumentFilter{InitiativeID: ini})
-		ms, _ := e.svc.ListMilestones(ctx, ini)
+		ms, _ := e.svc.ListMilestones(ctx, ini, ListOptions{})
 		return strings.Join([]string{
 			toJSON(t, i), toJSON(t, m), toJSON(t, tk), toJSON(t, td), toJSON(t, d), toJSON(t, ts), toJSON(t, ds), toJSON(t, ms),
 		}, "\n")

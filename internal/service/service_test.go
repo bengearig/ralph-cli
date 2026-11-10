@@ -292,7 +292,7 @@ func TestStatusAndMilestoneDerivation(t *testing.T) {
 	iID, mID := e.scaffold(t)
 	e.svc.CreateTask(ctx, TaskInput{MilestoneID: mID, Title: "a"})
 	e.svc.CreateDocument(ctx, DocumentInput{InitiativeID: iID, Kind: domain.DocBrief, Title: "Brief"})
-	st, err := e.svc.Status(ctx, iID)
+	st, err := e.svc.Status(ctx, iID, ListOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,7 +430,7 @@ func TestRecordGitState(t *testing.T) {
 	if list, err := e.svc.ListTasks(ctx, TaskFilter{MilestoneID: mid}); err != nil || len(list) != 1 || list[0].Commit != next {
 		t.Errorf("ListTasks = %+v, %v", list, err)
 	}
-	if list, err := e.svc.ListMilestones(ctx, 0); err != nil || len(list) != 1 || list[0].HeadCommit != head {
+	if list, err := e.svc.ListMilestones(ctx, 0, ListOptions{}); err != nil || len(list) != 1 || list[0].HeadCommit != head {
 		t.Errorf("ListMilestones = %+v, %v", list, err)
 	}
 
@@ -678,15 +678,15 @@ func TestArchivedViews(t *testing.T) {
 	snapshot := func(archivedInitiative, archivedWide bool) {
 		t.Helper()
 		in, _ := e.svc.GetInitiative(ctx, iid)
-		inList, _ := e.svc.ListInitiatives(ctx)
+		inList, _ := e.svc.ListInitiatives(ctx, ListOptions{IncludeArchived: true})
 		ms, _ := e.svc.GetMilestone(ctx, mid)
-		msList, _ := e.svc.ListMilestones(ctx, 0)
+		msList, _ := e.svc.ListMilestones(ctx, 0, ListOptions{IncludeArchived: true})
 		tk, _ := e.svc.GetTask(ctx, tid)
-		tkList, _ := e.svc.ListTasks(ctx, TaskFilter{})
+		tkList, _ := e.svc.ListTasks(ctx, TaskFilter{IncludeArchived: true})
 		d, _ := e.svc.GetDocument(ctx, mustID(t, domain.KindDocument, inDoc.ID))
-		dList, _ := e.svc.ListDocuments(ctx, DocumentFilter{InitiativeID: iid})
+		dList, _ := e.svc.ListDocuments(ctx, DocumentFilter{InitiativeID: iid, IncludeArchived: true})
 		w, _ := e.svc.GetDocument(ctx, wideID)
-		wList, _ := e.svc.ListDocuments(ctx, DocumentFilter{ProjectOnly: true})
+		wList, _ := e.svc.ListDocuments(ctx, DocumentFilter{ProjectOnly: true, IncludeArchived: true})
 		want("initiative", in, archivedInitiative, false)
 		want("initiative list", inList[0], archivedInitiative, false)
 		want("milestone", ms, false, archivedInitiative)

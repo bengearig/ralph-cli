@@ -91,7 +91,7 @@ func (s *Service) checkDelete(ctx context.Context, kind domain.Kind, id int64, f
 		if err != nil {
 			return c, err
 		}
-		ms, err := s.store.ListMilestones(ctx, id)
+		ms, err := s.store.ListMilestones(ctx, id, false)
 		if err != nil {
 			return c, err
 		}

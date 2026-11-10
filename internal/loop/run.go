@@ -561,8 +561,8 @@ func (r Runner) stashLeftover(ctx context.Context, repo git.Repo, task service.T
 
 func (r Runner) collectRemaining(ctx context.Context, milestoneID int64, out *Outcome) error {
 	tasks, err := r.Service.ListTasks(ctx, service.TaskFilter{
-		MilestoneID: milestoneID,
-		Statuses:    []domain.Status{domain.StatusBlocked, domain.StatusProposed},
+		MilestoneID: milestoneID, IncludeArchived: true,
+		Statuses: []domain.Status{domain.StatusBlocked, domain.StatusProposed},
 	})
 	if err != nil {
 		return err

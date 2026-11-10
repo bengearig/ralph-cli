@@ -43,7 +43,7 @@ type initiativeList struct {
 }
 
 func (t *tools) initiativeList(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, initiativeList, error) {
-	all, err := t.svc.ListInitiatives(ctx)
+	all, err := t.svc.ListInitiatives(ctx, service.ListOptions{})
 	return nil, initiativeList{Initiatives: all}, toolError(err)
 }
 
@@ -131,7 +131,7 @@ func (t *tools) milestoneList(ctx context.Context, _ *mcp.CallToolRequest, in mi
 	if err != nil {
 		return nil, milestoneList{}, err
 	}
-	ms, err := t.svc.ListMilestones(ctx, iID)
+	ms, err := t.svc.ListMilestones(ctx, iID, service.ListOptions{})
 	return nil, milestoneList{Milestones: ms}, toolError(err)
 }
 
@@ -149,7 +149,7 @@ func (t *tools) milestoneGet(ctx context.Context, _ *mcp.CallToolRequest, in idI
 	if err != nil {
 		return nil, milestoneDetail{}, toolError(err)
 	}
-	tasks, err := t.svc.ListTasks(ctx, service.TaskFilter{MilestoneID: id})
+	tasks, err := t.svc.ListTasks(ctx, service.TaskFilter{MilestoneID: id, IncludeArchived: true})
 	return nil, milestoneDetail{MilestoneView: m, Tasks: tasks}, toolError(err)
 }
 
@@ -535,6 +535,6 @@ func (t *tools) status(ctx context.Context, _ *mcp.CallToolRequest, in statusIn)
 	if err != nil {
 		return nil, service.StatusView{}, err
 	}
-	v, err := t.svc.Status(ctx, iID)
+	v, err := t.svc.Status(ctx, iID, service.ListOptions{})
 	return nil, v, toolError(err)
 }

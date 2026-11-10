@@ -65,7 +65,7 @@ reports the drift instead of refusing.`,
 			if err != nil {
 				return err
 			}
-			tasks, err := svc.ListTasks(cmd.Context(), service.TaskFilter{MilestoneID: mID})
+			tasks, err := svc.ListTasks(cmd.Context(), service.TaskFilter{MilestoneID: mID, IncludeArchived: true})
 			if err != nil {
 				return err
 			}

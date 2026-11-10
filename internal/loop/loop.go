@@ -106,7 +106,7 @@ func (p Planner) Plan(ctx context.Context, milestoneID int64) (Plan, error) {
 	plan.Harness, plan.Model = res.Harness, res.Model
 	plan.Command = h.Command(harness.Request{Step: config.StepLoop, Model: res.Model, WorkDir: p.Root})
 
-	all, err := p.Service.ListTasks(ctx, service.TaskFilter{MilestoneID: milestoneID})
+	all, err := p.Service.ListTasks(ctx, service.TaskFilter{MilestoneID: milestoneID, IncludeArchived: true})
 	if err != nil {
 		return Plan{}, err
 	}

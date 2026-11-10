@@ -127,14 +127,14 @@ func (s *Service) Reindex(ctx context.Context, rebuild bool, progress func(done,
 
 func (s *Service) allItems(ctx context.Context) ([]search.Item, error) {
 	var items []search.Item
-	inits, err := s.store.ListInitiatives(ctx)
+	inits, err := s.store.ListInitiatives(ctx, false)
 	if err != nil {
 		return nil, err
 	}
 	for _, i := range inits {
 		items = append(items, initiativeItem(i))
 	}
-	ms, err := s.store.ListMilestones(ctx, 0)
+	ms, err := s.store.ListMilestones(ctx, 0, false)
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +166,8 @@ type SearchInput struct {
 	Kinds        []domain.Kind
 	InitiativeID int64
 	Limit        int
+	// IncludeArchived adds hits from archived initiatives and documents.
+	IncludeArchived bool
 }
 
 // Search finds initiatives, milestones, tasks, and documents relevant to a
@@ -182,6 +184,7 @@ func (s *Service) Search(ctx context.Context, in SearchInput) (SearchView, error
 	}
 	res, err := s.index.Search(ctx, search.Query{
 		Text: in.Query, Kinds: in.Kinds, InitiativeID: in.InitiativeID, Limit: in.Limit,
+		IncludeArchived: in.IncludeArchived,
 	})
 	if err != nil {
 		return SearchView{}, err
@@ -227,27 +230,29 @@ func (s *Service) title(ctx context.Context, o store.Owner) (string, error) {
 }
 
 // Status summarizes progress for one initiative, or all when id is zero.
-func (s *Service) Status(ctx context.Context, initiativeID int64) (StatusView, error) {
+func (s *Service) Status(ctx context.Context, initiativeID int64, opts ListOptions) (StatusView, error) {
 	var inits []domain.Initiative
 	if initiativeID != 0 {
 		i, err := s.store.GetInitiative(ctx, initiativeID)
 		if err != nil {
 			return StatusView{}, err
 		}
-		inits = []domain.Initiative{i}
+		if opts.IncludeArchived || i.ArchivedAt.IsZero() {
+			inits = []domain.Initiative{i}
+		}
 	} else {
 		var err error
-		if inits, err = s.store.ListInitiatives(ctx); err != nil {
+		if inits, err = s.store.ListInitiatives(ctx, !opts.IncludeArchived); err != nil {
 			return StatusView{}, err
 		}
 	}
 	out := StatusView{Initiatives: make([]InitiativeStatus, 0, len(inits))}
 	for _, i := range inits {
-		ms, err := s.ListMilestones(ctx, i.ID)
+		ms, err := s.ListMilestones(ctx, i.ID, opts)
 		if err != nil {
 			return StatusView{}, err
 		}
-		docs, err := s.store.ListDocuments(ctx, store.DocumentFilter{InitiativeID: i.ID})
+		docs, err := s.store.ListDocuments(ctx, store.DocumentFilter{InitiativeID: i.ID, ExcludeArchived: !opts.IncludeArchived})
 		if err != nil {
 			return StatusView{}, err
 		}

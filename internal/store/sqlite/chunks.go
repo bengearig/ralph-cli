@@ -151,6 +151,11 @@ func chunkWhere(f store.ChunkFilter) ([]string, []any) {
 		where = append(where, `c.initiative_id = ?`)
 		args = append(args, f.InitiativeID)
 	}
+	if f.ExcludeArchived {
+		where = append(where,
+			`(c.initiative_id IS NULL OR c.initiative_id NOT IN (`+archivedInitiativeIDs+`))`,
+			`NOT (c.owner_kind = '`+string(domain.KindDocument)+`' AND c.owner_id IN (SELECT id FROM documents WHERE archived_at <> ''))`)
+	}
 	return where, args
 }
 
