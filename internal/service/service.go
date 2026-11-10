@@ -646,6 +646,108 @@ func (s *Service) CreateTask(ctx context.Context, in TaskInput) (TaskView, error
 	return v, nil
 }
 
+// ImportTaskInput describes an existing task to record in a given status.
+type ImportTaskInput struct {
+	MilestoneID        int64
+	Title              string
+	Description        string
+	AcceptanceCriteria string
+	Status             domain.Status
+	Reason             string
+	Source             string
+	Position           int
+}
+
+// ImportTask creates a task directly in an import-allowed status, bypassing
+// the PROPOSED start of CreateTask. IN_PROGRESS is refused because the loop
+// resumes those tasks first.
+func (s *Service) ImportTask(ctx context.Context, in ImportTaskInput) (TaskView, error) {
+	title := strings.TrimSpace(in.Title)
+	desc := strings.TrimSpace(in.Description)
+	criteria := strings.TrimSpace(in.AcceptanceCriteria)
+	reason := strings.TrimSpace(in.Reason)
+	source := strings.TrimSpace(in.Source)
+	if err := domain.RequireText("title", title); err != nil {
+		return TaskView{}, err
+	}
+	if err := domain.RequireText("reason", reason); err != nil {
+		return TaskView{}, err
+	}
+	switch in.Status {
+	case domain.StatusProposed, domain.StatusTodo, domain.StatusBlocked, domain.StatusDone, domain.StatusCancelled:
+	case domain.StatusInProgress:
+		return TaskView{}, fmt.Errorf("%w: an imported task cannot be IN_PROGRESS because the loop resumes those first; import it as TODO or PROPOSED", domain.ErrInvalid)
+	default:
+		return TaskView{}, fmt.Errorf("%w: cannot import a task as %q (expected PROPOSED, TODO, BLOCKED, DONE, or CANCELLED)", domain.ErrInvalid, in.Status)
+	}
+	if in.Status == domain.StatusTodo {
+		var missing []string
+		if desc == "" {
+			missing = append(missing, "description")
+		}
+		if criteria == "" {
+			missing = append(missing, "acceptance criteria")
+		}
+		if len(missing) > 0 {
+			return TaskView{}, fmt.Errorf("%w: a task imported as TODO needs %s; import it as PROPOSED otherwise",
+				domain.ErrInvalid, strings.Join(missing, " and "))
+		}
+	}
+	if in.Position < 0 {
+		return TaskView{}, fmt.Errorf("%w: position must not be negative", domain.ErrInvalid)
+	}
+
+	body := fmt.Sprintf("Imported as %s: %s", in.Status, reason)
+	if source != "" {
+		body += fmt.Sprintf(" (source: %s)", source)
+	}
+	var (
+		out          TaskView
+		task         domain.Task
+		initiativeID int64
+	)
+	err := s.store.InTx(ctx, func(tx store.Store) error {
+		m, err := tx.GetMilestone(ctx, in.MilestoneID)
+		if err != nil {
+			return err
+		}
+		if err := requireWritable(ctx, tx, domain.KindInitiative, m.InitiativeID); err != nil {
+			return err
+		}
+		task = domain.Task{
+			MilestoneID:        m.ID,
+			Title:              title,
+			Description:        desc,
+			AcceptanceCriteria: criteria,
+			Status:             in.Status,
+			Position:           in.Position,
+		}
+		if in.Status == domain.StatusBlocked {
+			task.BlockedReason = reason
+		}
+		if err := tx.CreateTask(ctx, &task); err != nil {
+			return err
+		}
+		note := domain.TaskNote{TaskID: task.ID, Kind: domain.NoteGeneral, Body: body}
+		if err := tx.AddTaskNote(ctx, &note); err != nil {
+			return err
+		}
+		notes, err := tx.ListTaskNotes(ctx, task.ID)
+		if err != nil {
+			return err
+		}
+		initiativeID = m.InitiativeID
+		out = taskView(task, notes, false)
+		return nil
+	})
+	if err != nil {
+		return TaskView{}, err
+	}
+	out.IndexWarning = s.indexTask(ctx, task, initiativeID)
+	out.CardWarning = s.createCard(ctx, domain.KindTask, task.ID, s.cardClaimStale)
+	return out, nil
+}
+
 // GetTask returns a task with its notes.
 func (s *Service) GetTask(ctx context.Context, id int64) (TaskView, error) {
 	t, err := s.store.GetTask(ctx, id)

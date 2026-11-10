@@ -972,3 +972,101 @@ func TestImportAsNewIsolatesFailures(t *testing.T) {
 		t.Fatalf("records = %+v", list)
 	}
 }
+
+func TestImportTask(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	_, mID := e.scaffold(t)
+
+	for _, st := range []domain.Status{domain.StatusProposed, domain.StatusTodo, domain.StatusBlocked, domain.StatusDone, domain.StatusCancelled} {
+		in := ImportTaskInput{
+			MilestoneID: mID, Title: "Task " + string(st), Description: "d", AcceptanceCriteria: "ac",
+			Status: st, Reason: "because " + string(st),
+		}
+		v, err := e.svc.ImportTask(ctx, in)
+		if err != nil {
+			t.Fatalf("%s: %v", st, err)
+		}
+		if v.Status != string(st) || v.FailureCount != 0 {
+			t.Errorf("%s: view = %+v", st, v)
+		}
+		want := "Imported as " + string(st) + ": because " + string(st)
+		if len(v.Notes) != 1 || v.Notes[0].Kind != "NOTE" || v.Notes[0].Body != want {
+			t.Errorf("%s: notes = %+v, want %q", st, v.Notes, want)
+		}
+		if st == domain.StatusBlocked && v.BlockedReason != "because BLOCKED" {
+			t.Errorf("blocked reason = %q", v.BlockedReason)
+		}
+		if st == domain.StatusDone && len(v.AllowedNext) != 0 {
+			t.Errorf("DONE allowed next = %v", v.AllowedNext)
+		}
+	}
+
+	v, err := e.svc.ImportTask(ctx, ImportTaskInput{
+		MilestoneID: mID, Title: "Sourced", Status: domain.StatusProposed, Reason: "unsure", Source: "TRACKER.md",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Notes) != 1 || v.Notes[0].Body != "Imported as PROPOSED: unsure (source: TRACKER.md)" {
+		t.Errorf("notes = %+v", v.Notes)
+	}
+
+	next, err := e.svc.NextTask(ctx, mID)
+	if err != nil || next == nil || next.Status != "TODO" {
+		t.Errorf("NextTask = %+v, %v", next, err)
+	}
+}
+
+func TestImportTaskRejections(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	_, mID := e.scaffold(t)
+
+	cases := map[string]ImportTaskInput{
+		"todo without criteria": {MilestoneID: mID, Title: "t", Description: "d", Status: domain.StatusTodo, Reason: "r"},
+		"todo without desc":     {MilestoneID: mID, Title: "t", AcceptanceCriteria: "ac", Status: domain.StatusTodo, Reason: "r"},
+		"in progress":           {MilestoneID: mID, Title: "t", Status: domain.StatusInProgress, Reason: "r"},
+		"unknown status":        {MilestoneID: mID, Title: "t", Status: "WHATEVER", Reason: "r"},
+		"empty reason":          {MilestoneID: mID, Title: "t", Status: domain.StatusProposed, Reason: "  "},
+		"blocked no reason":     {MilestoneID: mID, Title: "t", Status: domain.StatusBlocked},
+		"empty title":           {MilestoneID: mID, Title: " ", Status: domain.StatusProposed, Reason: "r"},
+		"negative position":     {MilestoneID: mID, Title: "t", Status: domain.StatusProposed, Reason: "r", Position: -1},
+	}
+	for name, in := range cases {
+		if _, err := e.svc.ImportTask(ctx, in); !errors.Is(err, domain.ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
+		}
+	}
+	if _, err := e.svc.ImportTask(ctx, ImportTaskInput{MilestoneID: 99, Title: "t", Status: domain.StatusProposed, Reason: "r"}); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("missing milestone: %v", err)
+	}
+	if tasks, err := e.svc.ListTasks(ctx, TaskFilter{MilestoneID: mID}); err != nil || len(tasks) != 0 {
+		t.Errorf("tasks after failed imports = %+v, %v", tasks, err)
+	}
+}
+
+func TestImportTaskLeavesTransitionsAlone(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	_, mID := e.scaffold(t)
+	tv, err := e.svc.CreateTask(ctx, TaskInput{MilestoneID: mID, Title: "t"})
+	if err != nil || tv.Status != "PROPOSED" {
+		t.Fatalf("CreateTask = %+v, %v", tv, err)
+	}
+	if _, err := e.svc.SetTaskStatus(ctx, mustID(t, domain.KindTask, tv.ID), domain.StatusDone, "x"); !errors.Is(err, domain.ErrInvalidTransition) {
+		t.Errorf("PROPOSED → DONE: %v", err)
+	}
+}
+
+func TestImportTaskArchivedInitiative(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	iID, mID := e.scaffold(t)
+	if _, err := e.svc.ArchiveInitiative(ctx, iID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.ImportTask(ctx, ImportTaskInput{MilestoneID: mID, Title: "t", Status: domain.StatusProposed, Reason: "r"}); !errors.Is(err, ErrArchived) {
+		t.Errorf("archived import: %v", err)
+	}
+}

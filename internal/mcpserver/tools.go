@@ -377,6 +377,34 @@ func (t *tools) taskCreate(ctx context.Context, _ *mcp.CallToolRequest, in taskC
 	return nil, v, toolError(err)
 }
 
+type taskImportIn struct {
+	MilestoneID        string `json:"milestone_id" jsonschema:"milestone ID, for example M-1"`
+	Title              string `json:"title" jsonschema:"imperative task title"`
+	Description        string `json:"description,omitempty" jsonschema:"what the task is; required for TODO"`
+	AcceptanceCriteria string `json:"acceptance_criteria,omitempty" jsonschema:"verifiable conditions; required for TODO"`
+	Status             string `json:"status" jsonschema:"PROPOSED, TODO, BLOCKED, DONE, or CANCELLED; IN_PROGRESS is not allowed"`
+	Reason             string `json:"reason" jsonschema:"why this status was chosen; becomes the blocked reason for BLOCKED"`
+	Source             string `json:"source,omitempty" jsonschema:"where the item came from, for example a tracker file or key"`
+	Position           int    `json:"position,omitempty" jsonschema:"order within the milestone; defaults to last"`
+}
+
+func (t *tools) taskImport(ctx context.Context, _ *mcp.CallToolRequest, in taskImportIn) (*mcp.CallToolResult, service.TaskView, error) {
+	mID, err := domain.ParseID(domain.KindMilestone, in.MilestoneID)
+	if err != nil {
+		return nil, service.TaskView{}, err
+	}
+	st, err := domain.ParseStatus(in.Status)
+	if err != nil {
+		return nil, service.TaskView{}, err
+	}
+	v, err := t.svc.ImportTask(ctx, service.ImportTaskInput{
+		MilestoneID: mID, Title: in.Title, Description: in.Description,
+		AcceptanceCriteria: in.AcceptanceCriteria, Status: st,
+		Reason: in.Reason, Source: in.Source, Position: in.Position,
+	})
+	return nil, v, toolError(err)
+}
+
 type taskListIn struct {
 	MilestoneID     string   `json:"milestone_id,omitempty" jsonschema:"only this milestone"`
 	InitiativeID    string   `json:"initiative_id,omitempty" jsonschema:"only this initiative"`

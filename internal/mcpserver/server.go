@@ -182,6 +182,10 @@ func (t *tools) register(s *mcp.Server) {
 
 	mcp.AddTool(s, &mcp.Tool{Name: "task_create", Annotations: write("Propose task"),
 		Description: "Propose a task in a milestone. It starts PROPOSED; refine it, then promote it to TODO with task_set_status."}, t.taskCreate)
+	mcp.AddTool(s, &mcp.Tool{Name: "task_import", Annotations: write("Import task"),
+		Description: "For importing existing task lists only, for example a tracker file during an import; for planning new work use task_create, which always starts PROPOSED. " +
+			"Creates a task directly in PROPOSED, TODO, BLOCKED, DONE, or CANCELLED. Record why the status was chosen in reason, and prefer PROPOSED when unsure. " +
+			"TODO needs a description and acceptance criteria; BLOCKED uses reason as its blocked reason. IN_PROGRESS is not allowed: import in-progress items as TODO or PROPOSED."}, t.taskImport)
 	mcp.AddTool(s, &mcp.Tool{Name: "task_list", Annotations: readOnly("List tasks"),
 		Description: "List tasks in loop order, filtered by milestone, initiative, or statuses. Tasks of archived initiatives are hidden unless include_archived is set."}, t.taskList)
 	mcp.AddTool(s, &mcp.Tool{Name: "task_get", Annotations: readOnly("Get task"),

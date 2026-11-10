@@ -117,7 +117,7 @@ func TestToolsAreListedWithSchemas(t *testing.T) {
 			if !tool.Annotations.ReadOnlyHint {
 				t.Errorf("%s is not read-only: %+v", tool.Name, tool.Annotations)
 			}
-		case "import_queue", "import_resolve":
+		case "import_queue", "import_resolve", "task_import":
 			a := tool.Annotations
 			if a.ReadOnlyHint || a.DestructiveHint == nil || *a.DestructiveHint {
 				t.Errorf("%s annotations = %+v, want non-destructive write", tool.Name, a)
@@ -136,7 +136,7 @@ func TestToolsAreListedWithSchemas(t *testing.T) {
 	for _, want := range []string{
 		"initiative_create", "initiative_list", "initiative_get", "initiative_update",
 		"milestone_create", "milestone_list", "milestone_get", "milestone_update", "milestone_drift", "milestone_reconcile",
-		"task_create", "task_list", "task_get", "task_update", "task_set_status", "task_add_note", "task_next",
+		"task_create", "task_import", "task_list", "task_get", "task_update", "task_set_status", "task_add_note", "task_next",
 		"doc_create", "doc_list", "doc_get", "doc_update", "search", "status",
 		"initiative_delete", "milestone_delete", "task_delete", "doc_delete", "note_delete",
 		"initiative_archive", "initiative_unarchive", "doc_archive", "doc_unarchive",
@@ -741,5 +741,42 @@ func TestImportPromptAndToolPointers(t *testing.T) {
 	}
 	if seen != 4 {
 		t.Errorf("saw %d import tools, want 4", seen)
+	}
+}
+
+func TestTaskImport(t *testing.T) {
+	cs := connect(t)
+	ms, _ := seedDeletable(t, cs)
+
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name == "task_import" {
+			for _, w := range []string{"task_create", "PROPOSED"} {
+				if !strings.Contains(tool.Description, w) {
+					t.Errorf("task_import description lacks %q: %s", w, tool.Description)
+				}
+			}
+		}
+	}
+
+	var v service.TaskView
+	mustOK(t, cs, "task_import", map[string]any{
+		"milestone_id": ms.ID, "title": "Old login fix", "status": "DONE",
+		"reason": "closed in the tracker", "source": "TRACKER.md",
+	}, &v)
+	if v.Status != "DONE" || len(v.AllowedNext) != 0 {
+		t.Fatalf("imported task = %+v", v)
+	}
+	if len(v.Notes) != 1 || v.Notes[0].Body != "Imported as DONE: closed in the tracker (source: TRACKER.md)" {
+		t.Errorf("notes = %+v", v.Notes)
+	}
+
+	if res := call(t, cs, "task_import", map[string]any{
+		"milestone_id": ms.ID, "title": "Running", "status": "IN_PROGRESS", "reason": "x",
+	}, nil); !res.IsError {
+		t.Error("IN_PROGRESS import should fail")
 	}
 }
