@@ -136,7 +136,7 @@ func TestCreateCardIdempotent(t *testing.T) {
 	ctx := context.Background()
 	e, p := withProvider(newEnv(t))
 	i, _ := e.svc.CreateInitiative(ctx, InitiativeInput{Title: "I"})
-	if w := e.svc.createCard(ctx, domain.KindInitiative, iid(t, i.ID)); w != "" {
+	if w := e.svc.createCard(ctx, domain.KindInitiative, iid(t, i.ID), e.svc.cardClaimStale); w != "" {
 		t.Fatal(w)
 	}
 	if n := len(p.Calls()); n != 1 {
@@ -196,7 +196,7 @@ func TestCreateCardInTx(t *testing.T) {
 	if c, _ := e.svc.Card(ctx, domain.KindInitiative, iid(t, iv.ID), "fake"); c != nil {
 		t.Errorf("card = %+v", c)
 	}
-	if w := e.svc.createCard(ctx, domain.KindInitiative, iid(t, iv.ID)); w != "" {
+	if w := e.svc.createCard(ctx, domain.KindInitiative, iid(t, iv.ID), e.svc.cardClaimStale); w != "" {
 		t.Fatal(w)
 	}
 	if len(p.Calls()) != 1 {
@@ -281,7 +281,7 @@ func TestCreateCardClaim(t *testing.T) {
 	if err := e.svc.store.SetCard(ctx, fresh); err != nil {
 		t.Fatal(err)
 	}
-	if w := e.svc.createCard(ctx, domain.KindMilestone, mID); w != "" {
+	if w := e.svc.createCard(ctx, domain.KindMilestone, mID, e.svc.cardClaimStale); w != "" {
 		t.Errorf("warning = %q", w)
 	}
 	if len(p.Calls()) != callsBefore {
@@ -292,7 +292,7 @@ func TestCreateCardClaim(t *testing.T) {
 	if err := e.svc.store.SetCard(ctx, fresh); err != nil {
 		t.Fatal(err)
 	}
-	if w := e.svc.createCard(ctx, domain.KindMilestone, mID); w != "" {
+	if w := e.svc.createCard(ctx, domain.KindMilestone, mID, e.svc.cardClaimStale); w != "" {
 		t.Errorf("warning = %q", w)
 	}
 	if len(p.Calls()) != callsBefore+2 {
@@ -314,11 +314,11 @@ func TestCreateCardRetryAfterFailureNeedsStaleClaim(t *testing.T) {
 		t.Fatal("no warning")
 	}
 	p.SetError(nil)
-	if w := e.svc.createCard(ctx, domain.KindInitiative, id); w != "" || len(p.Calls()) != 0 {
+	if w := e.svc.createCard(ctx, domain.KindInitiative, id, e.svc.cardClaimStale); w != "" || len(p.Calls()) != 0 {
 		t.Fatalf("retry inside the stale limit: %q, %d calls", w, len(p.Calls()))
 	}
 	time.Sleep(100 * time.Millisecond)
-	if w := e.svc.createCard(ctx, domain.KindInitiative, id); w != "" || len(p.Calls()) != 1 {
+	if w := e.svc.createCard(ctx, domain.KindInitiative, id, e.svc.cardClaimStale); w != "" || len(p.Calls()) != 1 {
 		t.Fatalf("retry after the stale limit: %q, %d calls", w, len(p.Calls()))
 	}
 	if c, _ := e.svc.Card(ctx, domain.KindInitiative, id, "fake"); c == nil || c.Key == "" || c.LastError != "" {
@@ -344,7 +344,7 @@ func TestCreateCardConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			svcs[n%2].createCard(ctx, domain.KindTask, tid(t, tk.ID))
+			svcs[n%2].createCard(ctx, domain.KindTask, tid(t, tk.ID), time.Minute)
 		}()
 	}
 	wg.Wait()

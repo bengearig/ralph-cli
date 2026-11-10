@@ -31,6 +31,8 @@ type Service struct {
 	// taskManager is nil when no provider is configured.
 	taskManager    taskmanager.Provider
 	cardClaimStale time.Duration
+	// cardTimeout is the provider call timeout; a deliberate sync claims with it as the stale window.
+	cardTimeout time.Duration
 	// cardCanceledStatus is the status a deleted resource's card moves to; empty leaves cards alone.
 	cardCanceledStatus string
 	// inTx marks a service bound to a transaction, which never calls the provider.
@@ -52,6 +54,8 @@ type Options struct {
 	CardClaimStale time.Duration
 	// CardCanceledStatus is the status deleted resources' cards move to; empty means they are left as they are.
 	CardCanceledStatus string
+	// CardTimeout is the configured provider call timeout; zero means 10 seconds.
+	CardTimeout time.Duration
 }
 
 // New returns a Service. The index must share the store.
@@ -68,8 +72,12 @@ func New(st store.Store, ix *search.Index, opts Options) *Service {
 	if claimStale <= 0 {
 		claimStale = 30 * time.Second
 	}
+	cardTimeout := opts.CardTimeout
+	if cardTimeout <= 0 {
+		cardTimeout = 10 * time.Second
+	}
 	return &Service{store: st, index: ix, log: log, stallThreshold: opts.StallThreshold, searchLimit: limit,
-		loopLockPath: opts.LoopLockPath, taskManager: opts.TaskManager, cardClaimStale: claimStale, cardCanceledStatus: opts.CardCanceledStatus}
+		loopLockPath: opts.LoopLockPath, taskManager: opts.TaskManager, cardClaimStale: claimStale, cardTimeout: cardTimeout, cardCanceledStatus: opts.CardCanceledStatus}
 }
 
 // Store exposes the underlying store for read-only orchestration such as
@@ -259,7 +267,7 @@ func (s *Service) CreateInitiative(ctx context.Context, in InitiativeInput) (Ini
 	}
 	v := initiativeView(i)
 	v.IndexWarning = s.indexInitiative(ctx, i)
-	v.CardWarning = s.createCard(ctx, domain.KindInitiative, i.ID)
+	v.CardWarning = s.createCard(ctx, domain.KindInitiative, i.ID, s.cardClaimStale)
 	return v, nil
 }
 
@@ -323,7 +331,7 @@ func (s *Service) UpdateInitiative(ctx context.Context, id int64, p InitiativePa
 	}
 	v := initiativeView(i)
 	v.IndexWarning = s.indexInitiative(ctx, i)
-	_, v.CardWarning = s.syncCard(ctx, domain.KindInitiative, i.ID, modeExisting)
+	_, v.CardWarning = s.syncCard(ctx, domain.KindInitiative, i.ID, modeExisting, s.cardClaimStale)
 	return v, nil
 }
 
@@ -369,7 +377,7 @@ func (s *Service) CreateMilestone(ctx context.Context, in MilestoneInput) (Miles
 	}
 	v := milestoneView(m, nil, false)
 	v.IndexWarning = s.indexMilestone(ctx, m)
-	v.CardWarning = s.createCard(ctx, domain.KindMilestone, m.ID)
+	v.CardWarning = s.createCard(ctx, domain.KindMilestone, m.ID, s.cardClaimStale)
 	return v, nil
 }
 
@@ -470,7 +478,7 @@ func (s *Service) UpdateMilestone(ctx context.Context, id int64, p MilestonePatc
 	}
 	v := milestoneView(m, tasks, archived)
 	v.IndexWarning = s.indexMilestone(ctx, m)
-	_, v.CardWarning = s.syncCard(ctx, domain.KindMilestone, m.ID, modeExisting)
+	_, v.CardWarning = s.syncCard(ctx, domain.KindMilestone, m.ID, modeExisting, s.cardClaimStale)
 	return v, nil
 }
 
@@ -594,7 +602,7 @@ func (s *Service) CreateTask(ctx context.Context, in TaskInput) (TaskView, error
 	}
 	v := taskView(t, nil, false)
 	v.IndexWarning = s.indexTask(ctx, t, m.InitiativeID)
-	v.CardWarning = s.createCard(ctx, domain.KindTask, t.ID)
+	v.CardWarning = s.createCard(ctx, domain.KindTask, t.ID, s.cardClaimStale)
 	return v, nil
 }
 
@@ -712,7 +720,7 @@ func (s *Service) UpdateTask(ctx context.Context, id int64, p TaskPatch) (TaskVi
 	}
 	v := taskView(t, nil, archived)
 	v.IndexWarning = s.indexTask(ctx, t, m.InitiativeID)
-	_, v.CardWarning = s.syncCard(ctx, domain.KindTask, t.ID, modeExisting)
+	_, v.CardWarning = s.syncCard(ctx, domain.KindTask, t.ID, modeExisting, s.cardClaimStale)
 	return v, nil
 }
 
@@ -785,13 +793,13 @@ func (s *Service) syncTaskCards(ctx context.Context, id int64) string {
 	if s.taskManager == nil || s.inTx {
 		return ""
 	}
-	_, warn := s.syncCard(ctx, domain.KindTask, id, modeExisting)
+	_, warn := s.syncCard(ctx, domain.KindTask, id, modeExisting, s.cardClaimStale)
 	t, err := s.store.GetTask(ctx, id)
 	if err != nil {
 		s.log.Error("loading task for milestone card", "id", domain.FormatID(domain.KindTask, id), "error", err)
 		return warn
 	}
-	if _, w := s.syncCard(ctx, domain.KindMilestone, t.MilestoneID, modeExisting); warn == "" {
+	if _, w := s.syncCard(ctx, domain.KindMilestone, t.MilestoneID, modeExisting, s.cardClaimStale); warn == "" {
 		warn = w
 	}
 	return warn

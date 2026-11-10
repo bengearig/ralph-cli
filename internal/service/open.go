@@ -61,7 +61,7 @@ func OpenWithTaskManager(ctx context.Context, cfg *config.Config, root string, l
 		Timeout:  cfg.Embeddings.Timeout,
 		Log:      log,
 	}
-	svc := New(st, ix, Options{TaskManager: tm, CardClaimStale: 3 * cfg.TaskManager.Timeout,
+	svc := New(st, ix, Options{TaskManager: tm, CardClaimStale: 3 * cfg.TaskManager.Timeout, CardTimeout: cfg.TaskManager.Timeout,
 		CardCanceledStatus: cfg.TaskManager.Jira.CanceledStatus,
 		StallThreshold:     cfg.Loop.StallThreshold, SearchLimit: cfg.Search.Limit, Log: log,
 		LoopLockPath: filepath.Join(root, project.DirName, "loop.lock")})

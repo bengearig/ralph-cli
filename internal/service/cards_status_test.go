@@ -148,7 +148,7 @@ func TestCreateWithStatusOrderAndPartialFailure(t *testing.T) {
 	}
 	p.SetHook(nil)
 	n := len(p.Calls())
-	if r, w := e.svc.syncCard(ctx, domain.KindTask, id, modeExisting); r != updated || w != "" {
+	if r, w := e.svc.syncCard(ctx, domain.KindTask, id, modeExisting, e.svc.cardClaimStale); r != updated || w != "" {
 		t.Fatalf("sync = %v %q", r, w)
 	}
 	if got := methods(p.Calls()[n:]); !eq(got, []string{"Update:FAKE-3", "SetStatus:FAKE-3:PROPOSED"}) {

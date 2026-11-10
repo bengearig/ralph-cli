@@ -137,20 +137,20 @@ func TestSyncCardModes(t *testing.T) {
 	n := len(p.Calls())
 	tID := tid(t, tk.ID)
 
-	if r, w := e.svc.syncCard(ctx, domain.KindTask, tID, modeExisting); r != skipped || w != "" {
+	if r, w := e.svc.syncCard(ctx, domain.KindTask, tID, modeExisting, e.svc.cardClaimStale); r != skipped || w != "" {
 		t.Errorf("existing: %v %q", r, w)
 	}
 	if _, err := e.svc.store.GetCard(ctx, domain.KindTask, tID, "fake"); !errors.Is(err, store.ErrNotFound) || len(p.Calls()) != n {
 		t.Errorf("row written or call made: %v", err)
 	}
-	if r, w := e.svc.syncCard(ctx, domain.KindTask, tID, modeCreateMissing); r != created || w != "" {
+	if r, w := e.svc.syncCard(ctx, domain.KindTask, tID, modeCreateMissing, e.svc.cardClaimStale); r != created || w != "" {
 		t.Errorf("create: %v %q", r, w)
 	}
 	if len(p.Calls()) != n+4 {
 		t.Errorf("calls = %d, want milestone and task created and their statuses set", len(p.Calls())-n)
 	}
 	n = len(p.Calls())
-	if r, _ := e.svc.syncCard(ctx, domain.KindTask, tID, modeCreateMissing); r != inSync || len(p.Calls()) != n {
+	if r, _ := e.svc.syncCard(ctx, domain.KindTask, tID, modeCreateMissing, e.svc.cardClaimStale); r != inSync || len(p.Calls()) != n {
 		t.Errorf("fresh card: %v", r)
 	}
 }
