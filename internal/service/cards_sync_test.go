@@ -43,8 +43,8 @@ func TestUpdateTaskPushesEdit(t *testing.T) {
 	if err != nil || v.CardWarning != "" {
 		t.Fatalf("%v %q", err, v.CardWarning)
 	}
-	if calls() != n+1 {
-		t.Fatalf("calls = %d, want %d", calls(), n+1)
+	if calls() != n+2 {
+		t.Fatalf("calls = %d, want %d", calls(), n+2)
 	}
 	after, _ := e.svc.store.GetCard(ctx, domain.KindTask, id, "fake")
 	if after.ContentHash == before.ContentHash || after.Key != before.Key || after.SyncedAt.Before(before.SyncedAt) {
@@ -54,11 +54,11 @@ func TestUpdateTaskPushesEdit(t *testing.T) {
 	if req.Title != title || after.ContentHash != req.Hash() {
 		t.Errorf("hash mismatch")
 	}
-	if _, err := e.svc.UpdateTask(ctx, id, TaskPatch{Title: &title}); err != nil || calls() != n+1 {
+	if _, err := e.svc.UpdateTask(ctx, id, TaskPatch{Title: &title}); err != nil || calls() != n+2 {
 		t.Errorf("repeat edit called provider: %d", calls())
 	}
 	pos := 5
-	if _, err := e.svc.UpdateTask(ctx, id, TaskPatch{Position: &pos}); err != nil || calls() != n+1 {
+	if _, err := e.svc.UpdateTask(ctx, id, TaskPatch{Position: &pos}); err != nil || calls() != n+2 {
 		t.Errorf("position edit called provider: %d", calls())
 	}
 }
@@ -77,15 +77,16 @@ func TestUpdatePushesEachKind(t *testing.T) {
 	if _, err := e.svc.UpdateTask(ctx, tid(t, tk.ID), TaskPatch{AcceptanceCriteria: &ac}); err != nil {
 		t.Fatal(err)
 	}
-	if calls() != n+3 {
+	if calls() != n+5 {
 		t.Fatalf("calls = %d", calls())
 	}
 	var got [3]taskmanager.CardRequest
-	for k, c := range e.svc.taskManager.(*tmfake.Provider).Calls()[n:] {
-		if c.Method != "Update" {
-			t.Errorf("method %s", c.Method)
+	k := 0
+	for _, c := range e.svc.taskManager.(*tmfake.Provider).Calls()[n:] {
+		if c.Method == "Update" {
+			got[k] = c.Request
+			k++
 		}
-		got[k] = c.Request
 	}
 	if got[0].Description != brief || got[1].Description != desc || !strings.Contains(got[2].Description, ac) {
 		t.Errorf("requests %+v", got)
@@ -145,8 +146,8 @@ func TestSyncCardModes(t *testing.T) {
 	if r, w := e.svc.syncCard(ctx, domain.KindTask, tID, modeCreateMissing); r != created || w != "" {
 		t.Errorf("create: %v %q", r, w)
 	}
-	if len(p.Calls()) != n+2 {
-		t.Errorf("calls = %d, want milestone and task created", len(p.Calls())-n)
+	if len(p.Calls()) != n+4 {
+		t.Errorf("calls = %d, want milestone and task created and their statuses set", len(p.Calls())-n)
 	}
 	n = len(p.Calls())
 	if r, _ := e.svc.syncCard(ctx, domain.KindTask, tID, modeCreateMissing); r != inSync || len(p.Calls()) != n {

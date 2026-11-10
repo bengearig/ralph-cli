@@ -174,9 +174,28 @@ func (s *Service) createCard(ctx context.Context, kind domain.Kind, id int64) st
 		if errors.Is(err, errCardClaimed) {
 			return ""
 		}
+		var sw statusWarning
+		if errors.As(err, &sw) {
+			return sw.msg
+		}
 		return fmt.Sprintf("%s card for %s not created: %v", s.taskManager.Name(), domain.FormatID(kind, id), err)
 	}
 	return ""
+}
+
+// statusWarning is a created card whose status could not be set.
+type statusWarning struct{ msg string }
+
+func (e statusWarning) Error() string { return e.msg }
+
+func (s *Service) statusNotSet(ctx context.Context, kind domain.Kind, id int64, key string, cause error) string {
+	name := domain.FormatID(kind, id)
+	warn := fmt.Sprintf("%s card %s for %s status not set: %v", s.taskManager.Name(), key, name, cause)
+	if rerr := s.RecordCardFailure(ctx, kind, id, s.taskManager.Name(), cause); rerr != nil {
+		s.log.Error("recording card failure", "id", name, "error", rerr)
+		warn += fmt.Sprintf(" (recording the failure also failed: %v)", rerr)
+	}
+	return warn
 }
 
 func (s *Service) ensureCard(ctx context.Context, kind domain.Kind, id int64) (string, error) {
@@ -218,7 +237,17 @@ func (s *Service) ensureCard(ctx context.Context, kind domain.Kind, id int64) (s
 	if err != nil {
 		return "", s.failCard(ctx, kind, id, err)
 	}
-	if err := s.RecordCard(ctx, kind, id, p.Name(), card.Key, card.URL, req.Hash()); err != nil {
+	hash := req.Hash()
+	if req.Status != "" {
+		if err := s.RecordCard(ctx, kind, id, p.Name(), card.Key, card.URL, ""); err != nil {
+			s.log.Error("recording card", "id", req.ID, "key", card.Key, "error", err)
+			return card.Key, fmt.Errorf("created %s but recording it failed: %w", card.Key, err)
+		}
+		if err := p.SetStatus(ctx, card.Key, req.Status); err != nil {
+			return card.Key, statusWarning{s.statusNotSet(ctx, kind, id, card.Key, err)}
+		}
+	}
+	if err := s.RecordCard(ctx, kind, id, p.Name(), card.Key, card.URL, hash); err != nil {
 		s.log.Error("recording card", "id", req.ID, "key", card.Key, "error", err)
 		return card.Key, fmt.Errorf("created %s but recording it failed: %w", card.Key, err)
 	}
@@ -296,6 +325,11 @@ func (s *Service) syncCard(ctx context.Context, kind domain.Kind, id int64, mode
 			warn += fmt.Sprintf(" (recording the failure also failed: %v)", rerr)
 		}
 		return failed, warn
+	}
+	if req.Status != "" {
+		if err := p.SetStatus(ctx, row.Key, req.Status); err != nil {
+			return failed, s.statusNotSet(ctx, kind, id, row.Key, err)
+		}
 	}
 	if err := s.RecordCard(ctx, kind, id, p.Name(), row.Key, row.URL, hash); err != nil {
 		s.log.Error("recording card", "id", name, "key", row.Key, "error", err)

@@ -768,7 +768,29 @@ func (s *Service) SetTaskStatus(ctx context.Context, id int64, to domain.Status,
 		out = taskView(t, notes, archived)
 		return nil
 	})
-	return out, err
+	if err != nil {
+		return out, err
+	}
+	out.CardWarning = s.syncTaskCards(ctx, id)
+	return out, nil
+}
+
+// syncTaskCards pushes a task's card and then its milestone's, returning the
+// first warning.
+func (s *Service) syncTaskCards(ctx context.Context, id int64) string {
+	if s.taskManager == nil || s.inTx {
+		return ""
+	}
+	_, warn := s.syncCard(ctx, domain.KindTask, id, modeExisting)
+	t, err := s.store.GetTask(ctx, id)
+	if err != nil {
+		s.log.Error("loading task for milestone card", "id", domain.FormatID(domain.KindTask, id), "error", err)
+		return warn
+	}
+	if _, w := s.syncCard(ctx, domain.KindMilestone, t.MilestoneID, modeExisting); warn == "" {
+		warn = w
+	}
+	return warn
 }
 
 // ReopenTask sends a DONE task whose work was lost back to TODO. It is
@@ -816,7 +838,11 @@ func (s *Service) ReopenTask(ctx context.Context, id int64, reason string) (Task
 		out = taskView(t, notes, archived)
 		return nil
 	})
-	return out, err
+	if err != nil {
+		return out, err
+	}
+	out.CardWarning = s.syncTaskCards(ctx, id)
+	return out, nil
 }
 
 // AddTaskNote appends a note to a task.

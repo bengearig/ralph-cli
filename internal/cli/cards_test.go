@@ -200,3 +200,24 @@ func TestConfigValidateReportsDisabledTaskManager(t *testing.T) {
 		t.Errorf("err = %v, stderr = %q", err, errOut)
 	}
 }
+
+func TestTaskStatusCardWarningReachesStderr(t *testing.T) {
+	h := jiraEnv(t, "secret")
+	h.ok("initiative", "create", "--title", "SSO")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Callback")
+	h.ok("task", "create", "--milestone", "M-1", "--title", "Route", "--description", "d", "--criteria", "c")
+	recordJiraCard(t, h, domain.KindInitiative, 1, "RAL-1", "https://x.atlassian.net/browse/RAL-1")
+	recordJiraCard(t, h, domain.KindMilestone, 1, "RAL-2", "https://x.atlassian.net/browse/RAL-2")
+	recordJiraCard(t, h, domain.KindTask, 1, "RAL-12", "https://x.atlassian.net/browse/RAL-12")
+
+	out, errOut, err := h.run("", "task", "status", "T-1", "TODO", "--reason", "ready")
+	if err != nil {
+		t.Fatalf("status failed: %v\n%s", err, errOut)
+	}
+	if !strings.Contains(out, "T-1 is now TODO") || strings.Contains(out, "warning") {
+		t.Errorf("stdout = %q", out)
+	}
+	if !strings.Contains(errOut, "warning: ") || !strings.Contains(errOut, "RAL-12") {
+		t.Errorf("stderr = %q", errOut)
+	}
+}

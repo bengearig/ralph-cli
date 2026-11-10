@@ -22,6 +22,16 @@ func withProvider(e env) (env, *tmfake.Provider) {
 	return e, p
 }
 
+func creates(calls []tmfake.Call) []tmfake.Call {
+	var out []tmfake.Call
+	for _, c := range calls {
+		if c.Method == "Create" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 func iid(t *testing.T, s string) int64 { t.Helper(); return mustID(t, domain.KindInitiative, s) }
 func mid(t *testing.T, s string) int64 { t.Helper(); return mustID(t, domain.KindMilestone, s) }
 func tid(t *testing.T, s string) int64 { t.Helper(); return mustID(t, domain.KindTask, s) }
@@ -67,10 +77,11 @@ func TestCreateCardChain(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	calls := p.Calls()
-	if len(calls) != 4 {
-		t.Fatalf("calls = %+v", calls)
+	all := p.Calls()
+	if len(all) != 7 {
+		t.Fatalf("calls = %+v", all)
 	}
+	calls := creates(all)
 	want := []taskmanager.CardRequest{
 		{Kind: domain.KindInitiative, ID: i.ID, Title: "Init", Description: "the brief"},
 		{Kind: domain.KindMilestone, ID: m.ID, Title: "Mile", Description: "mdesc", ParentKey: "FAKE-1", Status: MilestoneEmpty},
@@ -105,10 +116,10 @@ func TestCreateCardMissingParents(t *testing.T) {
 	if err != nil || tk.CardWarning != "" {
 		t.Fatalf("%v %q", err, tk.CardWarning)
 	}
-	calls := p.Calls()
-	if len(calls) != 3 {
-		t.Fatalf("calls = %+v", calls)
+	if len(p.Calls()) != 5 {
+		t.Fatalf("calls = %+v", p.Calls())
 	}
+	calls := creates(p.Calls())
 	kinds := []domain.Kind{domain.KindInitiative, domain.KindMilestone, domain.KindTask}
 	parents := []string{"", "FAKE-1", "FAKE-2"}
 	for n := range calls {
@@ -284,7 +295,7 @@ func TestCreateCardClaim(t *testing.T) {
 	if w := e.svc.createCard(ctx, domain.KindMilestone, mID); w != "" {
 		t.Errorf("warning = %q", w)
 	}
-	if len(p.Calls()) != callsBefore+1 {
+	if len(p.Calls()) != callsBefore+2 {
 		t.Error("stale claim was not taken over")
 	}
 	if c, _ := e.svc.Card(ctx, domain.KindMilestone, mID, "fake"); c == nil || c.Key == "" {
@@ -337,7 +348,7 @@ func TestCreateCardConcurrent(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if got := len(p.Calls()) - before; got != 1 {
+	if got := len(creates(p.Calls()[before:])); got != 1 {
 		t.Errorf("Create calls = %d, want 1", got)
 	}
 	if c, _ := e.svc.Card(ctx, domain.KindTask, tid(t, tk.ID), "fake"); c == nil || c.Key == "" {
