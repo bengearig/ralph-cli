@@ -243,13 +243,13 @@ func (p *Provider) mapRequest(req taskmanager.CardRequest) (IssueFields, error) 
 		IssueType:   issueType,
 		Summary:     summary(req),
 		Description: adf.FromMarkdown(body(req)).JSON(),
-		Labels:      p.labels(req.ID),
+		Labels:      p.labels(),
 		ParentKey:   parent,
 	}, nil
 }
 
-func (p *Provider) labels(id string) []string {
-	out := []string{"ralph", id}
+func (p *Provider) labels() []string {
+	out := []string{"ralph"}
 	for _, l := range p.cfg.Labels {
 		if l = strings.TrimSpace(l); l != "" && !slices.Contains(out, l) {
 			out = append(out, l)

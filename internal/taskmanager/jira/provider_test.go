@@ -193,7 +193,7 @@ func TestPreflightMissingCredentials(t *testing.T) {
 func TestConfiguredLabels(t *testing.T) {
 	f := newFakeJira(t)
 	cfg := testCfg(f.URL)
-	cfg.Labels = []string{"workflow-2.0", " ralph ", "T-12", "workflow-2.0", ""}
+	cfg.Labels = []string{"workflow-2.0", " ralph ", "workflow-2.0", ""}
 	p := NewProvider(cfg, 0, env(goodEnv), nil)
 	if _, err := p.Create(context.Background(), taskmanager.CardRequest{Kind: domain.KindTask, ID: "T-12", Title: "t", ParentKey: "PROJ-5"}); err != nil {
 		t.Fatal(err)
@@ -202,7 +202,7 @@ func TestConfiguredLabels(t *testing.T) {
 	for _, l := range f.last(t).fields()["labels"].([]any) {
 		got = append(got, l.(string))
 	}
-	if want := []string{"ralph", "T-12", "workflow-2.0"}; !slices.Equal(got, want) {
+	if want := []string{"ralph", "workflow-2.0"}; !slices.Equal(got, want) {
 		t.Errorf("labels %v, want %v", got, want)
 	}
 
@@ -223,7 +223,7 @@ func TestSummaryLabelsParent(t *testing.T) {
 	if fl["summary"] != "T-12: Add X" {
 		t.Errorf("summary %v", fl["summary"])
 	}
-	if l := fl["labels"].([]any); len(l) != 2 || l[0] != "ralph" || l[1] != "T-12" {
+	if l := fl["labels"].([]any); len(l) != 1 || l[0] != "ralph" {
 		t.Errorf("labels %v", l)
 	}
 	if fl["parent"].(map[string]any)["key"] != "PROJ-5" {
