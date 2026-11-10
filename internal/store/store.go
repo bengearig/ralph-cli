@@ -122,6 +122,17 @@ type Store interface {
 	SetDocumentArchived(ctx context.Context, id int64, at time.Time) error
 	DeleteDocument(ctx context.Context, id int64) error
 
+	CreateImport(ctx context.Context, im *domain.Import) error
+	GetImportByPath(ctx context.Context, path string) (domain.Import, error)
+	// UpdateImport writes every column except id and path, locating the row by path.
+	UpdateImport(ctx context.Context, im *domain.Import) error
+	// ListImports orders by path; no statuses means all.
+	ListImports(ctx context.Context, statuses []domain.ImportStatus) ([]domain.Import, error)
+	// AddImportLink is idempotent. A missing document gives ErrNotFound.
+	AddImportLink(ctx context.Context, importID, documentID int64, rel domain.ImportRelation) error
+	// ListImportLinks orders by creation time, then document ID.
+	ListImportLinks(ctx context.Context, importID int64) ([]domain.ImportLink, error)
+
 	// CountCascade counts what deleting the initiative, milestone, or task
 	// with the given ID would remove. It returns ErrNotFound for a missing ID.
 	CountCascade(ctx context.Context, kind domain.Kind, id int64) (Cascade, error)
