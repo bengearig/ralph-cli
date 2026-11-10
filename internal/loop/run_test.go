@@ -915,3 +915,68 @@ func TestPlanRecordsNothing(t *testing.T) {
 		t.Errorf("planning switched to %q", b)
 	}
 }
+
+func TestRunNamesBranchAfterCardAndKeepsIt(t *testing.T) {
+	ctx := context.Background()
+	e := newRunEnv(t, "a")
+	e.cfg.TaskManager.Provider = config.TaskManagerJira
+	e.cfg.Loop.BranchTemplate = "{{.Milestone.CardKeyPrefix}}{{.Milestone.Slug}}"
+	if err := e.svc.RecordCard(ctx, domain.KindMilestone, e.mID, "jira", "ABC-1234", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	planner := Planner{Service: e.svc, Config: e.cfg, Root: e.root}
+	plan, err := planner.Plan(ctx, e.mID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Branch != "ABC-1234-oidc-login" {
+		t.Fatalf("plan branch = %q", plan.Branch)
+	}
+	in, err := DriftInput(ctx, e.svc, e.cfg, e.root, e.mID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in.TemplateBranch != plan.Branch {
+		t.Errorf("drift branch = %q, plan branch = %q", in.TemplateBranch, plan.Branch)
+	}
+	for _, line := range strings.Split(plan.FirstPrompt, "\n") {
+		if strings.Contains(line, "ABC-1234") && !strings.HasPrefix(line, "Branch: ") {
+			t.Errorf("card key leaked into prompt line %q", line)
+		}
+	}
+
+	var prompts []string
+	if _, err := (Runner{Service: e.svc, Config: e.cfg, Root: e.root, Harness: e.blocker(&prompts), Out: &e.out}).Run(ctx, plan); !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("err = %v\n%s", err, e.out.String())
+	}
+	if m := e.milestone(t); m.Branch != "ABC-1234-oidc-login" {
+		t.Fatalf("recorded branch = %q", m.Branch)
+	}
+	if b := gitCmd(t, e.root, "branch", "--show-current"); b != "ABC-1234-oidc-login" {
+		t.Errorf("checked out %q", b)
+	}
+
+	if err := e.svc.RecordCard(ctx, domain.KindMilestone, e.mID, "jira", "ABC-9999", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.SetTaskStatus(ctx, 1, domain.StatusTodo, ""); err != nil {
+		t.Fatal(err)
+	}
+	plan, err = planner.Plan(ctx, e.mID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Branch != "ABC-1234-oidc-login" {
+		t.Errorf("plan branch after key change = %q", plan.Branch)
+	}
+	e.out.Reset()
+	if _, err := (Runner{Service: e.svc, Config: e.cfg, Root: e.root, Harness: e.blocker(&prompts), Out: &e.out}).Run(ctx, plan); !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("second run err = %v\n%s", err, e.out.String())
+	}
+	if list := gitCmd(t, e.root, "branch", "--list", "ABC-9999*"); list != "" {
+		t.Errorf("second branch created: %q", list)
+	}
+	if list := gitCmd(t, e.root, "branch", "--list", "ABC-*"); strings.Count(list, "\n") != 0 {
+		t.Errorf("branches: %q", list)
+	}
+}

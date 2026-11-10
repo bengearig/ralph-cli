@@ -105,7 +105,7 @@ func DriftInput(ctx context.Context, svc *service.Service, cfg *config.Config, r
 	}
 	initiative := Ref{ID: i.ID, Slug: i.Slug, Title: i.Title}
 	milestone := Ref{ID: m.ID, Slug: m.Slug, Title: m.Title}
-	branch, err := MilestoneBranch(cfg.Loop.BranchTemplate, initiative, milestone, BranchKeys{}, m.Branch)
+	branch, err := ResolveBranch(ctx, svc, cfg, i, m)
 	if err != nil {
 		return drift.Input{}, err
 	}

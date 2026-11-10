@@ -28,3 +28,21 @@ func CardKeys(ctx context.Context, svc *service.Service, cfg *config.Config, ini
 		Milestone:  key(domain.KindMilestone, milestoneID),
 	}
 }
+
+// ResolveBranch returns the branch name of a milestone: its recorded branch,
+// or the branch template rendered with the recorded card keys.
+func ResolveBranch(ctx context.Context, svc *service.Service, cfg *config.Config, initiative service.InitiativeView, milestone service.MilestoneView) (string, error) {
+	iID, err := domain.ParseID(domain.KindInitiative, initiative.ID)
+	if err != nil {
+		return "", err
+	}
+	mID, err := domain.ParseID(domain.KindMilestone, milestone.ID)
+	if err != nil {
+		return "", err
+	}
+	keys := CardKeys(ctx, svc, cfg, iID, mID)
+	return MilestoneBranch(cfg.Loop.BranchTemplate,
+		Ref{ID: initiative.ID, Slug: initiative.Slug, Title: initiative.Title},
+		Ref{ID: milestone.ID, Slug: milestone.Slug, Title: milestone.Title},
+		keys, milestone.Branch)
+}

@@ -149,3 +149,47 @@ func TestCardKeysSwallowsStoreErrors(t *testing.T) {
 		t.Errorf("keys = %+v", got)
 	}
 }
+
+func resolveEnv(t *testing.T, tmpl string) (*service.Service, *config.Config, service.InitiativeView, service.MilestoneView) {
+	t.Helper()
+	svc, _, _, iID, mID := cardKeysEnv(t)
+	cfg := cfgFor(t, config.TaskManagerJira)
+	cfg.Loop.BranchTemplate = tmpl
+	i, err := svc.GetInitiative(context.Background(), iID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := svc.GetMilestone(context.Background(), mID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc, cfg, i, m
+}
+
+func TestResolveBranch(t *testing.T) {
+	ctx := context.Background()
+	const keyed = "{{.Milestone.CardKeyPrefix}}{{.Milestone.Slug}}"
+	svc, cfg, i, m := resolveEnv(t, keyed)
+	mID, _ := domain.ParseID(domain.KindMilestone, m.ID)
+
+	if got, err := ResolveBranch(ctx, svc, cfg, i, m); err != nil || got != "oidc" {
+		t.Errorf("no card: %q, %v", got, err)
+	}
+	if err := svc.RecordCard(ctx, domain.KindMilestone, mID, "jira", "ABC-1234", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ResolveBranch(ctx, svc, cfg, i, m); err != nil || got != "ABC-1234-oidc" {
+		t.Errorf("card: %q, %v", got, err)
+	}
+
+	cfg.Loop.BranchTemplate = "ralph/{{.Milestone.Slug}}"
+	if got, err := ResolveBranch(ctx, svc, cfg, i, m); err != nil || got != "ralph/oidc" {
+		t.Errorf("default template: %q, %v", got, err)
+	}
+
+	cfg.Loop.BranchTemplate = keyed
+	m.Branch = "feature/custom"
+	if got, err := ResolveBranch(ctx, svc, cfg, i, m); err != nil || got != "feature/custom" {
+		t.Errorf("recorded: %q, %v", got, err)
+	}
+}

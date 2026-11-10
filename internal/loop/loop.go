@@ -110,7 +110,7 @@ func (p Planner) Plan(ctx context.Context, milestoneID int64) (Plan, error) {
 		CommitPerTask:  p.Config.Loop.CommitPerTask,
 		CommitTrailer:  p.Config.Loop.CommitTrailer,
 	}
-	if plan.Branch, err = MilestoneBranch(p.Config.Loop.BranchTemplate, plan.Initiative, plan.Milestone, BranchKeys{}, m.Branch); err != nil {
+	if plan.Branch, err = ResolveBranch(ctx, p.Service, p.Config, i, m); err != nil {
 		return Plan{}, err
 	}
 

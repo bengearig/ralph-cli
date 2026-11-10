@@ -1180,3 +1180,48 @@ func TestArchiveCommandsRoundTrip(t *testing.T) {
 		t.Errorf("document missing after unarchive: %+v", docs)
 	}
 }
+
+func TestBranchFromCardAgreesAcrossCommands(t *testing.T) {
+	h, _, _ := newGitTestEnv(t)
+	h.ok("init")
+	h.ok("initiative", "create", "--title", "SSO")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Login")
+	h.ok("task", "create", "--milestone", "M-1", "--title", "Route", "--description", "d", "--criteria", "c")
+	cfgYAML := `task_manager:
+  provider: jira
+  jira:
+    base_url: https://example.atlassian.net
+    project_key: ABC
+    email_env: JIRA_EMAIL
+    token_env: JIRA_TOKEN
+    issue_types: {initiative: Epic, milestone: Story, task: Task}
+loop:
+  branch_template: "{{.Milestone.CardKeyPrefix}}{{.Milestone.Slug}}"
+`
+	if err := os.WriteFile(filepath.Join(h.dir, ".ralph", "config.yaml"), []byte(cfgYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Embeddings.Provider = config.EmbeddingsNone
+	svc, closeFn, err := service.Open(context.Background(), cfg, h.dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RecordCard(context.Background(), domain.KindMilestone, 1, "jira", "ABC-1234", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	closeFn()
+
+	newPRProvider = func(*config.Config) (pr.Provider, error) { return &fakeProvider{}, nil }
+	t.Cleanup(func() { newPRProvider = pr.New })
+
+	if out := h.ok("loop", "--milestone", "M-1", "--dry-run"); !strings.Contains(out, "branch:     ABC-1234-login (from ") {
+		t.Errorf("loop dry run:\n%s", out)
+	}
+	if out := h.ok("pr", "create", "--milestone", "M-1", "--dry-run"); !strings.Contains(out, "branches: ABC-1234-login → ") {
+		t.Errorf("pr dry run:\n%s", out)
+	}
+}
