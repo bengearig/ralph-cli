@@ -89,6 +89,8 @@ type Initiative struct {
 	Brief     string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	// ArchivedAt is zero when the initiative is not archived.
+	ArchivedAt time.Time
 }
 
 // Milestone groups ordered tasks and is the unit of a branch and pull request.
@@ -199,6 +201,8 @@ type Document struct {
 	Body         string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	// ArchivedAt is zero when the document is not itself archived.
+	ArchivedAt time.Time
 }
 
 // Slugify derives a URL- and branch-safe slug from a title.

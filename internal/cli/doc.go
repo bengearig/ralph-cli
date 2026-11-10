@@ -132,7 +132,8 @@ func (a *app) newDocCommand() *cobra.Command {
 			if a.jsonOut {
 				return a.writeJSON(v)
 			}
-			if err := a.printf("%s  %s\nkind: %s\nslug: %s\ninitiative: %s\n\n", v.ID, v.Title, v.Kind, v.Slug, orDash(v.InitiativeID)); err != nil {
+			if err := a.printf("%s  %s\nkind: %s\nslug: %s\ninitiative: %s\n%s\n", v.ID, v.Title, v.Kind, v.Slug, orDash(v.InitiativeID),
+				archivedLine(v.ArchivedAt, v.Archived, v.InitiativeID)); err != nil {
 				return err
 			}
 			return a.printf("%s\n", v.Body)

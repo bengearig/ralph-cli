@@ -102,6 +102,9 @@ func (a *app) newInitiativeCommand() *cobra.Command {
 			if err := a.printf("%s  %s\nslug: %s\ntasks: %s\n", v.ID, v.Title, v.Slug, service.FormatCounts(st.Initiatives[0].TaskCounts)); err != nil {
 				return err
 			}
+			if err := a.printf("%s", archivedLine(v.ArchivedAt, false, "")); err != nil {
+				return err
+			}
 			if err := a.section("Brief", v.Brief); err != nil {
 				return err
 			}

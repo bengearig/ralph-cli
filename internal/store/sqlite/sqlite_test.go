@@ -928,6 +928,23 @@ func openAtPreviousVersion(t *testing.T, path string) *sql.DB {
 	return raw
 }
 
+// applyLaterMigrations applies the normal migrations after 0003 to a database
+// left at the previous version, so its schema can be compared with a fresh one.
+func applyLaterMigrations(t *testing.T, db *sql.DB) {
+	t.Helper()
+	ms, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range ms {
+		if m.version > 3 {
+			if _, err := db.Exec(m.sql); err != nil {
+				t.Fatalf("applying %s: %v", m.name, err)
+			}
+		}
+	}
+}
+
 func pragmaRows(t *testing.T, db *sql.DB, pragma, table string, drop ...string) []string {
 	t.Helper()
 	rows, err := db.Query(fmt.Sprintf(`SELECT * FROM pragma_%s('%s')`, pragma, table))
@@ -966,6 +983,7 @@ func pragmaRows(t *testing.T, db *sql.DB, pragma, table string, drop ...string) 
 
 func TestPermanentIDsSchemaEquivalence(t *testing.T) {
 	old := openAtPreviousVersion(t, filepath.Join(t.TempDir(), "old.db"))
+	applyLaterMigrations(t, old)
 	fresh := openTest(t)
 	for _, tbl := range idTables {
 		for _, p := range []struct {
@@ -1042,6 +1060,12 @@ func TestPermanentIDsUpgradePreservesData(t *testing.T) {
 		return b.String()
 	}
 	wantRows := dataRows(t, old)
+	// Migration 0004 appends an empty archived_at to these two tables.
+	for n, line := range wantRows {
+		if strings.HasPrefix(line, "initiatives [") || strings.HasPrefix(line, "documents [") {
+			wantRows[n] = strings.TrimSuffix(line, "]") + " ]"
+		}
+	}
 	wantHits := hits(old)
 	chunks := count(t, old, `SELECT COUNT(*) FROM chunks`)
 	embedded := count(t, old, `SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL`)
@@ -1164,4 +1188,154 @@ func TestPermanentIDsCascadesStillWork(t *testing.T) {
 	if n := count(t, s.db, `SELECT COUNT(*) FROM documents`); n != 1 {
 		t.Errorf("project-scoped documents = %d, want 1", n)
 	}
+}
+
+func archivedColumn(t *testing.T, db *sql.DB, table string) (typ string, notNull int, dflt string) {
+	t.Helper()
+	err := db.QueryRow(`SELECT type, "notnull", IFNULL(dflt_value, '') FROM pragma_table_info(?) WHERE name = 'archived_at'`, table).Scan(&typ, &notNull, &dflt)
+	if err != nil {
+		t.Fatalf("archived_at on %s: %v", table, err)
+	}
+	return typ, notNull, dflt
+}
+
+func TestArchiveMigrationAddsColumns(t *testing.T) {
+	check := func(t *testing.T, db *sql.DB) {
+		t.Helper()
+		for _, table := range []string{"initiatives", "documents"} {
+			if typ, nn, dflt := archivedColumn(t, db, table); typ != "TEXT" || nn != 1 || dflt != "''" {
+				t.Errorf("%s.archived_at = %s notnull=%d default=%s; want TEXT NOT NULL DEFAULT ''", table, typ, nn, dflt)
+			}
+		}
+	}
+	t.Run("fresh", func(t *testing.T) {
+		check(t, openTest(t).db)
+	})
+	t.Run("upgraded", func(t *testing.T) {
+		ctx := context.Background()
+		path := filepath.Join(t.TempDir(), "ralph.db")
+		ms, err := loadMigrations()
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw.SetMaxOpenConns(1)
+		if _, err := raw.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range ms {
+			if m.name == "0004_archive.sql" {
+				break
+			}
+			if _, err := raw.Exec(m.sql); err != nil {
+				t.Fatalf("applying %s: %v", m.name, err)
+			}
+			if _, err := raw.Exec(`INSERT INTO schema_migrations (version, applied_at) VALUES (?, '2026-01-01T00:00:00Z')`, m.version); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := raw.Exec(`INSERT INTO initiatives (slug, title, brief, created_at, updated_at) VALUES ('a', 'A', '', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`); err != nil {
+			t.Fatal(err)
+		}
+		raw.Close()
+		s, err := Open(ctx, path)
+		if err != nil {
+			t.Fatalf("upgrade: %v", err)
+		}
+		defer s.Close()
+		check(t, s.db)
+		i, err := s.GetInitiative(ctx, 1)
+		if err != nil || !i.ArchivedAt.IsZero() {
+			t.Errorf("upgraded initiative = %+v, %v; want not archived", i, err)
+		}
+	})
+}
+
+func TestSetArchived(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	i, _ := seed(t, s)
+	d := domain.Document{InitiativeID: &i.ID, Kind: domain.DocKind("design"), Slug: "d", Title: "D", Body: "b"}
+	if err := s.CreateDocument(ctx, &d); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+
+	t.Run("initiative", func(t *testing.T) {
+		before, _ := s.GetInitiative(ctx, i.ID)
+		if !before.ArchivedAt.IsZero() {
+			t.Fatalf("new initiative archived: %v", before.ArchivedAt)
+		}
+		if err := s.SetInitiativeArchived(ctx, i.ID, at); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := s.GetInitiative(ctx, i.ID)
+		if !got.ArchivedAt.Equal(at) || !got.UpdatedAt.Equal(before.UpdatedAt) {
+			t.Errorf("archived_at=%v updated_at=%v; want %v and %v", got.ArchivedAt, got.UpdatedAt, at, before.UpdatedAt)
+		}
+		got.Title = "Renamed"
+		if err := s.UpdateInitiative(ctx, &got); err != nil {
+			t.Fatal(err)
+		}
+		stale := before
+		stale.Title = "Stale"
+		if err := s.UpdateInitiative(ctx, &stale); err != nil {
+			t.Fatal(err)
+		}
+		if after, _ := s.GetInitiative(ctx, i.ID); !after.ArchivedAt.Equal(at) {
+			t.Errorf("UpdateInitiative changed archived_at to %v", after.ArchivedAt)
+		}
+		all, err := s.ListInitiatives(ctx)
+		if err != nil || len(all) != 1 || !all[0].ArchivedAt.Equal(at) {
+			t.Errorf("ListInitiatives = %+v, %v", all, err)
+		}
+		cur, _ := s.GetInitiative(ctx, i.ID)
+		if err := s.SetInitiativeArchived(ctx, i.ID, time.Time{}); err != nil {
+			t.Fatal(err)
+		}
+		cleared, _ := s.GetInitiative(ctx, i.ID)
+		if !cleared.ArchivedAt.IsZero() || !cleared.UpdatedAt.Equal(cur.UpdatedAt) {
+			t.Errorf("after clear archived_at=%v updated_at=%v; want zero and %v", cleared.ArchivedAt, cleared.UpdatedAt, cur.UpdatedAt)
+		}
+		if err := s.SetInitiativeArchived(ctx, 999, at); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("unknown initiative: %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("document", func(t *testing.T) {
+		before, _ := s.GetDocument(ctx, d.ID)
+		if err := s.SetDocumentArchived(ctx, d.ID, at); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := s.GetDocument(ctx, d.ID)
+		if !got.ArchivedAt.Equal(at) || !got.UpdatedAt.Equal(before.UpdatedAt) {
+			t.Errorf("archived_at=%v updated_at=%v; want %v and %v", got.ArchivedAt, got.UpdatedAt, at, before.UpdatedAt)
+		}
+		stale := before
+		stale.Title = "Stale"
+		if err := s.UpdateDocument(ctx, &stale); err != nil {
+			t.Fatal(err)
+		}
+		if after, _ := s.GetDocument(ctx, d.ID); !after.ArchivedAt.Equal(at) {
+			t.Errorf("UpdateDocument changed archived_at to %v", after.ArchivedAt)
+		}
+		docs, err := s.ListDocuments(ctx, store.DocumentFilter{})
+		if err != nil || len(docs) != 1 || !docs[0].ArchivedAt.Equal(at) {
+			t.Errorf("ListDocuments = %+v, %v", docs, err)
+		}
+		cur, _ := s.GetDocument(ctx, d.ID)
+		if err := s.SetDocumentArchived(ctx, d.ID, time.Time{}); err != nil {
+			t.Fatal(err)
+		}
+		cleared, _ := s.GetDocument(ctx, d.ID)
+		if !cleared.ArchivedAt.IsZero() || !cleared.UpdatedAt.Equal(cur.UpdatedAt) {
+			t.Errorf("after clear archived_at=%v updated_at=%v; want zero and %v", cleared.ArchivedAt, cleared.UpdatedAt, cur.UpdatedAt)
+		}
+		if err := s.SetDocumentArchived(ctx, 999, at); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("unknown document: %v, want ErrNotFound", err)
+		}
+	})
 }

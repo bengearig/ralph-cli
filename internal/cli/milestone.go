@@ -117,6 +117,9 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 			if err := a.printf("%s  %s\ninitiative: %s\nslug: %s\nstatus: %s\n", m.ID, m.Title, m.InitiativeID, m.Slug, m.Status); err != nil {
 				return err
 			}
+			if err := a.printf("%s", archivedLine("", m.Archived, m.InitiativeID)); err != nil {
+				return err
+			}
 			if m.Branch != "" {
 				if err := a.printf("branch: %s\n", branchLine(m)); err != nil {
 					return err

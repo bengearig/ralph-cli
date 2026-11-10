@@ -16,6 +16,7 @@ type InitiativeView struct {
 	Brief        string `json:"brief"`
 	CreatedAt    string `json:"created_at"`
 	UpdatedAt    string `json:"updated_at"`
+	ArchivedAt   string `json:"archived_at,omitempty"`
 	IndexWarning string `json:"index_warning,omitempty"`
 }
 
@@ -33,6 +34,7 @@ type MilestoneView struct {
 	HeadCommit   string         `json:"head_commit,omitempty"`
 	CreatedAt    string         `json:"created_at"`
 	UpdatedAt    string         `json:"updated_at"`
+	Archived     bool           `json:"archived,omitempty"`
 	IndexWarning string         `json:"index_warning,omitempty"`
 }
 
@@ -51,6 +53,7 @@ type TaskView struct {
 	Notes              []NoteView `json:"notes,omitempty"`
 	CreatedAt          string     `json:"created_at"`
 	UpdatedAt          string     `json:"updated_at"`
+	Archived           bool       `json:"archived,omitempty"`
 	IndexWarning       string     `json:"index_warning,omitempty"`
 }
 
@@ -70,6 +73,8 @@ type DocumentView struct {
 	Body         string `json:"body,omitempty"`
 	CreatedAt    string `json:"created_at"`
 	UpdatedAt    string `json:"updated_at"`
+	ArchivedAt   string `json:"archived_at,omitempty"`
+	Archived     bool   `json:"archived,omitempty"`
 	IndexWarning string `json:"index_warning,omitempty"`
 }
 
@@ -102,18 +107,26 @@ type InitiativeStatus struct {
 
 func ts(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 
+func tsIfSet(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return ts(t)
+}
+
 func initiativeView(i domain.Initiative) InitiativeView {
 	return InitiativeView{
-		ID:        domain.FormatID(domain.KindInitiative, i.ID),
-		Slug:      i.Slug,
-		Title:     i.Title,
-		Brief:     i.Brief,
-		CreatedAt: ts(i.CreatedAt),
-		UpdatedAt: ts(i.UpdatedAt),
+		ID:         domain.FormatID(domain.KindInitiative, i.ID),
+		Slug:       i.Slug,
+		Title:      i.Title,
+		Brief:      i.Brief,
+		CreatedAt:  ts(i.CreatedAt),
+		UpdatedAt:  ts(i.UpdatedAt),
+		ArchivedAt: tsIfSet(i.ArchivedAt),
 	}
 }
 
-func milestoneView(m domain.Milestone, tasks []domain.Task) MilestoneView {
+func milestoneView(m domain.Milestone, tasks []domain.Task, archived bool) MilestoneView {
 	counts := map[string]int{}
 	for _, t := range tasks {
 		counts[string(t.Status)]++
@@ -132,10 +145,11 @@ func milestoneView(m domain.Milestone, tasks []domain.Task) MilestoneView {
 		HeadCommit:   m.Git.HeadCommit,
 		CreatedAt:    ts(m.CreatedAt),
 		UpdatedAt:    ts(m.UpdatedAt),
+		Archived:     archived,
 	}
 }
 
-func taskView(t domain.Task, notes []domain.TaskNote) TaskView {
+func taskView(t domain.Task, notes []domain.TaskNote, archived bool) TaskView {
 	next := make([]string, 0, 4)
 	for _, s := range t.Status.AllowedNext() {
 		next = append(next, string(s))
@@ -154,6 +168,7 @@ func taskView(t domain.Task, notes []domain.TaskNote) TaskView {
 		Commit:             t.Commit,
 		CreatedAt:          ts(t.CreatedAt),
 		UpdatedAt:          ts(t.UpdatedAt),
+		Archived:           archived,
 	}
 	for _, n := range notes {
 		v.Notes = append(v.Notes, NoteView{ID: domain.FormatID(domain.KindNote, n.ID), Kind: string(n.Kind), Body: n.Body, CreatedAt: ts(n.CreatedAt)})
@@ -161,14 +176,17 @@ func taskView(t domain.Task, notes []domain.TaskNote) TaskView {
 	return v
 }
 
-func documentView(d domain.Document, withBody bool) DocumentView {
+// initiativeArchived is whether the document's initiative is archived.
+func documentView(d domain.Document, withBody, initiativeArchived bool) DocumentView {
 	v := DocumentView{
-		ID:        domain.FormatID(domain.KindDocument, d.ID),
-		Kind:      string(d.Kind),
-		Slug:      d.Slug,
-		Title:     d.Title,
-		CreatedAt: ts(d.CreatedAt),
-		UpdatedAt: ts(d.UpdatedAt),
+		ID:         domain.FormatID(domain.KindDocument, d.ID),
+		Kind:       string(d.Kind),
+		Slug:       d.Slug,
+		Title:      d.Title,
+		CreatedAt:  ts(d.CreatedAt),
+		UpdatedAt:  ts(d.UpdatedAt),
+		ArchivedAt: tsIfSet(d.ArchivedAt),
+		Archived:   !d.ArchivedAt.IsZero() || initiativeArchived,
 	}
 	if d.InitiativeID != nil {
 		v.InitiativeID = domain.FormatID(domain.KindInitiative, *d.InitiativeID)

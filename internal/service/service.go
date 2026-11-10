@@ -110,6 +110,44 @@ func trimmed(p *string) *string {
 	return &v
 }
 
+// initiativeArchived reports whether an initiative is archived.
+func initiativeArchived(ctx context.Context, st store.Store, id int64) (bool, error) {
+	i, err := st.GetInitiative(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	return !i.ArchivedAt.IsZero(), nil
+}
+
+// milestoneArchived reports whether a milestone's initiative is archived.
+func milestoneArchived(ctx context.Context, st store.Store, m domain.Milestone) (bool, error) {
+	return initiativeArchived(ctx, st, m.InitiativeID)
+}
+
+// taskArchived reports whether a task's initiative is archived.
+func taskArchived(ctx context.Context, st store.Store, t domain.Task) (bool, error) {
+	m, err := st.GetMilestone(ctx, t.MilestoneID)
+	if err != nil {
+		return false, err
+	}
+	return milestoneArchived(ctx, st, m)
+}
+
+// archivedInitiatives maps every archived initiative's ID to true, in one query.
+func archivedInitiatives(ctx context.Context, st store.Store) (map[int64]bool, error) {
+	all, err := st.ListInitiatives(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[int64]bool{}
+	for _, i := range all {
+		if !i.ArchivedAt.IsZero() {
+			out[i.ID] = true
+		}
+	}
+	return out, nil
+}
+
 // ---- initiatives ----
 
 type InitiativeInput struct {
@@ -205,7 +243,8 @@ func (s *Service) CreateMilestone(ctx context.Context, in MilestoneInput) (Miles
 	if in.Position < 0 {
 		return MilestoneView{}, fmt.Errorf("%w: position must not be negative", domain.ErrInvalid)
 	}
-	if _, err := s.store.GetInitiative(ctx, in.InitiativeID); err != nil {
+	archived, err := initiativeArchived(ctx, s.store, in.InitiativeID)
+	if err != nil {
 		return MilestoneView{}, err
 	}
 	m := domain.Milestone{
@@ -214,7 +253,7 @@ func (s *Service) CreateMilestone(ctx context.Context, in MilestoneInput) (Miles
 		Description:  strings.TrimSpace(in.Description),
 		Position:     in.Position,
 	}
-	err := createWithSlug(in.Slug, m.Title, "milestone", func(slug string) error {
+	err = createWithSlug(in.Slug, m.Title, "milestone", func(slug string) error {
 		m.Slug = slug
 		m.Position = in.Position
 		return s.store.CreateMilestone(ctx, &m)
@@ -222,7 +261,7 @@ func (s *Service) CreateMilestone(ctx context.Context, in MilestoneInput) (Miles
 	if err != nil {
 		return MilestoneView{}, err
 	}
-	v := milestoneView(m, nil)
+	v := milestoneView(m, nil, archived)
 	v.IndexWarning = s.indexMilestone(ctx, m)
 	return v, nil
 }
@@ -236,7 +275,11 @@ func (s *Service) GetMilestone(ctx context.Context, id int64) (MilestoneView, er
 	if err != nil {
 		return MilestoneView{}, err
 	}
-	return milestoneView(m, tasks), nil
+	archived, err := milestoneArchived(ctx, s.store, m)
+	if err != nil {
+		return MilestoneView{}, err
+	}
+	return milestoneView(m, tasks, archived), nil
 }
 
 func (s *Service) ListMilestones(ctx context.Context, initiativeID int64) ([]MilestoneView, error) {
@@ -257,9 +300,13 @@ func (s *Service) ListMilestones(ctx context.Context, initiativeID int64) ([]Mil
 	for _, t := range tasks {
 		byMilestone[t.MilestoneID] = append(byMilestone[t.MilestoneID], t)
 	}
+	archived, err := archivedInitiatives(ctx, s.store)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]MilestoneView, 0, len(ms))
 	for _, m := range ms {
-		out = append(out, milestoneView(m, byMilestone[m.ID]))
+		out = append(out, milestoneView(m, byMilestone[m.ID], archived[m.InitiativeID]))
 	}
 	return out, nil
 }
@@ -291,7 +338,11 @@ func (s *Service) UpdateMilestone(ctx context.Context, id int64, p MilestonePatc
 	if err != nil {
 		return MilestoneView{}, err
 	}
-	v := milestoneView(m, tasks)
+	archived, err := milestoneArchived(ctx, s.store, m)
+	if err != nil {
+		return MilestoneView{}, err
+	}
+	v := milestoneView(m, tasks, archived)
 	v.IndexWarning = s.indexMilestone(ctx, m)
 	return v, nil
 }
@@ -388,7 +439,11 @@ func (s *Service) CreateTask(ctx context.Context, in TaskInput) (TaskView, error
 	if err := s.store.CreateTask(ctx, &t); err != nil {
 		return TaskView{}, err
 	}
-	v := taskView(t, nil)
+	archived, err := milestoneArchived(ctx, s.store, m)
+	if err != nil {
+		return TaskView{}, err
+	}
+	v := taskView(t, nil, archived)
 	v.IndexWarning = s.indexTask(ctx, t, m.InitiativeID)
 	return v, nil
 }
@@ -403,7 +458,11 @@ func (s *Service) GetTask(ctx context.Context, id int64) (TaskView, error) {
 	if err != nil {
 		return TaskView{}, err
 	}
-	return taskView(t, notes), nil
+	archived, err := taskArchived(ctx, s.store, t)
+	if err != nil {
+		return TaskView{}, err
+	}
+	return taskView(t, notes, archived), nil
 }
 
 func (s *Service) ListTasks(ctx context.Context, f TaskFilter) ([]TaskView, error) {
@@ -421,9 +480,21 @@ func (s *Service) ListTasks(ctx context.Context, f TaskFilter) ([]TaskView, erro
 	if err != nil {
 		return nil, err
 	}
+	ms, err := s.store.ListMilestones(ctx, 0)
+	if err != nil {
+		return nil, err
+	}
+	archivedInit, err := archivedInitiatives(ctx, s.store)
+	if err != nil {
+		return nil, err
+	}
+	archivedMilestone := make(map[int64]bool, len(ms))
+	for _, m := range ms {
+		archivedMilestone[m.ID] = archivedInit[m.InitiativeID]
+	}
 	out := make([]TaskView, 0, len(tasks))
 	for _, t := range tasks {
-		out = append(out, taskView(t, nil))
+		out = append(out, taskView(t, nil, archivedMilestone[t.MilestoneID]))
 	}
 	return out, nil
 }
@@ -468,7 +539,11 @@ func (s *Service) UpdateTask(ctx context.Context, id int64, p TaskPatch) (TaskVi
 	if err != nil {
 		return TaskView{}, err
 	}
-	v := taskView(t, nil)
+	archived, err := milestoneArchived(ctx, s.store, m)
+	if err != nil {
+		return TaskView{}, err
+	}
+	v := taskView(t, nil, archived)
 	v.IndexWarning = s.indexTask(ctx, t, m.InitiativeID)
 	return v, nil
 }
@@ -519,7 +594,11 @@ func (s *Service) SetTaskStatus(ctx context.Context, id int64, to domain.Status,
 		if err != nil {
 			return err
 		}
-		out = taskView(t, notes)
+		archived, err := taskArchived(ctx, tx, t)
+		if err != nil {
+			return err
+		}
+		out = taskView(t, notes, archived)
 		return nil
 	})
 	return out, err
@@ -560,7 +639,11 @@ func (s *Service) ReopenTask(ctx context.Context, id int64, reason string) (Task
 		if err != nil {
 			return err
 		}
-		out = taskView(t, notes)
+		archived, err := taskArchived(ctx, tx, t)
+		if err != nil {
+			return err
+		}
+		out = taskView(t, notes, archived)
 		return nil
 	})
 	return out, err
@@ -634,8 +717,10 @@ func (s *Service) CreateDocument(ctx context.Context, in DocumentInput) (Documen
 		return DocumentView{}, err
 	}
 	d := domain.Document{Kind: in.Kind, Title: strings.TrimSpace(in.Title), Body: strings.TrimSpace(in.Body)}
+	var initiativeArchivedNow bool
 	if in.InitiativeID != 0 {
-		if _, err := s.store.GetInitiative(ctx, in.InitiativeID); err != nil {
+		var err error
+		if initiativeArchivedNow, err = initiativeArchived(ctx, s.store, in.InitiativeID); err != nil {
 			return DocumentView{}, err
 		}
 		id := in.InitiativeID
@@ -648,9 +733,17 @@ func (s *Service) CreateDocument(ctx context.Context, in DocumentInput) (Documen
 	if err != nil {
 		return DocumentView{}, err
 	}
-	v := documentView(d, true)
+	v := documentView(d, true, initiativeArchivedNow)
 	v.IndexWarning = s.indexDocument(ctx, d)
 	return v, nil
+}
+
+// documentInitiativeArchived reports whether the document's initiative, if any, is archived.
+func documentInitiativeArchived(ctx context.Context, st store.Store, d domain.Document) (bool, error) {
+	if d.InitiativeID == nil {
+		return false, nil
+	}
+	return initiativeArchived(ctx, st, *d.InitiativeID)
 }
 
 func (s *Service) GetDocument(ctx context.Context, id int64) (DocumentView, error) {
@@ -658,7 +751,11 @@ func (s *Service) GetDocument(ctx context.Context, id int64) (DocumentView, erro
 	if err != nil {
 		return DocumentView{}, err
 	}
-	return documentView(d, true), nil
+	archived, err := documentInitiativeArchived(ctx, s.store, d)
+	if err != nil {
+		return DocumentView{}, err
+	}
+	return documentView(d, true, archived), nil
 }
 
 // ListDocuments omits bodies; fetch a document to read it.
@@ -677,9 +774,13 @@ func (s *Service) ListDocuments(ctx context.Context, f DocumentFilter) ([]Docume
 	if err != nil {
 		return nil, err
 	}
+	archived, err := archivedInitiatives(ctx, s.store)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]DocumentView, 0, len(docs))
 	for _, d := range docs {
-		out = append(out, documentView(d, false))
+		out = append(out, documentView(d, false, d.InitiativeID != nil && archived[*d.InitiativeID]))
 	}
 	return out, nil
 }
@@ -708,7 +809,11 @@ func (s *Service) UpdateDocument(ctx context.Context, id int64, p DocumentPatch)
 	if err := s.store.UpdateDocument(ctx, &d); err != nil {
 		return DocumentView{}, err
 	}
-	v := documentView(d, true)
+	archived, err := documentInitiativeArchived(ctx, s.store, d)
+	if err != nil {
+		return DocumentView{}, err
+	}
+	v := documentView(d, true, archived)
 	v.IndexWarning = s.indexDocument(ctx, d)
 	return v, nil
 }

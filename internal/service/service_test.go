@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bengearig/ralph/internal/config"
 	"github.com/bengearig/ralph/internal/domain"
@@ -630,5 +631,88 @@ func TestInTx(t *testing.T) {
 	got, _ = e.svc.GetTask(ctx, id)
 	if m.Branch != g.Branch || m.HeadCommit != commit || got.Commit != commit {
 		t.Errorf("committed writes missing: milestone %+v, task %+v", m, got)
+	}
+}
+
+func TestArchivedViews(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	iid, mid := e.scaffold(t)
+	task, err := e.svc.CreateTask(ctx, TaskInput{MilestoneID: mid, Title: "T"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tid := mustID(t, domain.KindTask, task.ID)
+	inDoc, err := e.svc.CreateDocument(ctx, DocumentInput{InitiativeID: iid, Kind: domain.DocKind("design"), Title: "Scoped"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wide, err := e.svc.CreateDocument(ctx, DocumentInput{Kind: domain.DocKind("design"), Title: "Wide"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wideID := mustID(t, domain.KindDocument, wide.ID)
+
+	fields := func(v any) map[string]any {
+		t.Helper()
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	want := func(name string, v any, archivedAt, archived bool) {
+		t.Helper()
+		m := fields(v)
+		if _, ok := m["archived_at"]; ok != archivedAt {
+			t.Errorf("%s: archived_at present = %v, want %v", name, ok, archivedAt)
+		}
+		if _, ok := m["archived"]; ok != archived {
+			t.Errorf("%s: archived present = %v, want %v", name, ok, archived)
+		}
+	}
+	snapshot := func(archivedInitiative, archivedWide bool) {
+		t.Helper()
+		in, _ := e.svc.GetInitiative(ctx, iid)
+		inList, _ := e.svc.ListInitiatives(ctx)
+		ms, _ := e.svc.GetMilestone(ctx, mid)
+		msList, _ := e.svc.ListMilestones(ctx, 0)
+		tk, _ := e.svc.GetTask(ctx, tid)
+		tkList, _ := e.svc.ListTasks(ctx, TaskFilter{})
+		d, _ := e.svc.GetDocument(ctx, mustID(t, domain.KindDocument, inDoc.ID))
+		dList, _ := e.svc.ListDocuments(ctx, DocumentFilter{InitiativeID: iid})
+		w, _ := e.svc.GetDocument(ctx, wideID)
+		wList, _ := e.svc.ListDocuments(ctx, DocumentFilter{ProjectOnly: true})
+		want("initiative", in, archivedInitiative, false)
+		want("initiative list", inList[0], archivedInitiative, false)
+		want("milestone", ms, false, archivedInitiative)
+		want("milestone list", msList[0], false, archivedInitiative)
+		want("task", tk, false, archivedInitiative)
+		want("task list", tkList[0], false, archivedInitiative)
+		want("scoped doc", d, false, archivedInitiative)
+		want("scoped doc list", dList[0], false, archivedInitiative)
+		want("project doc", w, archivedWide, archivedWide)
+		want("project doc list", wList[0], archivedWide, archivedWide)
+	}
+
+	snapshot(false, false)
+
+	st := e.svc.Store()
+	at := time.Date(2026, 5, 6, 7, 8, 9, 0, time.UTC)
+	if err := st.SetInitiativeArchived(ctx, iid, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDocumentArchived(ctx, wideID, at); err != nil {
+		t.Fatal(err)
+	}
+	snapshot(true, true)
+
+	in, _ := e.svc.GetInitiative(ctx, iid)
+	if in.ArchivedAt != "2026-05-06T07:08:09Z" {
+		t.Errorf("initiative archived_at = %q", in.ArchivedAt)
 	}
 }

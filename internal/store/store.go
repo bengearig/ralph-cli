@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/bengearig/ralph/internal/domain"
 )
@@ -76,6 +77,8 @@ type Store interface {
 	GetInitiative(ctx context.Context, id int64) (domain.Initiative, error)
 	ListInitiatives(ctx context.Context) ([]domain.Initiative, error)
 	UpdateInitiative(ctx context.Context, i *domain.Initiative) error
+	// SetInitiativeArchived sets archived_at, or clears it when at is zero. It leaves updated_at alone.
+	SetInitiativeArchived(ctx context.Context, id int64, at time.Time) error
 	// DeleteInitiative removes an initiative with its milestones, tasks, notes, and documents.
 	DeleteInitiative(ctx context.Context, id int64) error
 
@@ -109,6 +112,8 @@ type Store interface {
 	GetDocument(ctx context.Context, id int64) (domain.Document, error)
 	ListDocuments(ctx context.Context, f DocumentFilter) ([]domain.Document, error)
 	UpdateDocument(ctx context.Context, d *domain.Document) error
+	// SetDocumentArchived sets archived_at, or clears it when at is zero. It leaves updated_at alone.
+	SetDocumentArchived(ctx context.Context, id int64, at time.Time) error
 	DeleteDocument(ctx context.Context, id int64) error
 
 	// CountCascade counts what deleting the initiative, milestone, or task

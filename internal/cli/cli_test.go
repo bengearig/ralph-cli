@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bengearig/ralph/internal/config"
 	"github.com/bengearig/ralph/internal/domain"
@@ -981,5 +982,59 @@ func TestDeleteJSON(t *testing.T) {
 	out, errOut, err := h.runStreams("y\n", true, "--json", "task", "delete", "T-1")
 	if err != nil || !strings.Contains(errOut, "[y/N]") || !strings.Contains(out, `"id": "T-1"`) {
 		t.Errorf("out=%q errOut=%q err=%v", out, errOut, err)
+	}
+}
+
+func TestShowArchivedState(t *testing.T) {
+	h := newTestEnv(t, true)
+	h.ok("initiative", "create", "--title", "Customer SSO")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Callback")
+	h.ok("task", "create", "--milestone", "M-1", "--title", "Route", "--description", "Add route", "--criteria", "Tests pass")
+	h.ok("doc", "create", "--initiative", "I-1", "--kind", "design", "--title", "Scoped", "--body", "x")
+	h.ok("doc", "create", "--kind", "design", "--title", "Wide", "--body", "y")
+	shows := [][]string{
+		{"initiative", "show", "I-1"}, {"milestone", "show", "M-1"}, {"task", "show", "T-1"},
+		{"doc", "show", "D-1"}, {"doc", "show", "D-2"},
+	}
+	plain := make([]string, len(shows))
+	for n, args := range shows {
+		plain[n] = h.ok(args...)
+		if strings.Contains(plain[n], "archived") {
+			t.Errorf("ralph %v mentions archived with nothing archived:\n%s", args, plain[n])
+		}
+	}
+
+	cfg, err := config.Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Embeddings.Provider = config.EmbeddingsNone
+	svc, closeFn, err := service.Open(context.Background(), cfg, h.dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeFn()
+	at := time.Date(2026, 5, 6, 7, 8, 9, 0, time.UTC)
+	if err := svc.Store().SetInitiativeArchived(context.Background(), 1, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Store().SetDocumentArchived(context.Background(), 2, at); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"archived: 2026-05-06T07:08:09Z\n",
+		"archived: yes (initiative I-1)\n",
+		"archived: yes (initiative I-1)\n",
+		"archived: yes (initiative I-1)\n",
+		"archived: 2026-05-06T07:08:09Z\n",
+	}
+	for n, args := range shows {
+		got := h.ok(args...)
+		if !strings.Contains(got, want[n]) {
+			t.Errorf("ralph %v lacks %q:\n%s", args, want[n], got)
+		}
+		if strings.Replace(got, want[n], "", 1) != plain[n] {
+			t.Errorf("ralph %v differs beyond the archived line:\n%s\nvs\n%s", args, got, plain[n])
+		}
 	}
 }

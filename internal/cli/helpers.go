@@ -145,3 +145,16 @@ func branchLine(m service.MilestoneView) string {
 	}
 	return m.Branch + " (" + strings.Join(commits, ", ") + ")"
 }
+
+// archivedLine is the show-output line for archived state, empty when nothing
+// is archived. at is the item's own archived_at; initiative is named when only
+// that initiative is archived.
+func archivedLine(at string, archived bool, initiative string) string {
+	switch {
+	case at != "":
+		return "archived: " + at + "\n"
+	case archived:
+		return "archived: yes (initiative " + initiative + ")\n"
+	}
+	return ""
+}

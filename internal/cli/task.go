@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -111,7 +112,11 @@ func (a *app) newTaskCommand() *cobra.Command {
 			if a.jsonOut {
 				return a.writeJSON(v)
 			}
-			return a.printTask(v)
+			initiative, err := taskInitiative(cmd.Context(), svc, v)
+			if err != nil {
+				return err
+			}
+			return a.printTask(v, initiative)
 		},
 	}
 
@@ -239,7 +244,11 @@ func (a *app) newTaskCommand() *cobra.Command {
 			if v == nil {
 				return a.printf("no IN_PROGRESS or TODO tasks in %s\n", domain.FormatID(domain.KindMilestone, mID))
 			}
-			return a.printTask(*v)
+			initiative, err := taskInitiative(cmd.Context(), svc, *v)
+			if err != nil {
+				return err
+			}
+			return a.printTask(*v, initiative)
 		},
 	}
 	next.Flags().StringVar(&nextMilestone, "milestone", "", "milestone ID (required)")
@@ -267,9 +276,28 @@ func (a *app) printTaskTable(tasks []service.TaskView) error {
 	return a.writeTable([]string{"ID", "MILESTONE", "POS", "STATUS", "FAILS", "TITLE"}, rows)
 }
 
-func (a *app) printTask(v service.TaskView) error {
+// taskInitiative names a task's initiative, looked up only when it is archived.
+func taskInitiative(ctx context.Context, svc *service.Service, v service.TaskView) (string, error) {
+	if !v.Archived {
+		return "", nil
+	}
+	mID, err := parseIDArg(domain.KindMilestone, v.MilestoneID)
+	if err != nil {
+		return "", err
+	}
+	m, err := svc.GetMilestone(ctx, mID)
+	if err != nil {
+		return "", err
+	}
+	return m.InitiativeID, nil
+}
+
+func (a *app) printTask(v service.TaskView, initiative string) error {
 	if err := a.printf("%s  %s\nmilestone: %s\nstatus: %s (next: %s)\nposition: %d\nfailures: %d\n",
 		v.ID, v.Title, v.MilestoneID, v.Status, orNone(strings.Join(v.AllowedNext, ", ")), v.Position, v.FailureCount); err != nil {
+		return err
+	}
+	if err := a.printf("%s", archivedLine("", v.Archived, initiative)); err != nil {
 		return err
 	}
 	if v.Commit != "" {

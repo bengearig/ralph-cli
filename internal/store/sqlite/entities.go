@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/store"
@@ -15,20 +16,56 @@ type scanner interface{ Scan(dest ...any) error }
 
 // ---- initiatives ----
 
-const initiativeCols = `id, slug, title, brief, created_at, updated_at`
+const initiativeCols = `id, slug, title, brief, created_at, updated_at, archived_at`
 
 func scanInitiative(sc scanner) (domain.Initiative, error) {
 	var i domain.Initiative
-	var created, updated string
-	if err := sc.Scan(&i.ID, &i.Slug, &i.Title, &i.Brief, &created, &updated); err != nil {
+	var created, updated, archived string
+	if err := sc.Scan(&i.ID, &i.Slug, &i.Title, &i.Brief, &created, &updated, &archived); err != nil {
 		return i, err
 	}
 	var err error
 	if i.CreatedAt, err = parseTime(created); err != nil {
 		return i, err
 	}
-	i.UpdatedAt, err = parseTime(updated)
+	if i.UpdatedAt, err = parseTime(updated); err != nil {
+		return i, err
+	}
+	i.ArchivedAt, err = parseArchivedAt(archived)
 	return i, err
+}
+
+func parseArchivedAt(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
+	}
+	return parseTime(s)
+}
+
+func formatArchivedAt(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return formatTime(t)
+}
+
+// SetInitiativeArchived sets or, for a zero time, clears archived_at without touching updated_at.
+func (s *Store) SetInitiativeArchived(ctx context.Context, id int64, at time.Time) error {
+	return s.setArchived(ctx, "initiatives", domain.KindInitiative, id, at)
+}
+
+// SetDocumentArchived sets or, for a zero time, clears archived_at without touching updated_at.
+func (s *Store) SetDocumentArchived(ctx context.Context, id int64, at time.Time) error {
+	return s.setArchived(ctx, "documents", domain.KindDocument, id, at)
+}
+
+func (s *Store) setArchived(ctx context.Context, table string, kind domain.Kind, id int64, at time.Time) error {
+	what := domain.FormatID(kind, id)
+	res, err := s.q.ExecContext(ctx, `UPDATE `+table+` SET archived_at = ? WHERE id = ?`, formatArchivedAt(at), id)
+	if err != nil {
+		return mapErr(err, "archiving "+what)
+	}
+	return checkAffected(res, what)
 }
 
 func (s *Store) CreateInitiative(ctx context.Context, i *domain.Initiative) error {
@@ -339,13 +376,13 @@ func (s *Store) DeleteTaskNote(ctx context.Context, id int64) error {
 
 // ---- documents ----
 
-const documentCols = `id, initiative_id, kind, slug, title, body, created_at, updated_at`
+const documentCols = `id, initiative_id, kind, slug, title, body, created_at, updated_at, archived_at`
 
 func scanDocument(sc scanner) (domain.Document, error) {
 	var d domain.Document
 	var initiative sql.NullInt64
-	var kind, created, updated string
-	if err := sc.Scan(&d.ID, &initiative, &kind, &d.Slug, &d.Title, &d.Body, &created, &updated); err != nil {
+	var kind, created, updated, archived string
+	if err := sc.Scan(&d.ID, &initiative, &kind, &d.Slug, &d.Title, &d.Body, &created, &updated, &archived); err != nil {
 		return d, err
 	}
 	if initiative.Valid {
@@ -357,7 +394,10 @@ func scanDocument(sc scanner) (domain.Document, error) {
 	if d.CreatedAt, err = parseTime(created); err != nil {
 		return d, err
 	}
-	d.UpdatedAt, err = parseTime(updated)
+	if d.UpdatedAt, err = parseTime(updated); err != nil {
+		return d, err
+	}
+	d.ArchivedAt, err = parseArchivedAt(archived)
 	return d, err
 }
 
