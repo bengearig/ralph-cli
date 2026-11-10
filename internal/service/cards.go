@@ -428,6 +428,8 @@ var ErrNoTaskManager = errors.New("no task manager is configured; set task_manag
 type SyncOptions struct {
 	InitiativeID    int64
 	IncludeArchived bool
+	// Progress, when set, is called with each item as soon as its card is created.
+	Progress func(SyncItem)
 }
 
 // SyncItem is the outcome for one resource. For a skipped item, Error holds the reason.
@@ -447,6 +449,8 @@ type SyncReport struct {
 	Skipped int        `json:"skipped"`
 	Failed  int        `json:"failed"`
 	Items   []SyncItem `json:"items"`
+
+	progress func(SyncItem)
 }
 
 const (
@@ -468,13 +472,16 @@ func (r *SyncReport) add(it SyncItem) {
 		r.Failed++
 	}
 	r.Items = append(r.Items, it)
+	if it.Outcome == "created" && r.progress != nil {
+		r.progress(it)
+	}
 }
 
 // SyncCards creates missing cards and pushes pending changes for every
 // resource, parents first. A failure never stops the sync. It must not run
 // inside a transaction.
 func (s *Service) SyncCards(ctx context.Context, opts SyncOptions) (SyncReport, error) {
-	report := SyncReport{Items: []SyncItem{}}
+	report := SyncReport{Items: []SyncItem{}, progress: opts.Progress}
 	if s.taskManager == nil {
 		return report, ErrNoTaskManager
 	}

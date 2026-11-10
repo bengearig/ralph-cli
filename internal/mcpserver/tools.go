@@ -583,3 +583,20 @@ func (t *tools) status(ctx context.Context, _ *mcp.CallToolRequest, in statusIn)
 	v, err := t.svc.Status(ctx, iID, service.ListOptions{IncludeArchived: in.IncludeArchived})
 	return nil, v, toolError(err)
 }
+
+type cardsSyncIn struct {
+	InitiativeID    string `json:"initiative_id,omitempty" jsonschema:"only this initiative, for example I-8"`
+	IncludeArchived bool   `json:"include_archived,omitempty" jsonschema:"also sync archived initiatives"`
+}
+
+func (t *tools) cardsSync(ctx context.Context, _ *mcp.CallToolRequest, in cardsSyncIn) (*mcp.CallToolResult, service.SyncReport, error) {
+	iID, err := parseOptionalID(domain.KindInitiative, in.InitiativeID)
+	if err != nil {
+		return nil, service.SyncReport{}, err
+	}
+	v, err := t.svc.SyncCards(ctx, service.SyncOptions{InitiativeID: iID, IncludeArchived: in.IncludeArchived})
+	if errors.Is(err, service.ErrNoTaskManager) && t.tmErr != nil {
+		err = fmt.Errorf("task manager disabled: %w", t.tmErr)
+	}
+	return nil, v, toolError(err)
+}

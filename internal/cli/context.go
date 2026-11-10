@@ -109,6 +109,7 @@ func (a *app) service(ctx context.Context) (*service.Service, error) {
 	}
 	tm, err := service.NewTaskManager(l.Config)
 	if err != nil {
+		a.tmErr = err
 		fmt.Fprintf(a.streams.Err, "task manager disabled: %v\n", err)
 	}
 	svc, closeFn, err := service.OpenWithTaskManager(ctx, l.Config, p.Root, a.logger(), tm)

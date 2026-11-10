@@ -40,6 +40,7 @@ type app struct {
 	cfg     *config.Loaded
 	log     *slog.Logger
 	svc     *service.Service
+	tmErr   error
 }
 
 // Execute runs the ralph command tree with the given arguments.
@@ -83,6 +84,7 @@ open a pull request, and hand off to humans for review.`,
 		a.newMCPCommand(),
 		a.newLoopCommand(),
 		a.newPRCommand(),
+		a.newCardsCommand(),
 		a.newConfigCommand(),
 		a.newVersionCommand(),
 	)

@@ -242,6 +242,14 @@ func (c *Config) StoragePath(root string) string {
 	return filepath.Join(root, c.Storage.Path)
 }
 
+// AllowTaskManager makes name a valid task_manager.provider. Tests use it to
+// select a fake provider; it is not safe to call concurrently with Validate.
+func AllowTaskManager(name string) {
+	if !slices.Contains(knownTaskManagers, name) {
+		knownTaskManagers = append(knownTaskManagers, name)
+	}
+}
+
 // Validate reports every invalid setting at once.
 func (c *Config) Validate() error {
 	var errs []error
