@@ -61,6 +61,8 @@ on itself.
 - Deleting a milestone, or an initiative, that a milestone outside the deleted set depends on is refused without
   `force`; the refusal and the delete preview name the dependents. A forced delete drops the edges through the cascade.
 
+See [ADR 0027](adr/0027-milestone-dependencies.md).
+
 ### Task (`T-n`)
 
 Receive creates tasks as `PROPOSED` with only a title and perhaps a summary. Articulate fills in the description

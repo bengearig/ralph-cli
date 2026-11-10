@@ -30,6 +30,8 @@ Work with the user, using the `ralph` MCP tools:
 4. Within a milestone, and with the user's agreement, you may add tasks (`task_create`), split or merge them, reorder
    them (`position`), or cancel them (`task_set_status` `CANCELLED` with a reason). Cancel by default: delete a task (`task_delete`) only if it was created by mistake, and only after asking the user. Each task must be small enough to
    finish in one loop iteration and must never depend on a later one.
+   If a milestone needs another milestone's code merged first, in this initiative or another, record it with
+   `milestone_update` and `depends_on` rather than leaving it only in a task description.
 5. If a milestone needs to change (added, removed, re-scoped, or reordered), or the instructions themselves turn out
    to be unclear, stop. Add a `KICKBACK` note (`task_add_note`) to the affected task when there is one, explain the
    problem, and suggest `/ralph:receive <initiative ID>` (the Kickback Clause) rather than guessing.

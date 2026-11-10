@@ -34,8 +34,8 @@ Commit hashes recorded by the loop are shown shortened in text output and in ful
 |---|---|
 | `ralph initiative create --title <t> [--brief <text> \| --brief-file <path>] [--slug <s>]` | Record received instructions. |
 | `ralph initiative list` / `show <id>` / `update <id> [--title] [--brief \| --brief-file]` | Browse and edit. `show` includes the milestone table. |
-| `ralph milestone create --initiative <id> --title <t> [--description] [--position] [--slug]` | Add a milestone. |
-| `ralph milestone list [--initiative <id>]` / `show <id>` / `update <id> ...` | Browse and edit. `show` includes tasks in loop order, and a `branch:` line with the base and head commits once the loop has recorded them. `update` never changes the recorded git state. |
+| `ralph milestone create --initiative <id> --title <t> [--description] [--position] [--slug] [--depends-on <ids>]` | Add a milestone. `--depends-on M-15,M-16` (repeatable) records the milestones it depends on; see [Milestone dependencies](#milestone-dependencies). |
+| `ralph milestone list [--initiative <id>]` / `show <id>` / `update <id> ...` | Browse and edit. `show` includes tasks in loop order, and a `branch:` line with the base and head commits once the loop has recorded them, and a `depends on:` line when the milestone has dependencies. `update` never changes the recorded git state; `--depends-on <ids>` replaces the milestone's dependencies and `--no-depends-on` removes them (use one or the other). |
 | `ralph task create --milestone <id> --title <t> [--description] [--criteria] [--position]` | Propose a task (status `PROPOSED`). |
 | `ralph task list [--milestone] [--initiative] [--status S,...]` | List tasks in loop order. |
 | `ralph task show <id>` | Show a task with its notes and allowed next statuses, and a `commit:` line once the loop has committed it. |
@@ -47,7 +47,7 @@ Commit hashes recorded by the loop are shown shortened in text output and in ful
 | `ralph doc list [--initiative <id> \| --project] [--kind <k>]` / `show <id>` / `update <id> ...` | Browse and edit documents. |
 | `ralph initiative delete <id>`, `milestone delete <id>`, `task delete <id>` `[--force] [--yes]`, `ralph doc delete <id>`, `ralph note delete <id>` `[--yes]` | Delete permanently. See [Deleting](#deleting). |
 | `ralph initiative archive <id>` / `unarchive <id>`, `ralph doc archive <id>` / `unarchive <id>` | Hide an item and make it read-only, or undo that. See [Archiving](#archiving). |
-| `ralph status [--initiative <id>]` | Progress summary: milestones with derived status and task counts. |
+| `ralph status [--initiative <id>]` | Progress summary: milestones with derived status and task counts, and `waiting on M-n` for a milestone whose dependencies are not satisfied. |
 
 ### Cards
 
@@ -204,9 +204,9 @@ the document is project-wide. The file's record is marked `done` with a `created
 | Command | Purpose |
 |---|---|
 | `ralph loop --milestone <id> --dry-run [--show-prompt]` | Print the loop plan: branch, harness and model, exact command, ordered tasks, policy, and optionally the first prompt. |
-| `ralph loop --milestone <id>` | Run the loop: one fresh harness session per task on the milestone's branch, committing each `DONE` task. The progress feed goes to stderr, transcripts to `.ralph/runs/`. See [the loop](loop.md). |
+| `ralph loop --milestone <id> [--force]` | Run the loop: one fresh harness session per task on the milestone's branch, committing each `DONE` task. The progress feed goes to stderr, transcripts to `.ralph/runs/`. See [the loop](loop.md). |
 | `ralph milestone reconcile <id> [--branch <name>] [--reopen <ids>] [--reason <text>] [--accept]` | Report how the milestone's branch differs from its record and resolve it. See [below](#ralph-milestone-reconcile). |
-| `ralph pr create --milestone <id> --dry-run` | Print the pull request that would be opened, the drift check's result, and any provider configuration problems. |
+| `ralph pr create --milestone <id> [--force] --dry-run` | Print the pull request that would be opened, the drift check's result, and any provider configuration problems. |
 | `ralph pr create --milestone <id>` | Open the pull request. *Not implemented yet (exit code 2).* |
 
 `ralph loop` and `ralph pr create`, including their dry runs, refuse a milestone whose initiative is
@@ -223,6 +223,26 @@ repository or `pr.base_branch` doesn't exist, `pr create` fails with that error.
 `drift:` line with the state and its summary, followed by the task table when the branch has drifted, and reports a
 failed check as a warning. With `--json`, the dry run includes the report as `drift`, or the failure as
 `drift_error`.
+
+### Milestone dependencies
+
+A milestone can record the milestones it depends on, in its own initiative or another: set them with `--depends-on` on
+`ralph milestone create` or `ralph milestone update`. `ralph milestone show` prints them on a `depends on:` line, each
+with an annotation:
+
+```
+depends on: M-1 (merged), M-2 (cancelled), M-3 (waiting: is ARTICULATING, not DONE)
+```
+
+`(merged)` and `(cancelled)` mean the dependency is satisfied; `(waiting: ...)` gives the reason it is not. `ralph
+status` shows `waiting on` and the milestone IDs for a milestone that has unsatisfied dependencies. The annotations
+come from the drift check, so they need a git repository: without one, `show` lists the IDs bare and `status` omits
+`waiting on`, and neither command fails. A milestone that is `DONE` or `CANCELLED` is not checked: `show` lists its
+dependencies bare and `status` never shows it as waiting.
+
+`ralph loop --milestone` and `ralph pr create --milestone` refuse a milestone whose dependencies are not satisfied,
+with exit code `3`, before they change anything in git. `--force` skips that check, and `--dry-run` reports the same
+findings as warnings. The rules and messages are in [The loop](loop.md#milestone-dependencies).
 
 ### `ralph milestone reconcile`
 

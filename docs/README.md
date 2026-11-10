@@ -27,5 +27,6 @@ consequences. For example, [ADR 21](adr/0021-jira-cloud-as-the-first-task-manage
 provider, [ADR 22](adr/0022-create-cards-when-resources-are-created.md) records how cards are created,
 [ADR 23](adr/0023-card-keys-in-branch-names.md) records card keys in branch names, and
 [ADR 24](adr/0024-sync-cards-one-way-with-explicit-backfill.md) records how cards are kept in step, and
-[ADR 26](adr/0026-card-keys-in-commit-messages.md) records card keys in commit messages. Add a new record
+[ADR 26](adr/0026-card-keys-in-commit-messages.md) records card keys in commit messages, and
+[ADR 27](adr/0027-milestone-dependencies.md) records milestone dependencies. Add a new record
 rather than editing an accepted one; mark the old record superseded.
