@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/bengearig/ralph/internal/embed/fake"
+	"github.com/bengearig/ralph/internal/looplock"
 	"github.com/bengearig/ralph/internal/search"
 	"github.com/bengearig/ralph/internal/service"
 	"github.com/bengearig/ralph/internal/store/sqlite"
@@ -124,6 +126,7 @@ func TestToolsAreListedWithSchemas(t *testing.T) {
 		"milestone_create", "milestone_list", "milestone_get", "milestone_update", "milestone_drift", "milestone_reconcile",
 		"task_create", "task_list", "task_get", "task_update", "task_set_status", "task_add_note", "task_next",
 		"doc_create", "doc_list", "doc_get", "doc_update", "search", "status",
+		"initiative_delete", "milestone_delete", "task_delete", "doc_delete", "note_delete",
 	} {
 		if !slices.Contains(names, want) {
 			t.Errorf("missing tool %s", want)
@@ -131,6 +134,177 @@ func TestToolsAreListedWithSchemas(t *testing.T) {
 	}
 	if init := cs.InitializeResult(); init == nil || !strings.Contains(init.Instructions, "RALPH") {
 		t.Error("server instructions missing")
+	}
+	for _, tool := range res.Tools {
+		if !slices.Contains(deleteTools, tool.Name) {
+			continue
+		}
+		a := tool.Annotations
+		if a.ReadOnlyHint || a.DestructiveHint == nil || !*a.DestructiveHint || a.OpenWorldHint == nil || *a.OpenWorldHint {
+			t.Errorf("%s annotations = %+v, want destructive and closed-world", tool.Name, a)
+		}
+	}
+}
+
+var deleteTools = []string{"initiative_delete", "milestone_delete", "task_delete", "doc_delete", "note_delete"}
+
+func TestDeleteToolDescriptionsStatePolicy(t *testing.T) {
+	cs := connect(t)
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, tool := range res.Tools {
+		if !slices.Contains(deleteTools, tool.Name) {
+			continue
+		}
+		seen++
+		wants := []string{"permanent", "CANCELLED", "user has agreed", "Cascades", "Refused"}
+		if tool.Name != "doc_delete" && tool.Name != "note_delete" {
+			wants = append(wants, "force without the user's explicit approval")
+		}
+		if tool.Name == "doc_delete" {
+			wants = []string{"permanent", "CANCELLED", "user has agreed", "nothing blocks it"}
+		}
+		if tool.Name == "note_delete" {
+			wants = []string{"permanent", "CANCELLED", "user has agreed", "Refused"}
+		}
+		for _, w := range wants {
+			if !strings.Contains(tool.Description, w) {
+				t.Errorf("%s description lacks %q: %s", tool.Name, w, tool.Description)
+			}
+		}
+	}
+	if seen != len(deleteTools) {
+		t.Errorf("found %d delete tools, want %d", seen, len(deleteTools))
+	}
+	ins := cs.InitializeResult().Instructions
+	for _, w := range []string{"mistakes", "agreement", "CANCELLED"} {
+		if !strings.Contains(ins, w) {
+			t.Errorf("instructions lack %q", w)
+		}
+	}
+}
+
+func seedDeletable(t *testing.T, cs *mcp.ClientSession) (ms service.MilestoneView, task service.TaskView) {
+	t.Helper()
+	mustOK(t, cs, "initiative_create", map[string]any{"title": "Init"}, nil)
+	mustOK(t, cs, "milestone_create", map[string]any{"initiative_id": "I-1", "title": "Mile"}, &ms)
+	mustOK(t, cs, "task_create", map[string]any{"milestone_id": ms.ID, "title": "Task"}, &task)
+	return ms, task
+}
+
+func TestDeleteProposedTask(t *testing.T) {
+	cs := connect(t)
+	_, task := seedDeletable(t, cs)
+	var v service.DeleteView
+	mustOK(t, cs, "task_delete", map[string]any{"id": task.ID}, &v)
+	if v.ID != task.ID || v.Kind != "task" || len(v.Deleted) != 1 || v.Deleted["tasks"] != 1 {
+		t.Fatalf("delete view = %+v", v)
+	}
+	res := call(t, cs, "task_get", map[string]any{"id": task.ID}, nil)
+	if !res.IsError || !strings.Contains(text(res), "not found") {
+		t.Fatalf("task_get after delete = %q, want not found", text(res))
+	}
+}
+
+func TestMilestoneDeleteNeedsForce(t *testing.T) {
+	cs := connect(t)
+	ms, task := seedDeletable(t, cs)
+	mustOK(t, cs, "task_add_note", map[string]any{"id": task.ID, "body": "hello"}, nil)
+
+	res := call(t, cs, "milestone_delete", map[string]any{"id": ms.ID}, nil)
+	msg := text(res)
+	if !res.IsError || !strings.Contains(msg, "force: true") || !strings.Contains(msg, "ask the user") {
+		t.Fatalf("delete without force = %v %q", res.IsError, msg)
+	}
+	mustOK(t, cs, "task_get", map[string]any{"id": task.ID}, nil)
+
+	var v service.DeleteView
+	mustOK(t, cs, "milestone_delete", map[string]any{"id": ms.ID, "force": true}, &v)
+	if v.ID != ms.ID || v.Kind != "milestone" || v.Deleted["milestones"] != 1 || v.Deleted["tasks"] != 1 || v.Deleted["notes"] < 1 {
+		t.Fatalf("delete view = %+v", v)
+	}
+	if res := call(t, cs, "task_get", map[string]any{"id": task.ID}, nil); !res.IsError {
+		t.Fatal("task survived the cascade")
+	}
+	if res := call(t, cs, "milestone_get", map[string]any{"id": ms.ID}, nil); !res.IsError {
+		t.Fatal("milestone survived its delete")
+	}
+}
+
+func TestInitiativeAndDocDelete(t *testing.T) {
+	cs := connect(t)
+	seedDeletable(t, cs)
+	var doc service.DocumentView
+	mustOK(t, cs, "doc_create", map[string]any{"kind": "design", "title": "Doc", "initiative_id": "I-1"}, &doc)
+
+	res := call(t, cs, "initiative_delete", map[string]any{"id": "I-1"}, nil)
+	if !res.IsError || !strings.Contains(text(res), "force: true") {
+		t.Fatalf("initiative_delete without force = %q", text(res))
+	}
+	var v service.DeleteView
+	mustOK(t, cs, "doc_delete", map[string]any{"id": doc.ID}, &v)
+	if v.Kind != "document" || v.Deleted["documents"] != 1 {
+		t.Fatalf("doc delete view = %+v", v)
+	}
+	mustOK(t, cs, "initiative_delete", map[string]any{"id": "I-1", "force": true}, &v)
+	if v.Kind != "initiative" || v.Deleted["initiatives"] != 1 || v.Deleted["milestones"] != 1 || v.Deleted["tasks"] != 1 {
+		t.Fatalf("initiative delete view = %+v", v)
+	}
+}
+
+func TestNoteDelete(t *testing.T) {
+	cs := connect(t)
+	_, task := seedDeletable(t, cs)
+	var tv service.TaskView
+	mustOK(t, cs, "task_add_note", map[string]any{"id": task.ID, "body": "keep"}, &tv)
+	mustOK(t, cs, "task_add_note", map[string]any{"id": task.ID, "body": "drop"}, &tv)
+	var drop service.NoteView
+	for _, n := range tv.Notes {
+		if n.Body == "drop" {
+			drop = n
+		}
+	}
+	if !strings.HasPrefix(drop.ID, "N-") {
+		t.Fatalf("notes = %+v", tv.Notes)
+	}
+	var v service.DeleteView
+	mustOK(t, cs, "note_delete", map[string]any{"id": drop.ID}, &v)
+	if v.ID != drop.ID || v.Kind != "note" || v.Deleted["notes"] != 1 {
+		t.Fatalf("note delete view = %+v", v)
+	}
+	mustOK(t, cs, "task_get", map[string]any{"id": task.ID}, &tv)
+	for _, n := range tv.Notes {
+		if n.ID == drop.ID || n.Body == "drop" {
+			t.Fatalf("note survived: %+v", tv.Notes)
+		}
+	}
+}
+
+func TestDeleteWrongKindID(t *testing.T) {
+	cs := connect(t)
+	seedDeletable(t, cs)
+	for tool, id := range map[string]string{
+		"doc_delete": "T-1", "task_delete": "D-1", "milestone_delete": "T-1", "initiative_delete": "M-1", "note_delete": "T-1",
+	} {
+		res := call(t, cs, tool, map[string]any{"id": id}, nil)
+		if !res.IsError || !strings.Contains(text(res), "is not a") {
+			t.Errorf("%s(%s) = %v %q, want a wrong-kind tool error", tool, id, res.IsError, text(res))
+		}
+	}
+	mustOK(t, cs, "task_get", map[string]any{"id": "T-1"}, nil)
+}
+
+func TestToolErrorHints(t *testing.T) {
+	got := toolError(fmt.Errorf("%w: busy", looplock.ErrLoopRunning))
+	if !strings.Contains(got.Error(), "wait for the loop to finish or stop it") {
+		t.Errorf("loop error = %q", got)
+	}
+	got = toolError(fmt.Errorf("%w: x", service.ErrNeedsForce))
+	if !strings.Contains(got.Error(), "(ask the user before retrying with force: true)") {
+		t.Errorf("force error = %q", got)
 	}
 }
 

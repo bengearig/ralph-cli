@@ -13,6 +13,7 @@ import (
 
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/drift"
+	"github.com/bengearig/ralph/internal/looplock"
 	"github.com/bengearig/ralph/internal/service"
 	"github.com/bengearig/ralph/internal/store"
 )
@@ -32,7 +33,8 @@ Receive instructions → Articulate a solution → Loop over tasks → Pull requ
   that a fresh agent with no other context could implement and verify.
 - The loop works TODO tasks in position order. Use BLOCKED (with a reason) or PROPOSED to kick work back
   instead of guessing. IDs look like I-1, M-2, T-3, D-4.
-- Search before writing new documents or tasks, to build on what already exists.`
+- Search before writing new documents or tasks, to build on what already exists.
+- Deleting is for mistakes such as duplicates and needs the user's agreement; CANCELLED is the normal way to drop work.`
 
 // Options configures tool behavior that comes from ralph's config.
 type Options struct {
@@ -68,6 +70,10 @@ func toolError(err error) error {
 		return fmt.Errorf("%v (find valid IDs with initiative_list, milestone_list, task_list, or doc_list)", err)
 	case errors.Is(err, store.ErrConflict):
 		return fmt.Errorf("%v (choose a different slug or omit it to derive one)", err)
+	case errors.Is(err, service.ErrNeedsForce):
+		return fmt.Errorf("%v (ask the user before retrying with force: true)", err)
+	case errors.Is(err, looplock.ErrLoopRunning):
+		return fmt.Errorf("%v (wait for the loop to finish or stop it)", err)
 	}
 	return err
 }
@@ -94,6 +100,11 @@ func destructive(title string) *mcp.ToolAnnotations {
 	return &mcp.ToolAnnotations{Title: title, DestructiveHint: boolPtr(true), OpenWorldHint: boolPtr(false)}
 }
 
+const deletePolicy = "Deletes are permanent. To drop work, use task_set_status with CANCELLED instead. " +
+	"Delete only mistakes such as duplicates or wrongly created items, and only after the user has agreed. "
+
+const forcePolicy = "Never pass force without the user's explicit approval. "
+
 func (t *tools) register(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_create", Annotations: write("Create initiative"),
 		Description: "Record a newly received set of instructions as an initiative. Put the instructions verbatim in brief. " +
@@ -104,6 +115,9 @@ func (t *tools) register(s *mcp.Server) {
 		Description: "Get an initiative with its brief."}, t.initiativeGet)
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_update", Annotations: write("Update initiative"),
 		Description: "Edit an initiative's title or brief. Omitted fields are unchanged."}, t.initiativeUpdate)
+	mcp.AddTool(s, &mcp.Tool{Name: "initiative_delete", Annotations: destructive("Delete initiative"),
+		Description: deletePolicy + forcePolicy + "Cascades to the initiative's milestones, their tasks and notes, and its documents. " +
+			"Refused without force when the initiative has milestones or documents, and while a loop is running on one of its milestones."}, t.initiativeDelete)
 
 	mcp.AddTool(s, &mcp.Tool{Name: "milestone_create", Annotations: write("Create milestone"),
 		Description: "Add a milestone to an initiative. Each milestone becomes one branch and one pull request, so keep it independently reviewable."}, t.milestoneCreate)
@@ -118,6 +132,9 @@ func (t *tools) register(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{Name: "milestone_reconcile", Annotations: destructive("Reconcile milestone drift"),
 		Description: "Resolve a milestone's drift: point it at a branch, reopen DONE tasks whose work is gone (reason required), " +
 			"and/or accept the current branch tip. Get the user's approval first."}, t.milestoneReconcile)
+	mcp.AddTool(s, &mcp.Tool{Name: "milestone_delete", Annotations: destructive("Delete milestone"),
+		Description: deletePolicy + forcePolicy + "Cascades to the milestone's tasks and their notes. " +
+			"Refused without force when the milestone has tasks, and while a loop is running on it."}, t.milestoneDelete)
 
 	mcp.AddTool(s, &mcp.Tool{Name: "task_create", Annotations: write("Propose task"),
 		Description: "Propose a task in a milestone. It starts PROPOSED; refine it, then promote it to TODO with task_set_status."}, t.taskCreate)
@@ -134,6 +151,12 @@ func (t *tools) register(s *mcp.Server) {
 		Description: "Append a note to a task. Use ITERATION notes to leave context for the next loop iteration, KICKBACK to explain a return to articulation."}, t.taskAddNote)
 	mcp.AddTool(s, &mcp.Tool{Name: "task_next", Annotations: readOnly("Next task"),
 		Description: "Get the task the loop should work on next in a milestone: an interrupted IN_PROGRESS task, else the first TODO."}, t.taskNext)
+	mcp.AddTool(s, &mcp.Tool{Name: "task_delete", Annotations: destructive("Delete task"),
+		Description: deletePolicy + forcePolicy + "Cascades to the task's notes. " +
+			"Refused without force when the task is IN_PROGRESS or DONE, and while a loop is running on its milestone."}, t.taskDelete)
+	mcp.AddTool(s, &mcp.Tool{Name: "note_delete", Annotations: destructive("Delete task note"),
+		Description: deletePolicy + "Takes a note ID such as N-3, shown by task_get. Removes only that note. " +
+			"Refused while a loop is running on the note's milestone."}, t.noteDelete)
 
 	mcp.AddTool(s, &mcp.Tool{Name: "doc_create", Annotations: write("Create document"),
 		Description: "Create a markdown document. Omit initiative_id for project-wide documents such as overall architecture."}, t.docCreate)
@@ -143,6 +166,8 @@ func (t *tools) register(s *mcp.Server) {
 		Description: "Get a document including its body."}, t.docGet)
 	mcp.AddTool(s, &mcp.Tool{Name: "doc_update", Annotations: write("Update document"),
 		Description: "Edit a document's kind, title, or body. Omitted fields are unchanged; body replaces the whole body."}, t.docUpdate)
+	mcp.AddTool(s, &mcp.Tool{Name: "doc_delete", Annotations: destructive("Delete document"),
+		Description: deletePolicy + "Removes only that document and its search index entries; nothing else cascades and nothing blocks it."}, t.docDelete)
 
 	mcp.AddTool(s, &mcp.Tool{Name: "search", Annotations: readOnly("Search"),
 		Description: "Semantic search across initiatives, milestones, tasks, and documents. Falls back to keyword search when embeddings are unavailable; the result reports which mode ran."}, t.search)

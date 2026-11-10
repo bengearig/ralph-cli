@@ -75,6 +75,28 @@ func (t *tools) initiativeUpdate(ctx context.Context, _ *mcp.CallToolRequest, in
 	return nil, v, toolError(err)
 }
 
+type deleteIn struct {
+	ID    string `json:"id" jsonschema:"entity ID, for example M-2"`
+	Force bool   `json:"force,omitempty" jsonschema:"delete despite the cascade or task progress; only with the user's explicit approval"`
+}
+
+type deleteDocIn struct {
+	ID string `json:"id" jsonschema:"document ID, for example D-4"`
+}
+
+type deleteNoteIn struct {
+	ID string `json:"id" jsonschema:"note ID, for example N-3"`
+}
+
+func (t *tools) initiativeDelete(ctx context.Context, _ *mcp.CallToolRequest, in deleteIn) (*mcp.CallToolResult, service.DeleteView, error) {
+	id, err := domain.ParseID(domain.KindInitiative, in.ID)
+	if err != nil {
+		return nil, service.DeleteView{}, err
+	}
+	v, err := t.svc.DeleteInitiative(ctx, id, in.Force)
+	return nil, v, toolError(err)
+}
+
 // ---- milestones ----
 
 type milestoneCreateIn struct {
@@ -144,6 +166,15 @@ func (t *tools) milestoneUpdate(ctx context.Context, _ *mcp.CallToolRequest, in 
 		return nil, service.MilestoneView{}, err
 	}
 	v, err := t.svc.UpdateMilestone(ctx, id, service.MilestonePatch{Title: in.Title, Description: in.Description, Position: in.Position})
+	return nil, v, toolError(err)
+}
+
+func (t *tools) milestoneDelete(ctx context.Context, _ *mcp.CallToolRequest, in deleteIn) (*mcp.CallToolResult, service.DeleteView, error) {
+	id, err := domain.ParseID(domain.KindMilestone, in.ID)
+	if err != nil {
+		return nil, service.DeleteView{}, err
+	}
+	v, err := t.svc.DeleteMilestone(ctx, id, in.Force)
 	return nil, v, toolError(err)
 }
 
@@ -364,6 +395,24 @@ func (t *tools) taskNext(ctx context.Context, _ *mcp.CallToolRequest, in taskNex
 	return nil, taskNext{Task: v}, nil
 }
 
+func (t *tools) taskDelete(ctx context.Context, _ *mcp.CallToolRequest, in deleteIn) (*mcp.CallToolResult, service.DeleteView, error) {
+	id, err := domain.ParseID(domain.KindTask, in.ID)
+	if err != nil {
+		return nil, service.DeleteView{}, err
+	}
+	v, err := t.svc.DeleteTask(ctx, id, in.Force)
+	return nil, v, toolError(err)
+}
+
+func (t *tools) noteDelete(ctx context.Context, _ *mcp.CallToolRequest, in deleteNoteIn) (*mcp.CallToolResult, service.DeleteView, error) {
+	id, err := domain.ParseID(domain.KindNote, in.ID)
+	if err != nil {
+		return nil, service.DeleteView{}, err
+	}
+	v, err := t.svc.DeleteNote(ctx, id)
+	return nil, v, toolError(err)
+}
+
 // ---- documents ----
 
 type docCreateIn struct {
@@ -439,6 +488,15 @@ func (t *tools) docUpdate(ctx context.Context, _ *mcp.CallToolRequest, in docUpd
 		p.Kind = &k
 	}
 	v, err := t.svc.UpdateDocument(ctx, id, p)
+	return nil, v, toolError(err)
+}
+
+func (t *tools) docDelete(ctx context.Context, _ *mcp.CallToolRequest, in deleteDocIn) (*mcp.CallToolResult, service.DeleteView, error) {
+	id, err := domain.ParseID(domain.KindDocument, in.ID)
+	if err != nil {
+		return nil, service.DeleteView{}, err
+	}
+	v, err := t.svc.DeleteDocument(ctx, id)
 	return nil, v, toolError(err)
 }
 
