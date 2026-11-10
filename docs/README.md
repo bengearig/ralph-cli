@@ -14,7 +14,7 @@
 - [Data model](data-model.md): entities, the git state the loop records, the task state machine, and the search index.
 - [Configuration](configuration.md): layers, environment variables, and every setting.
 - [CLI](cli.md): commands and flags.
-- [MCP server](mcp.md): the tools an agent harness uses.
+- [MCP server](mcp.md): the tools and prompts an agent harness uses.
 - [Claude Code integration](claude-code.md): what `ralph init` installs and how to use it.
 - [The loop](loop.md): how the loop plans, runs, and stops, and how branch drift is detected and reconciled.
 - [Jira](jira.md): setting up the Jira Cloud provider, what its cards look like, and how to check it by hand.
@@ -30,5 +30,6 @@ provider, [ADR 22](adr/0022-create-cards-when-resources-are-created.md) records 
 [ADR 26](adr/0026-card-keys-in-commit-messages.md) records card keys in commit messages, and
 [ADR 27](adr/0027-merge-milestones-locally-with-fast-forward-only.md) records how milestones are merged locally, and
 [ADR 28](adr/0028-milestone-dependencies.md) records milestone dependencies, and
-[ADR 29](adr/0029-looping-an-initiative.md) records looping an initiative. Add a new record
+[ADR 29](adr/0029-looping-an-initiative.md) records looping an initiative, and
+[ADR 31](adr/0031-serve-workflows-to-any-harness.md) records how workflows are served to any harness. Add a new record
 rather than editing an accepted one; mark the old record superseded.

@@ -25,6 +25,32 @@ therefore launch it from the repository; Claude Code does this for project-scope
   `milestone_reconcile`, are marked destructive. No tool reaches outside the project except through the configured task manager, which `cards_sync` is marked open-world for.
 - **Logging.** Logs go to stderr only.
 
+## Prompts
+
+The server also serves ralph's workflows as MCP prompts, so any harness that supports prompts can run them, not only
+Claude Code. A prompt has the workflow's name, the title `RALPH <Name>`, and one optional argument. Getting a prompt
+returns a single user-role message holding the workflow's instructions with the argument filled in; an argument the
+prompt does not declare is ignored.
+
+| Prompt | Argument |
+|---|---|
+| `receive` | `instructions` |
+| `articulate` | `scope` |
+| `reconcile` | `milestone` |
+| `status` | `initiative` |
+| `search` | `query` |
+
+The authoritative list, with descriptions, is whatever `prompts/list` returns. The workflows are defined in
+`internal/workflow`, so a workflow added there is served without changes to the server.
+
+- **Same source as Claude Code.** The prompts and the Claude Code [slash commands](claude-code.md#shared-workflow-source)
+  are two renderings of one source. See [ADR 31](adr/0031-serve-workflows-to-any-harness.md).
+- **Harness-neutral.** A prompt names no Claude Code feature: no plan mode tools, no `$ARGUMENTS`, and no `/ralph:`
+  commands. Where the workflow refers to another workflow, it names it and the prompt of that name.
+- **Approval fallback.** Where the workflow needs the user's approval before changing anything, the prompt tells the
+  agent to use the first of these that the harness supports: its plan or approval mode, its structured question tool,
+  or a message presenting the changes, applying nothing until the user explicitly confirms.
+
 ## Tools
 
 The authoritative list, with schemas, is whatever `tools/list` returns. The registrations are in

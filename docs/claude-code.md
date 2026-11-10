@@ -38,6 +38,32 @@ repository. Approve `ralph`. You can check the server with `claude mcp list` or 
 Do this before the first `ralph loop`: headless sessions cannot show the approval prompt, so the loop stops with
 instructions if the server is not approved.
 
+### Shared workflow source
+
+The slash commands are not stored as files in the repository. They are rendered from `internal/workflow`, where each
+workflow is one harness-neutral template, and `ralph init` writes the Claude Code rendering to
+`.claude/commands/ralph/`. The [MCP server](mcp.md#prompts) renders the same templates as prompts.
+
+Claude Code lists MCP prompts as slash commands too, so each workflow appears twice: as `/ralph:<name>` and as
+`/mcp__ralph__<name>`. They carry the same instructions. Prefer `/ralph:<name>`: it is the Claude Code rendering,
+which uses plan mode for approval, and it does not depend on the MCP server being connected when the command is
+chosen. The duplicates are accepted; see [ADR 31](adr/0031-serve-workflows-to-any-harness.md).
+
+### Editing a workflow
+
+To change a workflow, edit its source, never an installed command file:
+
+1. Edit `internal/workflow/workflows/<name>.md.tmpl`. Shared text lives in the `_*.md.tmpl` partials there. Use the
+   template functions for anything that differs by harness instead of writing two texts.
+2. If the Claude Code text changed, update the golden `internal/workflow/testdata/<name>.md` to match. It is the
+   exact file Claude Code gets, so a change to it is deliberate.
+3. Record the digest of the version being replaced in `internal/harness/claudecode/previous.go`, so `ralph init`
+   still updates copies nobody edited. The digest is the SHA-256 of the old golden file.
+4. Regenerate the harness-neutral snapshot with `go test ./internal/workflow -update`, and read its diff.
+5. Run `go test ./...`.
+
+A change that affects only the neutral rendering needs steps 1, 4, and 5.
+
 ## Workflow
 
 1. **Receive.** Run `/ralph:receive <paste or dictate the instructions>`. This is high-level planning. The agent

@@ -17,6 +17,7 @@ flowchart TD
     CLI --> LOOP
     CLI --> IMP["importer<br/>(collect files)"]
     MCP --> IMP
+    MCP --> WF["workflow<br/>(shared workflow source)"]
     IMP --> SVC
     IMP --> GIT
     IMP --> PRJ["project"]
@@ -33,6 +34,7 @@ flowchart TD
     ST --> SQL["store/sqlite"]
     EM --> OL["embed/ollama"]
     H --> CC["harness/claudecode"]
+    CC --> WF
     PR --> BB["pr/bitbucketcloud"]
     CFG["config"] -.-> CLI
     CFG -.-> SVC
@@ -52,8 +54,9 @@ flowchart TD
 | `internal/embed` | The embedder interface and `ErrUnavailable`. `embed/ollama` is the real client; `embed/fake` is a deterministic test double. |
 | `internal/search` | Markdown-aware chunking, incremental (re)embedding, backfill, and ranking with keyword fallback. |
 | `internal/service` | Use cases shared by the CLI and MCP: validation, slug allocation, status transitions, the Stall Statute, indexing on write, and JSON views. With a task manager provider it also creates cards for new resources, pushes edits and status changes to them, moves cards on delete, and syncs existing work, all outside any transaction and never failing the operation, and adds each resource's card, with its derived pending state, to the views. |
-| `internal/mcpserver` | MCP tools as thin adapters over `service`, built with the official Go SDK. |
+| `internal/mcpserver` | MCP tools as thin adapters over `service`, and the workflow prompts, built with the official Go SDK. |
 | `internal/harness` | The harness interface, installer interface, and registry. `harness/claudecode` runs headless `claude` sessions, parsing their stream-json output, and installs the Claude Code wiring. |
+| `internal/workflow` | The workflows (Receive, Articulate, Reconcile, Status, Search, and any added later) as embedded harness-neutral templates, with `List`, `Render`, and `RenderCommand`. `harness/claudecode` renders them as slash command files, and `mcpserver` serves them as MCP prompts. It imports no other ralph package. See [Shared workflow source](claude-code.md#shared-workflow-source). |
 | `internal/loop` | Plans a milestone's loop (branch, ordered tasks, command, prompt) and runs it: project lock, branch preparation, one harness session per task, commits with the `Ralph-Task` trailer (and the optional `Card` trailer), recording the branch, base, head, and task commits, stashing unfinished work, and stop conditions. When it resumes on a recorded branch, it checks for drift first. When a run ends it returns to the branch it started on. `Merge` is the operation behind `ralph milestone merge`: it makes every check before touching git, then fast-forwards the base branch and optionally safe-deletes the milestone's branch (see [`ralph milestone merge`](cli.md#ralph-milestone-merge)). It also provides the `ResolveRepo`, `DriftInput`, and `CommitSubjects` helpers that `ralph milestone reconcile` and `ralph pr create` share. |
 | `internal/drift` | The read-only drift check (`Check`, `Report`) that compares a milestone's recorded git state with its branch, and the reconcile actions (`Apply`). See [Drift and reconcile](loop.md#drift-and-reconcile). |
 | `internal/looplock` | The project-wide loop lock on `.ralph/loop.lock`: `Acquire` and `Release` for the loop, and `Probe` to see whether and by whom it is held. Imported by `loop`, which takes the lock, and by `service`, whose deletes refuse to touch a milestone a running loop is working on. `mcpserver` imports it only to recognise `ErrLoopRunning`. |
