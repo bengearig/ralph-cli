@@ -205,6 +205,7 @@ the document is project-wide. The file's record is marked `done` with a `created
 |---|---|
 | `ralph loop --milestone <id> --dry-run [--show-prompt]` | Print the loop plan: branch, harness and model, exact command, ordered tasks, policy, and optionally the first prompt. |
 | `ralph loop --milestone <id> [--force]` | Run the loop: one fresh harness session per task on the milestone's branch, committing each `DONE` task. The progress feed goes to stderr, transcripts to `.ralph/runs/`. See [the loop](loop.md). |
+| `ralph loop --initiative <id> [--merge] [--force]` | Run the initiative's next ready milestone, then stop for review; with `--merge`, fast-forward each finished milestone into the base branch and carry on until the initiative is complete or something needs a person. `--dry-run` prints the ordered milestones and the next step. Exactly one of `--milestone` and `--initiative` is required, and `--merge` needs `--initiative`. See [Looping an initiative](loop.md#looping-an-initiative). |
 | `ralph milestone reconcile <id> [--branch <name>] [--reopen <ids>] [--reason <text>] [--accept]` | Report how the milestone's branch differs from its record and resolve it. See [below](#ralph-milestone-reconcile). |
 | `ralph milestone merge <id> [--dry-run] [--delete-branch]` | Fast-forward the base branch to a finished milestone's branch. See [below](#ralph-milestone-merge). |
 | `ralph pr create --milestone <id> [--force] --dry-run` | Print the pull request that would be opened, the drift check's result, and any provider configuration problems. |
