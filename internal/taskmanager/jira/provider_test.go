@@ -334,3 +334,80 @@ func TestRegistry(t *testing.T) {
 		t.Errorf("none: %v, %v", p, err)
 	}
 }
+
+type statusJira struct {
+	*httptest.Server
+	mu   sync.Mutex
+	reqs []string
+}
+
+func newStatusJira(t *testing.T) *statusJira {
+	t.Helper()
+	f := &statusJira{}
+	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.reqs = append(f.reqs, r.Method+" "+r.URL.Path)
+		f.mu.Unlock()
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/transitions"):
+			_, _ = w.Write([]byte(`{"transitions":[{"id":"21","to":{"name":"In Progress"}},{"id":"41","to":{"name":"Cancelled"}}]}`))
+		case r.Method == "GET":
+			_, _ = w.Write([]byte(`{"fields":{"status":{"name":"To Do"}}}`))
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	t.Cleanup(f.Close)
+	return f
+}
+
+func (f *statusJira) requests() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.reqs...)
+}
+
+func TestSetStatus(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name     string
+		mutate   func(*config.JiraConfig)
+		status   string
+		wantReqs int
+	}{
+		{"mapped", func(c *config.JiraConfig) {}, "IN_PROGRESS", 3},
+		{"unmapped", func(c *config.JiraConfig) {}, "BLOCKED", 0},
+		{"blank mapping", func(c *config.JiraConfig) { c.StatusMap["IN_PROGRESS"] = " " }, "IN_PROGRESS", 0},
+		{"cancelled uses canceled_status", func(c *config.JiraConfig) { c.CanceledStatus = "Cancelled" }, "CANCELLED", 3},
+		{"cancelled blank", func(c *config.JiraConfig) {}, "CANCELLED", 0},
+		{"cancelled ignores map", func(c *config.JiraConfig) { c.StatusMap["CANCELLED"] = "Cancelled" }, "CANCELLED", 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newStatusJira(t)
+			cfg := testCfg(f.URL)
+			cfg.StatusMap = map[string]string{"TODO": "To Do", "IN_PROGRESS": "In Progress", "DONE": "Done"}
+			tc.mutate(&cfg)
+			p := NewProvider(cfg, 0, env(goodEnv), nil)
+			if err := p.SetStatus(ctx, "PROJ-1", tc.status); err != nil {
+				t.Fatal(err)
+			}
+			if got := f.requests(); len(got) != tc.wantReqs {
+				t.Errorf("requests = %v, want %d", got, tc.wantReqs)
+			}
+		})
+	}
+}
+
+func TestSetStatusTransitionsToMappedName(t *testing.T) {
+	f := newStatusJira(t)
+	cfg := testCfg(f.URL)
+	cfg.StatusMap = map[string]string{"IN_PROGRESS": "In Progress"}
+	if err := NewProvider(cfg, 0, env(goodEnv), nil).SetStatus(context.Background(), "PROJ-1", "IN_PROGRESS"); err != nil {
+		t.Fatal(err)
+	}
+	got := f.requests()
+	if len(got) != 3 || got[2] != "POST /rest/api/3/issue/PROJ-1/transitions" {
+		t.Errorf("requests = %v", got)
+	}
+}

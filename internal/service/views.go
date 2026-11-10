@@ -206,13 +206,13 @@ func documentView(d domain.Document, withBody, initiativeArchived bool) Document
 
 // Derived milestone statuses.
 const (
-	MilestoneEmpty        = "EMPTY"
-	MilestoneArticulating = "ARTICULATING"
-	MilestoneReady        = "READY"
-	MilestoneInProgress   = "IN_PROGRESS"
-	MilestoneBlocked      = "BLOCKED"
-	MilestoneDone         = "DONE"
-	MilestoneCancelled    = "CANCELLED"
+	MilestoneEmpty        = domain.MilestoneEmpty
+	MilestoneArticulating = domain.MilestoneArticulating
+	MilestoneReady        = domain.MilestoneReady
+	MilestoneInProgress   = domain.MilestoneInProgress
+	MilestoneBlocked      = domain.MilestoneBlocked
+	MilestoneDone         = domain.MilestoneDone
+	MilestoneCancelled    = domain.MilestoneCancelled
 )
 
 // MilestoneStatus derives a milestone's status from its tasks.
@@ -245,4 +245,15 @@ type DeleteView struct {
 	ID      string         `json:"id"`
 	Kind    string         `json:"kind"`
 	Deleted map[string]int `json:"deleted"`
+	// Cards lists the cards moved to the canceled status, or in a preview those that will be.
+	Cards []DeletedCard `json:"cards,omitempty"`
+}
+
+// DeletedCard is a card of a deleted resource and whether it was moved to the canceled status.
+type DeletedCard struct {
+	ID    string `json:"id"`
+	Key   string `json:"key"`
+	URL   string `json:"url"`
+	Moved bool   `json:"moved"`
+	Error string `json:"error,omitempty"`
 }

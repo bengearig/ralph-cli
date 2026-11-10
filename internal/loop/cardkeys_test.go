@@ -46,6 +46,10 @@ func (p *countingProvider) Update(context.Context, string, taskmanager.CardReque
 	p.calls++
 	return nil
 }
+func (p *countingProvider) SetStatus(context.Context, string, string) error {
+	p.calls++
+	return nil
+}
 
 func cardKeysEnv(t *testing.T) (*service.Service, *countingStore, *countingProvider, int64, int64) {
 	t.Helper()

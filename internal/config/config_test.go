@@ -90,6 +90,29 @@ func TestValidateTaskManager(t *testing.T) {
 			c.TaskManager.Jira.IssueTypes.Milestone = ""
 		}, []string{"email_env:", "token_env:", "issue_types.initiative:", "issue_types.milestone:"}},
 		{"complete jira", complete, nil},
+		{"status_map extra entry", func(c *Config) {
+			complete(c)
+			c.TaskManager.Jira.StatusMap["BLOCKED"] = "Blocked"
+		}, nil},
+		{"status_map blank value", func(c *Config) {
+			complete(c)
+			c.TaskManager.Jira.StatusMap["DONE"] = ""
+		}, nil},
+		{"status_map milestone status", func(c *Config) {
+			complete(c)
+			c.TaskManager.Jira.StatusMap["ARTICULATING"] = "Backlog"
+		}, nil},
+		{"status_map unknown key", func(c *Config) {
+			complete(c)
+			c.TaskManager.Jira.StatusMap["WAITING"] = "Waiting"
+		}, []string{"task_manager.jira.status_map:", "WAITING"}},
+		{"status_map cancelled key", func(c *Config) {
+			complete(c)
+			c.TaskManager.Jira.StatusMap["CANCELLED"] = "Cancelled"
+		}, []string{"task_manager.jira.status_map:", "canceled_status"}},
+		{"none ignores invalid status_map", func(c *Config) {
+			c.TaskManager.Jira.StatusMap = map[string]string{"WAITING": "x", "CANCELLED": "y"}
+		}, nil},
 		{"none ignores jira block", func(c *Config) {
 			c.TaskManager.Jira = JiraConfig{BaseURL: "garbage"}
 		}, nil},
@@ -432,5 +455,36 @@ func TestProjectTemplateOverridesNothing(t *testing.T) {
 	}
 	if !strings.Contains(string(tmpl), "\n# task_manager:\n") {
 		t.Error("template is missing the commented task_manager section")
+	}
+}
+
+func TestStatusMapDefaultsAndLayers(t *testing.T) {
+	cfg, err := Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"TODO": "To Do", "IN_PROGRESS": "In Progress", "DONE": "Done"}
+	if got := cfg.TaskManager.Jira.StatusMap; len(got) != len(want) || got["TODO"] != want["TODO"] || got["IN_PROGRESS"] != want["IN_PROGRESS"] || got["DONE"] != want["DONE"] {
+		t.Errorf("status_map defaults = %v", got)
+	}
+
+	add := writeFile(t, t.TempDir(), "add.yaml", "task_manager:\n  jira:\n    status_map:\n      BLOCKED: Blocked\n")
+	l, err := Load(Sources{ProjectFile: add})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := l.Config.TaskManager.Jira.StatusMap
+	if len(m) != 4 || m["BLOCKED"] != "Blocked" || m["TODO"] != "To Do" || m["DONE"] != "Done" {
+		t.Errorf("entry did not merge with defaults: %v", m)
+	}
+
+	blank := writeFile(t, t.TempDir(), "blank.yaml", "task_manager:\n  jira:\n    status_map:\n      DONE: \"\"\n")
+	l, err = Load(Sources{ProjectFile: blank})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = l.Config.TaskManager.Jira.StatusMap
+	if v, ok := m["DONE"]; !ok || v != "" || m["TODO"] != "To Do" {
+		t.Errorf("blanking a default: %v", m)
 	}
 }

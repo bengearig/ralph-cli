@@ -44,4 +44,5 @@ be down, misconfigured, or slow, and ralph's own planning must not depend on it.
   created or updated.
 - A claim left by a killed process holds off other processes until it goes stale.
 - Showing a card's pending state builds the current request for each keyed card, which reads the resource again.
-- Pushing edits and status changes, and syncing missed cards, are not part of this decision.
+- Pushing edits and status changes, and syncing missed cards, are decided in
+  [ADR 24](0024-sync-cards-one-way-with-explicit-backfill.md).

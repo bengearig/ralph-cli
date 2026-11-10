@@ -182,6 +182,7 @@ func (a *app) newTaskCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			a.warn(v.CardWarning)
 			if a.jsonOut {
 				return a.writeJSON(v)
 			}

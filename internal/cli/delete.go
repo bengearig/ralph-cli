@@ -21,7 +21,7 @@ delete is for mistakes.`
 // newDeleteCommand builds "<kind> delete <id>"; withForce adds --force for
 // kinds whose delete can cascade or discard progressed work.
 func (a *app) newDeleteCommand(kind domain.Kind, withForce bool, long string) *cobra.Command {
-	var yes, force bool
+	var yes, force, dryRun bool
 	cmd := &cobra.Command{
 		Use:   "delete <id>",
 		Short: "Delete a " + string(kind) + " permanently",
@@ -40,8 +40,14 @@ func (a *app) newDeleteCommand(kind domain.Kind, withForce bool, long string) *c
 			if err != nil {
 				return deleteRefusal(err, withForce)
 			}
+			if dryRun {
+				if a.jsonOut {
+					return a.writeJSON(preview)
+				}
+				return a.printf("would delete %s%s\n%s", preview.ID, countSuffix(preview), a.cardsLine(svc, preview))
+			}
 			if !yes {
-				ok, err := a.confirmDelete(preview)
+				ok, err := a.confirmDelete(svc, preview)
 				if err != nil {
 					return err
 				}
@@ -65,12 +71,18 @@ func (a *app) newDeleteCommand(kind domain.Kind, withForce bool, long string) *c
 			if err != nil {
 				return deleteRefusal(err, withForce)
 			}
+			for _, c := range v.Cards {
+				if !c.Moved {
+					fmt.Fprintf(a.streams.Err, "warning: card %s was not moved: %s\n", c.Key, c.Error)
+				}
+			}
 			if a.jsonOut {
 				return a.writeJSON(v)
 			}
 			return a.printf("deleted %s%s\n", v.ID, countSuffix(v))
 		},
 	}
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be deleted without deleting")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
 	if withForce {
 		cmd.Flags().BoolVar(&force, "force", false, "delete even when it removes more than the target or discards progressed work")
@@ -87,7 +99,7 @@ func deleteRefusal(err error, withForce bool) error {
 
 // confirmDelete asks on stderr; only y or yes proceeds. Without a terminal it
 // refuses rather than guessing.
-func (a *app) confirmDelete(v service.DeleteView) (bool, error) {
+func (a *app) confirmDelete(svc *service.Service, v service.DeleteView) (bool, error) {
 	if !a.streams.IsTerminal {
 		return false, errors.New("refusing to delete without confirmation: stdin is not a terminal; pass --yes")
 	}
@@ -95,7 +107,7 @@ func (a *app) confirmDelete(v service.DeleteView) (bool, error) {
 	if c := countList(v); c != "" {
 		prompt += " with " + c
 	}
-	fmt.Fprint(a.streams.Err, prompt+"? This cannot be undone. [y/N] ")
+	fmt.Fprint(a.streams.Err, a.cardsLine(svc, v)+prompt+"? This cannot be undone. [y/N] ")
 	line, err := bufio.NewReader(a.streams.In).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return false, err
@@ -105,6 +117,19 @@ func (a *app) confirmDelete(v service.DeleteView) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+// cardsLine names the cards a delete will move to the canceled status, with a trailing newline; empty when none.
+func (a *app) cardsLine(svc *service.Service, v service.DeleteView) string {
+	status := svc.CardCanceledStatus()
+	if len(v.Cards) == 0 || status == "" {
+		return ""
+	}
+	keys := make([]string, len(v.Cards))
+	for i, c := range v.Cards {
+		keys[i] = c.Key
+	}
+	return fmt.Sprintf("cards: %s will move to %q\n", strings.Join(keys, ", "), status)
 }
 
 // countParts lists the non-zero counts other than the target itself, in

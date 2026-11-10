@@ -22,7 +22,7 @@ therefore launch it from the repository; Claude Code does this for project-scope
   [Git records](data-model.md#git-records).
 - **Index warnings.** Write results include `index_warning` when the entity was saved but could not be embedded.
 - **Annotations.** Read tools are marked read-only, and tools that can undo recorded work, such as
-  `milestone_reconcile`, are marked destructive. No tool reaches outside the project.
+  `milestone_reconcile`, are marked destructive. No tool reaches outside the project except through the configured task manager, which `cards_sync` is marked open-world for.
 - **Logging.** Logs go to stderr only.
 
 ## Tools
@@ -102,6 +102,17 @@ writes, not destructive. The rules are in [Archiving](data-model.md#archiving).
 - Changing an archived item, or anything in an archived initiative, is a tool error that says to unarchive it first.
   Agents unarchive only with the user's agreement.
 - `task_next` refuses a milestone whose initiative is archived.
+
+### Cards
+
+| Tool | Purpose |
+|---|---|
+| `cards_sync` | Create task manager cards for existing work that has none and bring pending and out-of-date ones up to date, parents first. Parameters: optional `initiative_id` (for example `I-8`) and `include_archived`. Returns the report of created, updated, in-sync, skipped, and failed items, as `ralph cards sync --json` does. Idempotent. Agents call it only when the user asks. |
+
+An error is returned when no task manager is configured. A failed item is in the report, not a tool error, so check its
+`failed` count. Other write tools carry `card_warning` when a card could not be created or updated, and the delete
+tools return `cards` (each card's `id`, `key`, `url`, `moved`, and `error`) when cards were moved to
+`task_manager.jira.canceled_status` before the delete. See [Jira](jira.md).
 
 ### Search and status
 

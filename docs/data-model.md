@@ -107,6 +107,16 @@ failure and attempt), and `synced_at` (the last success). Empty strings mean uns
   remove the cards of the deleted resource and of everything the delete cascades to, in the same transaction.
 - Whether a card needs creating or updating is derived from these rows, not stored; see below.
 
+### Card content and its hash
+
+`content_hash` is a SHA-256 of the card request: its kind and ID, title, description, parent key, and status, which is a task's
+status or a milestone's computed status. Putting the status in the hash means a status change makes the card need an
+update, the same as an edit does. Adding the status changed every existing hash once, so cards made before it show as
+pending an update until they are next synced.
+
+After creating a card, ralph records its key at once and the hash only after the status move succeeds. A failure in
+between leaves a keyed row with a different hash, which is simply a card that needs an update.
+
 ### Pending cards
 
 There is no stored pending flag. A resource's card needs creating when it has no row or its row has an empty

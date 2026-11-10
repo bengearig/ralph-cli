@@ -42,7 +42,9 @@ type Options struct {
 	// ConfirmOutline is receive.confirm_outline: whether Receive asks before creating a new initiative's outline.
 	ConfirmOutline bool
 	// DriftInput builds the drift check input for a milestone. Nil disables milestone_drift and milestone_reconcile.
-	DriftInput func(ctx context.Context, milestoneID int64) (drift.Input, error)
+	// TaskManagerError is why the configured task manager is disabled, when it is; cards_sync reports it.
+	TaskManagerError error
+	DriftInput       func(ctx context.Context, milestoneID int64) (drift.Input, error)
 }
 
 // New builds an MCP server over svc.
@@ -51,13 +53,14 @@ func New(svc *service.Service, version string, log *slog.Logger, opts Options) *
 		Instructions: instructions,
 		Logger:       log,
 	})
-	t := &tools{svc: svc, confirmOutline: opts.ConfirmOutline, newDriftInput: opts.DriftInput}
+	t := &tools{svc: svc, tmErr: opts.TaskManagerError, confirmOutline: opts.ConfirmOutline, newDriftInput: opts.DriftInput}
 	t.register(s)
 	return s
 }
 
 type tools struct {
 	svc            *service.Service
+	tmErr          error
 	confirmOutline bool
 	newDriftInput  func(ctx context.Context, milestoneID int64) (drift.Input, error)
 }
@@ -187,6 +190,10 @@ func (t *tools) register(s *mcp.Server) {
 
 	mcp.AddTool(s, &mcp.Tool{Name: "search", Annotations: readOnly("Search"),
 		Description: "Semantic search across initiatives, milestones, tasks, and documents. Falls back to keyword search when embeddings are unavailable; the result reports which mode ran. Archived items are excluded unless include_archived is set."}, t.search)
+	mcp.AddTool(s, &mcp.Tool{Name: "cards_sync", Annotations: &mcp.ToolAnnotations{Title: "Sync cards", DestructiveHint: boolPtr(false), IdempotentHint: true, OpenWorldHint: boolPtr(true)},
+		Description: "Create Jira (task manager) cards for existing work that has none and retry pending ones. It is explicit and never runs automatically; " +
+			"call it only when the user asks. Nothing is created for cancelled work. Safe to rerun. Returns a report of created, updated, in_sync, skipped, and failed items. " +
+			"Optionally scope to one initiative; archived initiatives are skipped unless include_archived is set."}, t.cardsSync)
 	mcp.AddTool(s, &mcp.Tool{Name: "status", Annotations: readOnly("Status"),
 		Description: "Summarize progress: per initiative, its milestones with derived status and task counts. Archived initiatives are hidden unless include_archived is set."}, t.status)
 }

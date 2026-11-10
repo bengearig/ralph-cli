@@ -12,6 +12,8 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/bengearig/ralph/internal/domain"
 )
 
 // Identifiers referenced from config values.
@@ -159,12 +161,13 @@ type TaskManagerConfig struct {
 }
 
 type JiraConfig struct {
-	BaseURL        string         `koanf:"base_url"`
-	ProjectKey     string         `koanf:"project_key"`
-	EmailEnv       string         `koanf:"email_env"`
-	TokenEnv       string         `koanf:"token_env"`
-	IssueTypes     JiraIssueTypes `koanf:"issue_types"`
-	CanceledStatus string         `koanf:"canceled_status"`
+	BaseURL        string            `koanf:"base_url"`
+	ProjectKey     string            `koanf:"project_key"`
+	EmailEnv       string            `koanf:"email_env"`
+	TokenEnv       string            `koanf:"token_env"`
+	IssueTypes     JiraIssueTypes    `koanf:"issue_types"`
+	CanceledStatus string            `koanf:"canceled_status"`
+	StatusMap      map[string]string `koanf:"status_map"`
 }
 
 type JiraIssueTypes struct {
@@ -237,6 +240,14 @@ func (c *Config) StoragePath(root string) string {
 		return c.Storage.Path
 	}
 	return filepath.Join(root, c.Storage.Path)
+}
+
+// AllowTaskManager makes name a valid task_manager.provider. Tests use it to
+// select a fake provider; it is not safe to call concurrently with Validate.
+func AllowTaskManager(name string) {
+	if !slices.Contains(knownTaskManagers, name) {
+		knownTaskManagers = append(knownTaskManagers, name)
+	}
 }
 
 // Validate reports every invalid setting at once.
@@ -341,7 +352,33 @@ func (c *Config) Validate() error {
 				bad("task_manager.jira."+f.key, "must not be empty")
 			}
 		}
+		keys := make([]string, 0, len(j.StatusMap))
+		for k := range j.StatusMap {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		for _, k := range keys {
+			switch {
+			case k == string(domain.StatusCancelled):
+				bad("task_manager.jira.status_map", "key %q is not allowed; use task_manager.jira.canceled_status", k)
+			case !knownMappedStatus(k):
+				bad("task_manager.jira.status_map", "unknown status %q (expected one of %s)", k, strings.Join(mappableStatuses(), ", "))
+			}
+		}
 	}
 
 	return errors.Join(errs...)
 }
+
+// mappableStatuses lists the task and milestone statuses, sorted and unique.
+func mappableStatuses() []string {
+	var out []string
+	for _, s := range domain.Statuses() {
+		out = append(out, string(s))
+	}
+	out = append(out, domain.MilestoneStatuses()...)
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+func knownMappedStatus(s string) bool { return slices.Contains(mappableStatuses(), s) }

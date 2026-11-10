@@ -148,7 +148,8 @@ commands, so their overrides take effect once ralph launches those sessions itse
 ### `task_manager`
 
 The task manager is an external tracker that ralph can keep one card per initiative, milestone, and task in. Ralph
-creates a card when one of those is created; see [Jira](jira.md#when-cards-are-created). The default, `none`, leaves
+creates a card when one of those is created, keeps it up to date, and moves it as the resource's status changes; see
+[Jira](jira.md#when-cards-are-created) and [Jira status](jira.md#status). The default, `none`, leaves
 every task manager untouched. See [Jira](jira.md) for setup, what a card looks like, and a manual check.
 
 | Key | Default | Meaning |
@@ -163,6 +164,7 @@ every task manager untouched. See [Jira](jira.md) for setup, what a card looks l
 | `task_manager.jira.issue_types.milestone` | `Task` | Jira issue type for a milestone's card, a child of its initiative's card. |
 | `task_manager.jira.issue_types.task` | `Sub-task` | Jira issue type for a task's card, a child of its milestone's card. |
 | `task_manager.jira.canceled_status` | `""` | Name of the status a card moves to when its resource is cancelled or deleted. Empty leaves the card alone. |
+| `task_manager.jira.status_map` | `TODO: To Do`, `IN_PROGRESS: In Progress`, `DONE: Done` | Maps a ralph status (task or milestone) to the name of the Jira status its card moves to. A blank value or a missing status leaves the card alone. `CANCELLED` is not allowed here; use `canceled_status`. Entries merge with the defaults, and a blank value removes a default. |
 
 The `task_manager.jira` block is validated only when the provider is `jira`, as `pr.bitbucket_cloud` is.
 

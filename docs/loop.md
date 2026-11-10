@@ -165,6 +165,11 @@ flowchart TD
    commit failure, or an interruption ends the run mid-iteration, the head is still recorded before the loop
    exits. If that recording fails, the feed says so and the original error is reported.
 
+When a task manager is configured, the status changes the loop makes go through the normal service, so they push to
+the task's card and its milestone's card like any other change (see [Jira](jira.md#status)). A provider failure is
+only a warning and never stops the loop or counts against the Stall Statute. Each provider call adds latency to the
+status change, bounded by [`task_manager.timeout`](configuration.md#task_manager).
+
 The `Ralph-Task` trailer lets ralph match commits to tasks even after a rebase or amend rewrites history, and after a
 squash whose message keeps the trailers (see [Task matchers](#task-matchers)). It is controlled by
 [`loop.commit_trailer`](configuration.md#loop), and `--dry-run` shows the setting on its policy line. See

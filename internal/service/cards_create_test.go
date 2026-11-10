@@ -22,6 +22,16 @@ func withProvider(e env) (env, *tmfake.Provider) {
 	return e, p
 }
 
+func creates(calls []tmfake.Call) []tmfake.Call {
+	var out []tmfake.Call
+	for _, c := range calls {
+		if c.Method == "Create" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 func iid(t *testing.T, s string) int64 { t.Helper(); return mustID(t, domain.KindInitiative, s) }
 func mid(t *testing.T, s string) int64 { t.Helper(); return mustID(t, domain.KindMilestone, s) }
 func tid(t *testing.T, s string) int64 { t.Helper(); return mustID(t, domain.KindTask, s) }
@@ -67,15 +77,16 @@ func TestCreateCardChain(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	calls := p.Calls()
-	if len(calls) != 4 {
-		t.Fatalf("calls = %+v", calls)
+	all := p.Calls()
+	if len(all) != 7 {
+		t.Fatalf("calls = %+v", all)
 	}
+	calls := creates(all)
 	want := []taskmanager.CardRequest{
 		{Kind: domain.KindInitiative, ID: i.ID, Title: "Init", Description: "the brief"},
-		{Kind: domain.KindMilestone, ID: m.ID, Title: "Mile", Description: "mdesc", ParentKey: "FAKE-1"},
-		{Kind: domain.KindTask, ID: withAC.ID, Title: "Task", Description: "tdesc\n\n## Acceptance criteria\n\ndo it", ParentKey: "FAKE-2"},
-		{Kind: domain.KindTask, ID: noAC.ID, Title: "Bare", Description: "only", ParentKey: "FAKE-2"},
+		{Kind: domain.KindMilestone, ID: m.ID, Title: "Mile", Description: "mdesc", ParentKey: "FAKE-1", Status: MilestoneEmpty},
+		{Kind: domain.KindTask, ID: withAC.ID, Title: "Task", Description: "tdesc\n\n## Acceptance criteria\n\ndo it", ParentKey: "FAKE-2", Status: "PROPOSED"},
+		{Kind: domain.KindTask, ID: noAC.ID, Title: "Bare", Description: "only", ParentKey: "FAKE-2", Status: "PROPOSED"},
 	}
 	for n, w := range want {
 		if calls[n].Method != "Create" || calls[n].Request != w {
@@ -105,10 +116,10 @@ func TestCreateCardMissingParents(t *testing.T) {
 	if err != nil || tk.CardWarning != "" {
 		t.Fatalf("%v %q", err, tk.CardWarning)
 	}
-	calls := p.Calls()
-	if len(calls) != 3 {
-		t.Fatalf("calls = %+v", calls)
+	if len(p.Calls()) != 5 {
+		t.Fatalf("calls = %+v", p.Calls())
 	}
+	calls := creates(p.Calls())
 	kinds := []domain.Kind{domain.KindInitiative, domain.KindMilestone, domain.KindTask}
 	parents := []string{"", "FAKE-1", "FAKE-2"}
 	for n := range calls {
@@ -125,7 +136,7 @@ func TestCreateCardIdempotent(t *testing.T) {
 	ctx := context.Background()
 	e, p := withProvider(newEnv(t))
 	i, _ := e.svc.CreateInitiative(ctx, InitiativeInput{Title: "I"})
-	if w := e.svc.createCard(ctx, domain.KindInitiative, iid(t, i.ID)); w != "" {
+	if w := e.svc.createCard(ctx, domain.KindInitiative, iid(t, i.ID), e.svc.cardClaimStale); w != "" {
 		t.Fatal(w)
 	}
 	if n := len(p.Calls()); n != 1 {
@@ -185,7 +196,7 @@ func TestCreateCardInTx(t *testing.T) {
 	if c, _ := e.svc.Card(ctx, domain.KindInitiative, iid(t, iv.ID), "fake"); c != nil {
 		t.Errorf("card = %+v", c)
 	}
-	if w := e.svc.createCard(ctx, domain.KindInitiative, iid(t, iv.ID)); w != "" {
+	if w := e.svc.createCard(ctx, domain.KindInitiative, iid(t, iv.ID), e.svc.cardClaimStale); w != "" {
 		t.Fatal(w)
 	}
 	if len(p.Calls()) != 1 {
@@ -270,7 +281,7 @@ func TestCreateCardClaim(t *testing.T) {
 	if err := e.svc.store.SetCard(ctx, fresh); err != nil {
 		t.Fatal(err)
 	}
-	if w := e.svc.createCard(ctx, domain.KindMilestone, mID); w != "" {
+	if w := e.svc.createCard(ctx, domain.KindMilestone, mID, e.svc.cardClaimStale); w != "" {
 		t.Errorf("warning = %q", w)
 	}
 	if len(p.Calls()) != callsBefore {
@@ -281,10 +292,10 @@ func TestCreateCardClaim(t *testing.T) {
 	if err := e.svc.store.SetCard(ctx, fresh); err != nil {
 		t.Fatal(err)
 	}
-	if w := e.svc.createCard(ctx, domain.KindMilestone, mID); w != "" {
+	if w := e.svc.createCard(ctx, domain.KindMilestone, mID, e.svc.cardClaimStale); w != "" {
 		t.Errorf("warning = %q", w)
 	}
-	if len(p.Calls()) != callsBefore+1 {
+	if len(p.Calls()) != callsBefore+2 {
 		t.Error("stale claim was not taken over")
 	}
 	if c, _ := e.svc.Card(ctx, domain.KindMilestone, mID, "fake"); c == nil || c.Key == "" {
@@ -303,11 +314,11 @@ func TestCreateCardRetryAfterFailureNeedsStaleClaim(t *testing.T) {
 		t.Fatal("no warning")
 	}
 	p.SetError(nil)
-	if w := e.svc.createCard(ctx, domain.KindInitiative, id); w != "" || len(p.Calls()) != 0 {
+	if w := e.svc.createCard(ctx, domain.KindInitiative, id, e.svc.cardClaimStale); w != "" || len(p.Calls()) != 0 {
 		t.Fatalf("retry inside the stale limit: %q, %d calls", w, len(p.Calls()))
 	}
 	time.Sleep(100 * time.Millisecond)
-	if w := e.svc.createCard(ctx, domain.KindInitiative, id); w != "" || len(p.Calls()) != 1 {
+	if w := e.svc.createCard(ctx, domain.KindInitiative, id, e.svc.cardClaimStale); w != "" || len(p.Calls()) != 1 {
 		t.Fatalf("retry after the stale limit: %q, %d calls", w, len(p.Calls()))
 	}
 	if c, _ := e.svc.Card(ctx, domain.KindInitiative, id, "fake"); c == nil || c.Key == "" || c.LastError != "" {
@@ -333,11 +344,11 @@ func TestCreateCardConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			svcs[n%2].createCard(ctx, domain.KindTask, tid(t, tk.ID))
+			svcs[n%2].createCard(ctx, domain.KindTask, tid(t, tk.ID), time.Minute)
 		}()
 	}
 	wg.Wait()
-	if got := len(p.Calls()) - before; got != 1 {
+	if got := len(creates(p.Calls()[before:])); got != 1 {
 		t.Errorf("Create calls = %d, want 1", got)
 	}
 	if c, _ := e.svc.Card(ctx, domain.KindTask, tid(t, tk.ID), "fake"); c == nil || c.Key == "" {

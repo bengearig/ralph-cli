@@ -22,7 +22,17 @@ func (s *Service) PreviewDelete(ctx context.Context, kind domain.Kind, id int64,
 	if err != nil {
 		return DeleteView{}, err
 	}
-	return deleteView(kind, id, c), nil
+	v := deleteView(kind, id, c)
+	if s.taskManager != nil && s.cardCanceledStatus != "" {
+		cards, err := s.deleteCards(ctx, kind, id)
+		if err != nil {
+			return DeleteView{}, err
+		}
+		for _, c := range cards {
+			v.Cards = append(v.Cards, DeletedCard{ID: domain.FormatID(c.Kind, c.EntityID), Key: c.Key, URL: c.URL})
+		}
+	}
+	return v, nil
 }
 
 func (s *Service) DeleteInitiative(ctx context.Context, id int64, force bool) (DeleteView, error) {
@@ -48,8 +58,30 @@ func (s *Service) DeleteNote(ctx context.Context, id int64) (DeleteView, error) 
 }
 
 // runDelete checks the guards and deletes in one transaction, so the check and
-// the delete see the same state.
+// the delete see the same state. When cards are enabled, the deleted subtree's
+// cards are first moved to the canceled status, outside the transaction and
+// after a guard check on its own; a failed move never blocks the delete.
 func (s *Service) runDelete(ctx context.Context, kind domain.Kind, id int64, force bool) (DeleteView, error) {
+	var cards []DeletedCard
+	if s.taskManager != nil && !s.inTx {
+		if _, err := s.checkDelete(ctx, kind, id, force); err != nil {
+			return DeleteView{}, err
+		}
+		rows, err := s.deleteCards(ctx, kind, id)
+		if err != nil {
+			return DeleteView{}, err
+		}
+		for _, r := range rows {
+			dc := DeletedCard{ID: domain.FormatID(r.Kind, r.EntityID), Key: r.Key, URL: r.URL}
+			if err := s.taskManager.SetStatus(ctx, r.Key, string(domain.StatusCancelled)); err != nil {
+				dc.Error = err.Error()
+				s.log.Warn("moving card to canceled", "id", dc.ID, "key", r.Key, "error", err)
+			} else {
+				dc.Moved = true
+			}
+			cards = append(cards, dc)
+		}
+	}
 	var v DeleteView
 	err := s.InTx(ctx, func(tx *Service) error {
 		c, err := tx.checkDelete(ctx, kind, id, force)
@@ -60,9 +92,61 @@ func (s *Service) runDelete(ctx context.Context, kind domain.Kind, id int64, for
 			return err
 		}
 		v = deleteView(kind, id, c)
+		v.Cards = cards
 		return nil
 	})
 	return v, err
+}
+
+// deleteCards returns the keyed card rows of the target and its subtree, tasks
+// first, then milestones, then the initiative.
+func (s *Service) deleteCards(ctx context.Context, kind domain.Kind, id int64) ([]domain.Card, error) {
+	var ents []cardID
+	switch kind {
+	case domain.KindTask:
+		ents = []cardID{{domain.KindTask, id}}
+	case domain.KindMilestone:
+		ts, err := s.store.ListTasks(ctx, store.TaskFilter{MilestoneID: id})
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range ts {
+			ents = append(ents, cardID{domain.KindTask, t.ID})
+		}
+		ents = append(ents, cardID{domain.KindMilestone, id})
+	case domain.KindInitiative:
+		ts, err := s.store.ListTasks(ctx, store.TaskFilter{InitiativeID: id})
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range ts {
+			ents = append(ents, cardID{domain.KindTask, t.ID})
+		}
+		ms, err := s.store.ListMilestones(ctx, id, false)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range ms {
+			ents = append(ents, cardID{domain.KindMilestone, m.ID})
+		}
+		ents = append(ents, cardID{domain.KindInitiative, id})
+	default:
+		return nil, nil
+	}
+	var out []domain.Card
+	for _, e := range ents {
+		c, err := s.store.GetCard(ctx, e.kind, e.id, s.taskManager.Name())
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if c.Key != "" {
+			out = append(out, c)
+		}
+	}
+	return out, nil
 }
 
 func (s *Service) deleteRow(ctx context.Context, kind domain.Kind, id int64) error {
