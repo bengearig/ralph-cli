@@ -19,6 +19,7 @@ import (
 
 const (
 	issuePath       = "/rest/api/3/issue"
+	projectPath     = "/rest/api/3/project"
 	maxResponseBody = 1 << 20
 	maxBodySnippet  = 200
 )
@@ -149,6 +150,35 @@ func (c *Client) UpdateIssue(ctx context.Context, key string, f IssueFields) err
 	return err
 }
 
+// IssueType is an issue type of a project. Level is nil when Jira did not report a hierarchy level.
+type IssueType struct {
+	Name  string
+	Level *int
+}
+
+// ProjectIssueTypes lists the issue types of the configured project with their hierarchy levels.
+func (c *Client) ProjectIssueTypes(ctx context.Context, projectKey string) ([]IssueType, error) {
+	path := projectPath + "/" + url.PathEscape(projectKey)
+	data, err := c.do(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		IssueTypes []struct {
+			Name           string `json:"name"`
+			HierarchyLevel *int   `json:"hierarchyLevel"`
+		} `json:"issueTypes"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("jira: GET %s: response is not valid JSON: %w", path, err)
+	}
+	out := make([]IssueType, 0, len(resp.IssueTypes))
+	for _, t := range resp.IssueTypes {
+		out = append(out, IssueType{Name: t.Name, Level: t.HierarchyLevel})
+	}
+	return out, nil
+}
+
 // TransitionIssue moves a card to the status named statusName, choosing the
 // workflow transition that leads to it. It does nothing when the card is
 // already there.
@@ -267,6 +297,9 @@ func (e *APIError) hint() string {
 		return "check task_manager.jira.base_url and project_key"
 	case http.StatusBadRequest:
 		text := strings.ToLower(strings.Join(e.Messages, " "))
+		if strings.Contains(text, "parent") {
+			return "check that each configured issue type sits exactly one hierarchy level below its parent's type (task_manager.jira.issue_types)"
+		}
 		for _, w := range []string{"issuetype", "issue type", "field", "required"} {
 			if strings.Contains(text, w) {
 				return "check task_manager.jira.issue_types against the project's issue types"

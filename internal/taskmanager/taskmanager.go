@@ -57,6 +57,12 @@ type Provider interface {
 	SetStatus(ctx context.Context, key, status string) error
 }
 
+// Preflighter is implemented by providers that can check their configuration
+// against the task manager itself, which takes network calls. Sync runs it first.
+type Preflighter interface {
+	Preflight(ctx context.Context) error
+}
+
 // Factory builds a provider from configuration.
 type Factory func(cfg *config.Config) (Provider, error)
 

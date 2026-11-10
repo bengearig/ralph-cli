@@ -488,6 +488,11 @@ func (s *Service) SyncCards(ctx context.Context, opts SyncOptions) (SyncReport, 
 	if s.inTx {
 		return report, errors.New("cards cannot be synced inside a transaction")
 	}
+	if pf, ok := s.taskManager.(taskmanager.Preflighter); ok {
+		if err := pf.Preflight(ctx); err != nil {
+			return report, fmt.Errorf("task manager check failed, nothing was synced: %w", err)
+		}
+	}
 	var initiatives []domain.Initiative
 	if opts.InitiativeID != 0 {
 		i, err := s.store.GetInitiative(ctx, opts.InitiativeID)

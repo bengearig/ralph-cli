@@ -109,7 +109,8 @@ writes, not destructive. The rules are in [Archiving](data-model.md#archiving).
 |---|---|
 | `cards_sync` | Create task manager cards for existing work that has none and bring pending and out-of-date ones up to date, parents first. Parameters: optional `initiative_id` (for example `I-8`) and `include_archived`. Returns the report of created, updated, in-sync, skipped, and failed items, as `ralph cards sync --json` does. Idempotent. Agents call it only when the user asks. |
 
-An error is returned when no task manager is configured. A failed item is in the report, not a tool error, so check its
+The tool first has the task manager check its configuration (for Jira, the issue types and their hierarchy levels), and
+returns an error without syncing anything when the check fails. An error is also returned when no task manager is configured. A failed item is in the report, not a tool error, so check its
 `failed` count. Other write tools carry `card_warning` when a card could not be created or updated, and the delete
 tools return `cards` (each card's `id`, `key`, `url`, `moved`, and `error`) when cards were moved to
 `task_manager.jira.canceled_status` before the delete. See [Jira](jira.md).

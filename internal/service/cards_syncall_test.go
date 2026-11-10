@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bengearig/ralph/internal/domain"
+	"github.com/bengearig/ralph/internal/store"
 	"github.com/bengearig/ralph/internal/taskmanager"
 	tmfake "github.com/bengearig/ralph/internal/taskmanager/fake"
 )
@@ -409,4 +410,27 @@ func rowOf(t *testing.T, id string) (domain.Kind, int64) {
 	}
 	t.Fatalf("bad id %s", id)
 	return "", 0
+}
+
+func TestSyncCardsPreflightFailureCreatesNothing(t *testing.T) {
+	ctx := context.Background()
+	e, tr, p := buildSyncTree(t)
+	e.svc.taskManager = p
+	p.SetPreflightError(errors.New("initiative type is level 2"))
+	report, err := e.svc.SyncCards(ctx, SyncOptions{})
+	if err == nil || !strings.Contains(err.Error(), "nothing was synced") || !strings.Contains(err.Error(), "initiative type is level 2") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(report.Items) != 0 || len(p.Calls()) != 0 {
+		t.Errorf("items %d, calls %d", len(report.Items), len(p.Calls()))
+	}
+	if _, err := e.svc.store.GetCard(ctx, domain.KindInitiative, tr.init, "fake"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("card row after failed preflight: %v", err)
+	}
+
+	p.SetPreflightError(nil)
+	report, err = e.svc.SyncCards(ctx, SyncOptions{})
+	if err != nil || report.Failed != 0 || report.Created == 0 || p.Preflights() != 2 {
+		t.Errorf("err %v, report %+v, preflights %d", err, report, p.Preflights())
+	}
 }

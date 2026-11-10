@@ -176,6 +176,9 @@ every task manager untouched. See [Jira](jira.md) for setup, what a card looks l
 
 The `task_manager.jira` block is validated only when the provider is `jira`, as `pr.bitbucket_cloud` is.
 
+A parent's issue type must sit exactly one hierarchy level above its child's, which the defaults satisfy only where
+Epic is directly above Task; see [Hierarchy levels](jira.md#hierarchy-levels).
+
 The default card types are Jira's built-in hierarchy (Epic, then Task, then Sub-task), which every standard project
 has. Ralph fixes the hierarchy itself: milestones are children of initiatives and tasks are children of milestones.
 Only the type names are configurable. Jira has no built-in Feature type, so a team that has one sets it here, for

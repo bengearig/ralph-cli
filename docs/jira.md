@@ -146,6 +146,9 @@ the error when it did not.
 ralph cards sync [--initiative I-n] [--include-archived] [--verbose]
 ```
 
+- It first checks the configured issue types against the project: each must exist, and each parent type must sit one
+  hierarchy level above its child (see [Hierarchy levels](#hierarchy-levels)). A mismatch stops the sync before
+  anything is created or changed.
 - It is the only way work that predates Jira gets cards. Ralph never does it automatically, including when a provider
   is first configured, so run it once after setting Jira up.
 - It creates missing cards, parents first, retries cards whose creation failed, and brings out-of-date cards up to
@@ -232,6 +235,29 @@ project setup. Jira has no built-in Feature type. A team that has added one sets
 `issue_types.initiative: Feature`. The configured type must exist in the project, and Jira must allow it at that
 level of the hierarchy under the parent's type.
 
+### Hierarchy levels
+
+Every Jira issue type sits on a hierarchy level, and a parent must be **exactly one level above** its child. The
+defaults assume Epic is directly above Task, as in a standard project. A project with extra levels breaks that. For
+example, a project whose hierarchy is Initiative (3), Epic (2), Feature (1), Task (0), and Sub-task (-1) cannot put a
+Task under an Epic, and Jira answers `parent: Please select valid parent issue`. There the types are set to match:
+
+```yaml
+task_manager:
+  jira:
+    issue_types:
+      initiative: Feature
+      milestone: Task
+      task: Sub-task
+```
+
+To see a project's types and levels, read `issueTypes[].hierarchyLevel` from
+`GET /rest/api/3/project/<KEY>`. `ralph cards sync` does this itself before it creates anything and stops with a
+message naming the mismatch; see [Syncing existing work](#syncing-existing-work).
+
+Changing `issue_types` does not retype cards that already exist. Change those in Jira, for example with a bulk move,
+and ralph keeps their keys.
+
 A milestone's card cannot be created before its initiative's card, nor a task's before its milestone's: the provider
 refuses a request that has no parent card key.
 
@@ -273,6 +299,7 @@ where one applies. Ralph does not retry; fix the cause and run the operation aga
 | 401, 403 | The email or token is wrong, or the user may not create issues in the project. | The email and API token, and that the token's user can create issues in the project. |
 | 404 | The site or project does not exist, or the account cannot see it. | `task_manager.jira.base_url` and `task_manager.jira.project_key`. |
 | 400 mentioning an issue type or a field | The project lacks an issue type, the type is not allowed under the parent, or a required field is missing. | `task_manager.jira.issue_types` against the project's issue types, and the project's required fields. |
+| 400 `Please select valid parent issue` | The child's issue type is not exactly one hierarchy level below its parent's type. | The levels of the types in `task_manager.jira.issue_types`; see [Hierarchy levels](#hierarchy-levels). |
 | 429 | Jira is rate limiting the account. | Wait and run again. The hint includes Jira's `Retry-After` value when Jira sends one. |
 | Timeout or network failure | Jira did not answer within `task_manager.timeout`, or the site could not be reached. | The network, the `base_url`, and `task_manager.timeout`. There is no status because no response arrived. |
 

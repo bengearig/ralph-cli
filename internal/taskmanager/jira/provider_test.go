@@ -26,6 +26,9 @@ type fakeJira struct {
 	*httptest.Server
 	mu   sync.Mutex
 	reqs []recorded
+
+	projectStatus int
+	projectBody   string
 }
 
 func newFakeJira(t *testing.T) *fakeJira {
@@ -38,6 +41,14 @@ func newFakeJira(t *testing.T) *fakeJira {
 		f.mu.Lock()
 		f.reqs = append(f.reqs, recorded{r.Method, r.URL.Path, m})
 		f.mu.Unlock()
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/3/project/") {
+			f.mu.Lock()
+			status, body := f.projectStatus, f.projectBody
+			f.mu.Unlock()
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
+			return
+		}
 		if r.Method == http.MethodPost {
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"key":"PROJ-7"}`))
@@ -113,6 +124,69 @@ func TestIssueTypes(t *testing.T) {
 		if got := f.last(t).fields()["issuetype"].(map[string]any)["name"]; got != want {
 			t.Errorf("custom %s: issue type %v, want %s", c.kind, got, want)
 		}
+	}
+}
+
+func (f *fakeJira) setProject(status int, body string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.projectStatus, f.projectBody = status, body
+}
+
+const ainTypes = `{"issueTypes":[{"name":"Feature","hierarchyLevel":1},{"name":"Task","hierarchyLevel":0},{"name":"Bug","hierarchyLevel":0},{"name":"Sub-task","hierarchyLevel":-1},{"name":"Epic","hierarchyLevel":2}]}`
+
+func TestPreflight(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+		types  config.JiraIssueTypes
+		want   []string
+	}{
+		{"adjacent levels", 200, ainTypes, config.JiraIssueTypes{Initiative: "Feature", Milestone: "Task", Task: "Sub-task"}, nil},
+		{"case-insensitive names", 200, ainTypes, config.JiraIssueTypes{Initiative: "feature", Milestone: "TASK", Task: "sub-task"}, nil},
+		{"epic above task", 200, ainTypes, config.JiraIssueTypes{Initiative: "Epic", Milestone: "Task", Task: "Sub-task"},
+			[]string{`initiative type "Epic" is level 2`, `milestone type "Task" is level 0`, "must be level 1 (the project has: Feature)"}},
+		{"no type at the level", 200, ainTypes, config.JiraIssueTypes{Initiative: "Feature", Milestone: "Feature", Task: "Sub-task"},
+			[]string{`milestone type "Feature" is level 1`, "must be level 0"}},
+		{"unknown type", 200, ainTypes, config.JiraIssueTypes{Initiative: "Theme", Milestone: "Task", Task: "Sub-task"},
+			[]string{`issue_types.initiative "Theme" is not an issue type of project PROJ`, "Bug, Epic, Feature, Sub-task, Task"}},
+		{"levels absent", 200, `{"issueTypes":[{"name":"Epic"},{"name":"Task"},{"name":"Sub-task"}]}`, config.JiraIssueTypes{Initiative: "Epic", Milestone: "Task", Task: "Sub-task"}, nil},
+		{"levels absent still checks names", 200, `{"issueTypes":[{"name":"Task"}]}`, config.JiraIssueTypes{Initiative: "Epic", Milestone: "Task", Task: "Sub-task"},
+			[]string{`issue_types.initiative "Epic"`, `issue_types.task "Sub-task"`}},
+		{"forbidden", 403, `{"errorMessages":["Forbidden"]}`, config.JiraIssueTypes{Initiative: "Epic", Milestone: "Task", Task: "Sub-task"},
+			[]string{"403 Forbidden"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeJira(t)
+			f.setProject(tc.status, tc.body)
+			cfg := testCfg(f.URL)
+			cfg.IssueTypes = tc.types
+			err := NewProvider(cfg, 0, env(goodEnv), nil).Preflight(context.Background())
+			if tc.want == nil {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("%q missing %q", err, w)
+				}
+			}
+		})
+	}
+}
+
+func TestPreflightMissingCredentials(t *testing.T) {
+	f := newFakeJira(t)
+	err := NewProvider(testCfg(f.URL), 0, env(nil), nil).Preflight(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "RALPH_JIRA_EMAIL") || f.count() != 0 {
+		t.Errorf("err = %v, requests = %d", err, f.count())
 	}
 }
 

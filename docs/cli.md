@@ -68,6 +68,8 @@ operation is a `warning:` line on standard error, never a failed command. See [J
 
 - Sync is explicit: it is the only way work that predates the task manager gets cards, and nothing runs it
   automatically. It is safe to rerun, and it skips cancelled work that has no card.
+- Before creating anything it asks the task manager to check the configuration (for Jira, that the issue types exist
+  and sit on adjacent hierarchy levels). If the check fails, nothing is synced and the command exits `1`.
 - `--initiative` limits it to one initiative, `--include-archived` also syncs archived initiatives, and `--verbose`
   also lists the items already in sync.
 - Output is one line per created, updated, failed, or skipped item, then a line of totals. With `--json` it is the

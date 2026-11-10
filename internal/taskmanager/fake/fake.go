@@ -25,10 +25,15 @@ type Provider struct {
 	attempts    int
 	err         error
 	validateErr error
+	preflight   error
+	preflights  int
 	hook        func(n int, method string, req taskmanager.CardRequest) error
 }
 
-var _ taskmanager.Provider = (*Provider)(nil)
+var (
+	_ taskmanager.Provider    = (*Provider)(nil)
+	_ taskmanager.Preflighter = (*Provider)(nil)
+)
 
 // New returns an empty fake provider.
 func New() *Provider { return &Provider{} }
@@ -46,6 +51,27 @@ func (p *Provider) SetValidateError(err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.validateErr = err
+}
+
+// SetPreflightError makes Preflight return err; nil clears it.
+func (p *Provider) SetPreflightError(err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.preflight = err
+}
+
+// Preflights returns how many times Preflight was called.
+func (p *Provider) Preflights() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.preflights
+}
+
+func (p *Provider) Preflight(context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.preflights++
+	return p.preflight
 }
 
 // SetError makes every Create, Update, and SetStatus return err; nil clears it.

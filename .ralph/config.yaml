@@ -105,5 +105,7 @@ task_manager:
   jira:
     base_url: https://autoclubgroup-sandbox.atlassian.net
     project_key: AIN
+    issue_types:
+      initiative: Feature
     labels:
       - workflow-2.0

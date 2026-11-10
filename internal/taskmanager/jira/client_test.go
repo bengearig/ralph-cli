@@ -167,6 +167,8 @@ func TestErrors(t *testing.T) {
 		{"404", 404, nil, `{"errorMessages":["No project"]}`, []string{"404 Not Found", "No project", "task_manager.jira.base_url and project_key"}},
 		{"400", 400, nil, `{"errorMessages":["bad"],"errors":{"summary":"too long","issuetype":"Specify an issue type"}}`,
 			[]string{"400 Bad Request", "bad; issuetype: Specify an issue type; summary: too long", "task_manager.jira.issue_types"}},
+		{"400 parent", 400, nil, `{"errors":{"parent":"Please select valid parent issue."}}`,
+			[]string{"parent: Please select valid parent issue.", "one hierarchy level below its parent's type", "task_manager.jira.issue_types"}},
 		{"429", 429, map[string]string{"Retry-After": "30"}, `{}`, []string{"429 Too Many Requests", "30"}},
 		{"500", 500, nil, "  upstream exploded  ", []string{"500 Internal Server Error", "upstream exploded"}},
 	}

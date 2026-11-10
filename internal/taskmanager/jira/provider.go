@@ -25,7 +25,10 @@ const (
 	truncatedNote       = "\n\n_(truncated, see ralph)_"
 )
 
-var _ taskmanager.Provider = (*Provider)(nil)
+var (
+	_ taskmanager.Provider    = (*Provider)(nil)
+	_ taskmanager.Preflighter = (*Provider)(nil)
+)
 
 func init() {
 	taskmanager.Register(config.TaskManagerJira, func(cfg *config.Config) (taskmanager.Provider, error) {
@@ -85,6 +88,71 @@ func (p *Provider) Validate() error {
 		}
 		if v, ok := p.lookup(f.name); !ok || strings.TrimSpace(v) == "" {
 			bad("environment variable %s (task_manager.jira.%s) is not set", f.name, f.setting)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// Preflight checks that the configured issue types exist in the project and, when Jira
+// reports hierarchy levels, that each parent type sits exactly one level above its child.
+func (p *Provider) Preflight(ctx context.Context) error {
+	c, err := p.getClient()
+	if err != nil {
+		return err
+	}
+	types, err := c.ProjectIssueTypes(ctx, p.cfg.ProjectKey)
+	if err != nil {
+		return err
+	}
+	byName := map[string]IssueType{}
+	names := make([]string, 0, len(types))
+	for _, t := range types {
+		byName[strings.ToLower(t.Name)] = t
+		names = append(names, t.Name)
+	}
+	slices.Sort(names)
+
+	var errs []error
+	bad := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
+	configured := []struct{ setting, name string }{
+		{"initiative", p.cfg.IssueTypes.Initiative},
+		{"milestone", p.cfg.IssueTypes.Milestone},
+		{"task", p.cfg.IssueTypes.Task},
+	}
+	found := make([]IssueType, len(configured))
+	known := true
+	for i, c := range configured {
+		t, ok := byName[strings.ToLower(strings.TrimSpace(c.name))]
+		if !ok {
+			bad("task_manager.jira.issue_types.%s %q is not an issue type of project %s (it has: %s)", c.setting, c.name, p.cfg.ProjectKey, strings.Join(names, ", "))
+			known = false
+			continue
+		}
+		found[i] = t
+		if t.Level == nil {
+			known = false
+		}
+	}
+	if known {
+		for i := 0; i < len(configured)-1; i++ {
+			parent, child := found[i], found[i+1]
+			if *parent.Level == *child.Level+1 {
+				continue
+			}
+			want := *child.Level + 1
+			var fits []string
+			for _, t := range types {
+				if t.Level != nil && *t.Level == want {
+					fits = append(fits, t.Name)
+				}
+			}
+			slices.Sort(fits)
+			hint := "the project has no type at that level"
+			if len(fits) > 0 {
+				hint = "the project has: " + strings.Join(fits, ", ")
+			}
+			bad("%s type %q is level %d and %s type %q is level %d; a parent must be exactly one level above its child, so the %s type must be level %d (%s)",
+				configured[i].setting, parent.Name, *parent.Level, configured[i+1].setting, child.Name, *child.Level, configured[i].setting, want, hint)
 		}
 	}
 	return errors.Join(errs...)
