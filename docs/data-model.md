@@ -185,6 +185,18 @@ the branch, for example by a reset. It requires the task to be `DONE` and a non-
 - clears the recorded `commit`;
 - adds a `NOTE`: `Reopened by reconcile: <reason>`.
 
+### Import-only creation
+
+Creating a task in a status other than `PROPOSED` is a second service operation outside the transition table,
+`ImportTask`, used only to bring in existing task lists (see
+[importing task trackers](claude-code.md#importing-task-trackers)). It is reached through the
+[`task_import`](mcp.md#tasks) MCP tool. Ordinary creation always starts at `PROPOSED`.
+
+It may create a task as `PROPOSED`, `TODO`, `BLOCKED`, `DONE`, or `CANCELLED`, never `IN_PROGRESS`, which only the loop
+sets. It applies the same guards as a transition to that status (`TODO` needs a description and acceptance criteria,
+`BLOCKED` takes the reason as its blocked reason), requires a reason for the choice of status, and records the reason
+and the optional source as a `NOTE`. Like reopening, it adds no arrow to the diagram.
+
 ## Display IDs and slugs
 
 Rows use integer primary keys. Users and agents see display IDs (`T-12`), with prefixes `I`, `M`, `T`, `D`, and `N`

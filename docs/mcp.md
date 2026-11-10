@@ -85,6 +85,7 @@ The authoritative list, with schemas, is whatever `tools/list` returns. The regi
 | Tool | Purpose |
 |---|---|
 | `task_create` | Propose a task; it always starts `PROPOSED`. |
+| `task_import` | Import-only: create a task directly in `PROPOSED`, `TODO`, `BLOCKED`, `DONE`, or `CANCELLED`, for bringing in an existing task list. `IN_PROGRESS` is refused. `reason` is required and recorded in a note, with the optional `source`, so a reader can see why the status was chosen. `TODO` needs a description and acceptance criteria, and `BLOCKED` uses `reason` as its blocked reason. Prefer `PROPOSED` when unsure, and use `task_create` for planning new work. See [importing task trackers](claude-code.md#importing-task-trackers) and [the state machine](data-model.md#import-only-creation). |
 | `task_list` | Tasks in loop order, filtered by milestone, initiative, or statuses. |
 | `task_get` | A task with notes and `allowed_next` statuses, its `commit` when the loop committed it, and its `card` when a task manager is configured. |
 | `task_update` | Edit text or position. Terminal tasks cannot be edited. |

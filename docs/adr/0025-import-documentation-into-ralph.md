@@ -80,3 +80,17 @@ and adds no new storage.
 - **No deletes.** The agent does not delete documents, tasks, or files. Duplicates are reported to the user instead.
 - **Shared workflow source.** The command and the prompt are two renderings of one template, as for the other
   workflows ([ADR 0031](0031-serve-workflows-to-any-harness.md)), so they do not drift apart.
+
+## Follow-up: task trackers
+
+Files that are lists of work items, rather than documentation, are imported as task trackers (decision D-25).
+
+- **Recognised by content.** The agent decides from what a file contains, not its name, extension, or originating tool.
+- **No tool-specific parser.** ralph ships no parser for any tracker. The agent reads whatever format it finds, so a new
+  format needs no code.
+- **A new initiative per tracker.** Its milestones and tasks follow the tracker's grouping and order, and the record is
+  resolved with a note naming the initiative.
+- **Conservative statuses.** Tasks are created with the import-only `task_import` tool. `TODO` needs a description and
+  acceptance criteria, uncertain items are `PROPOSED`, nothing is `IN_PROGRESS`, and each task records why.
+- **Varied fixtures.** The workflow is checked against deliberately dissimilar sample trackers, described in
+  [the fixtures README](../../internal/workflow/testdata/trackers/README.md).

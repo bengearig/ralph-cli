@@ -98,10 +98,61 @@ A change that affects only the neutral rendering needs steps 1, 4, and 5.
    invalidates is kicked back to `PROPOSED`. If you decline the plan, the conflicting changes are not applied and the
    record is left `deferred`, to be settled by a later run. Nothing is deleted. See
    [Imports](data-model.md#imports) and [ADR 25](adr/0025-import-documentation-into-ralph.md).
+
+   A file that is a task list is imported differently; see [Importing task trackers](#importing-task-trackers).
 7. **Pull request.** Run `ralph pr create --milestone M-1`. Planned.
 
 At any point, `/ralph:search <question>` searches the store, reads the best matches, and answers with their IDs.
 It changes nothing. `ralph search` is the terminal equivalent.
+
+### Importing task trackers
+
+A file whose content is a list of work items is treated as a task tracker, whatever its format or the tool that
+produced it. The agent recognises it by its content, not by its name or extension: markdown checklists or tables,
+JSON, YAML or CSV exports, and progress logs all qualify. ralph has no parser for any particular tool, and no tool is
+the target; the agent reads the file and works out its structure.
+
+Each tracker becomes a new initiative, with milestones following the tracker's own grouping and order, and a task for
+each item. The initiative's brief starts with `Imported from <path>.`, followed by any goal text the file has. Items
+are created with the import-only [`task_import`](mcp.md#tasks) tool.
+
+Statuses are mapped conservatively, and every task gets a note recording why:
+
+- completed items become `DONE`, dropped ones `CANCELLED`, and blocked ones `BLOCKED` with the tracker's blocker as the
+  reason;
+- an item becomes `TODO` only when the file gives it both a description and acceptance criteria, since `TODO` means
+  the loop can work it unaided;
+- anything else, including items in progress and items the agent cannot interpret, becomes `PROPOSED`, to be
+  articulated. Nothing is imported as `IN_PROGRESS`.
+
+Approval follows the rule for Receive: the agent first presents the proposed initiative, milestones, tasks and
+statuses when [`receive.confirm_outline`](configuration.md#receive) is set or you asked to approve first, and
+otherwise creates the outline and shows it.
+
+For example, a checklist:
+
+```markdown
+## Sign-in
+- [x] Add login form
+- [ ] Add password reset
+  - Acceptance: a reset email arrives within a minute
+```
+
+and a CSV export:
+
+```csv
+title,sprint,state,notes
+Add login form,Sign-in,closed,
+Add password reset,Sign-in,open,
+Rate limit logins,Hardening,blocked,waiting on gateway config
+```
+
+From the checklist, `Add login form` becomes `DONE`, and `Add password reset` becomes `TODO` only if the file also
+describes it; otherwise it is `PROPOSED`, with a note saying so. From the CSV, `Rate limit logins` becomes `BLOCKED`
+with the file's note as its reason, in a `Hardening` milestone, and the `closed` item becomes `DONE`.
+
+To check the workflow against a spread of formats before changing it, see the
+[tracker fixtures README](../internal/workflow/testdata/trackers/README.md).
 
 ## Headless invocation
 
