@@ -40,7 +40,7 @@ func newCountingEnv(t *testing.T) (env, *countingStore) {
 
 func TestViewsShowCardAndDerivedPending(t *testing.T) {
 	ctx := context.Background()
-	e, _ := withProvider(newEnv(t))
+	e, p := withProvider(newEnv(t))
 	i, _ := e.svc.CreateInitiative(ctx, InitiativeInput{Title: "I", Brief: "b"})
 	m, _ := e.svc.CreateMilestone(ctx, MilestoneInput{InitiativeID: iid(t, i.ID), Title: "M"})
 	tk, err := e.svc.CreateTask(ctx, TaskInput{MilestoneID: mid(t, m.ID), Title: "T", Description: "d"})
@@ -62,9 +62,11 @@ func TestViewsShowCardAndDerivedPending(t *testing.T) {
 	}
 
 	title := "Renamed"
+	e.svc.taskManager = nil
 	if _, err := e.svc.UpdateTask(ctx, tid(t, tk.ID), TaskPatch{Title: &title}); err != nil {
 		t.Fatal(err)
 	}
+	e.svc.taskManager = p
 	got, _ = e.svc.GetTask(ctx, tid(t, tk.ID))
 	if got.Card == nil || got.Card.Pending != "update" {
 		t.Errorf("after edit card = %+v", got.Card)

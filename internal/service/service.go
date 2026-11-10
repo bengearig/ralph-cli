@@ -319,6 +319,7 @@ func (s *Service) UpdateInitiative(ctx context.Context, id int64, p InitiativePa
 	}
 	v := initiativeView(i)
 	v.IndexWarning = s.indexInitiative(ctx, i)
+	_, v.CardWarning = s.syncCard(ctx, domain.KindInitiative, i.ID, modeExisting)
 	return v, nil
 }
 
@@ -465,6 +466,7 @@ func (s *Service) UpdateMilestone(ctx context.Context, id int64, p MilestonePatc
 	}
 	v := milestoneView(m, tasks, archived)
 	v.IndexWarning = s.indexMilestone(ctx, m)
+	_, v.CardWarning = s.syncCard(ctx, domain.KindMilestone, m.ID, modeExisting)
 	return v, nil
 }
 
@@ -706,6 +708,7 @@ func (s *Service) UpdateTask(ctx context.Context, id int64, p TaskPatch) (TaskVi
 	}
 	v := taskView(t, nil, archived)
 	v.IndexWarning = s.indexTask(ctx, t, m.InitiativeID)
+	_, v.CardWarning = s.syncCard(ctx, domain.KindTask, t.ID, modeExisting)
 	return v, nil
 }
 
