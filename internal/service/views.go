@@ -245,4 +245,15 @@ type DeleteView struct {
 	ID      string         `json:"id"`
 	Kind    string         `json:"kind"`
 	Deleted map[string]int `json:"deleted"`
+	// Cards lists the cards moved to the canceled status, or in a preview those that will be.
+	Cards []DeletedCard `json:"cards,omitempty"`
+}
+
+// DeletedCard is a card of a deleted resource and whether it was moved to the canceled status.
+type DeletedCard struct {
+	ID    string `json:"id"`
+	Key   string `json:"key"`
+	URL   string `json:"url"`
+	Moved bool   `json:"moved"`
+	Error string `json:"error,omitempty"`
 }

@@ -11,11 +11,13 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/embed/fake"
 	"github.com/bengearig/ralph/internal/looplock"
 	"github.com/bengearig/ralph/internal/search"
 	"github.com/bengearig/ralph/internal/service"
 	"github.com/bengearig/ralph/internal/store/sqlite"
+	tmfake "github.com/bengearig/ralph/internal/taskmanager/fake"
 )
 
 func connect(t *testing.T) *mcp.ClientSession {
@@ -591,4 +593,39 @@ func TestDocArchiveTools(t *testing.T) {
 	if restored.ArchivedAt != "" {
 		t.Errorf("doc_unarchive left archived_at = %q", restored.ArchivedAt)
 	}
+}
+
+func TestTaskDeleteResultCarriesCards(t *testing.T) {
+	ctx := context.Background()
+	st, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "r.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	ix := &search.Index{Store: st, Embedder: fake.New(), Chunker: search.Chunker{MaxChars: 1000, OverlapChars: 100}}
+	p := tmfake.New()
+	svc := service.New(st, ix, service.Options{StallThreshold: 3, TaskManager: p, CardCanceledStatus: "Canceled"})
+	cs := connectService(t, svc, Options{})
+	_, task := seedDeletable(t, cs)
+	if err := svc.RecordCard(ctx, domain.KindTask, mustTaskID(t, task.ID), "fake", "FAKE-9", "http://x/FAKE-9", ""); err != nil {
+		t.Fatal(err)
+	}
+	var v service.DeleteView
+	mustOK(t, cs, "task_delete", map[string]any{"id": task.ID}, &v)
+	if len(v.Cards) != 1 || v.Cards[0].Key != "FAKE-9" || !v.Cards[0].Moved {
+		t.Fatalf("cards = %+v", v.Cards)
+	}
+	calls := p.Calls()
+	if last := calls[len(calls)-1]; last.Method != "SetStatus" || last.Key != "FAKE-9" || last.Request.Status != "CANCELLED" {
+		t.Errorf("last call = %+v", last)
+	}
+}
+
+func mustTaskID(t *testing.T, s string) int64 {
+	t.Helper()
+	id, err := domain.ParseID(domain.KindTask, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }

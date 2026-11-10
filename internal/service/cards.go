@@ -350,6 +350,9 @@ func (s *Service) failCard(ctx context.Context, kind domain.Kind, id int64, caus
 // CardsEnabled reports whether a task manager provider is configured.
 func (s *Service) CardsEnabled() bool { return s.taskManager != nil }
 
+// CardCanceledStatus is the status deleted resources' cards move to; empty means none.
+func (s *Service) CardCanceledStatus() string { return s.cardCanceledStatus }
+
 type cardID struct {
 	kind domain.Kind
 	id   int64

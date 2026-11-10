@@ -221,3 +221,53 @@ func TestTaskStatusCardWarningReachesStderr(t *testing.T) {
 		t.Errorf("stderr = %q", errOut)
 	}
 }
+
+func seedCard(t *testing.T, h *testEnv, kind domain.Kind, id int64, key string) {
+	t.Helper()
+	cfg, err := config.Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Embeddings.Provider = config.EmbeddingsNone
+	svc, closeFn, err := service.OpenWithTaskManager(context.Background(), cfg, h.dir, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeFn()
+	if err := svc.RecordCard(context.Background(), kind, id, "jira", key, "http://x/"+key, ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeleteWarnsWhenCardNotMoved(t *testing.T) {
+	h := jiraEnv(t, "tok")
+	t.Setenv("RALPH_TASK_MANAGER__JIRA__CANCELED_STATUS", "Canceled")
+	h.ok("initiative", "create", "--title", "SSO")
+	seedCard(t, h, domain.KindInitiative, 1, "RAL-7")
+
+	out, errOut, err := h.run("", "initiative", "delete", "I-1", "--dry-run")
+	if err != nil || !strings.Contains(out, `cards: RAL-7 will move to "Canceled"`) {
+		t.Fatalf("dry-run: %v\n%s\n%s", err, out, errOut)
+	}
+	if _, _, err := h.run("", "initiative", "get", "I-1"); err != nil {
+		t.Fatalf("dry-run deleted it: %v", err)
+	}
+
+	out, errOut, err = h.run("", "initiative", "delete", "I-1", "--yes")
+	if err != nil {
+		t.Fatalf("delete failed: %v\n%s", err, errOut)
+	}
+	if !strings.Contains(errOut, "warning: card RAL-7 was not moved:") || !strings.Contains(out, "deleted I-1") {
+		t.Errorf("stdout %q stderr %q", out, errOut)
+	}
+}
+
+func TestDeleteDryRunOmitsCardsWithoutCanceledStatus(t *testing.T) {
+	h := jiraEnv(t, "tok")
+	h.ok("initiative", "create", "--title", "SSO")
+	seedCard(t, h, domain.KindInitiative, 1, "RAL-7")
+	out, errOut, err := h.run("", "initiative", "delete", "I-1", "--dry-run")
+	if err != nil || strings.Contains(out, "cards:") || !strings.Contains(out, "would delete I-1") {
+		t.Fatalf("%v\n%s\n%s", err, out, errOut)
+	}
+}
