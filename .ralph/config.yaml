@@ -118,3 +118,7 @@ task_manager:
       TODO: [To Do]
       IN_PROGRESS: [To Do, In Progress]
       DONE: [To Do, In Progress, Done]
+
+loop:
+  commit_template: "{{.Task.CardKeyPrefix}}{{.Task.ID}}: {{.Task.Title}}"
+  commit_card_trailer: true
