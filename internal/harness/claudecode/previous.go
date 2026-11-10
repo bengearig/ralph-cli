@@ -20,7 +20,11 @@ var shippedCommands = map[string][]string{
 		"2468e66045c06d69924ef3d17939658d2077ac7f0b165770910a802c5dc3be92",
 		"324d24d9906bd861d7a4ab883be4a7e067d64648849d0e5df092a27a92a5b0bc",
 	},
-	"status.md": {"4f33c088218bdecdea0ab6c011051de21bf952659e9bb38cd2eb7de717557aee"},
+	"search.md": {"f31792b544902dd76bc6527c9f7e4c8cc79026d61114395afb68242f1f3fce12"},
+	"status.md": {
+		"4f33c088218bdecdea0ab6c011051de21bf952659e9bb38cd2eb7de717557aee",
+		"804db40ea1985fa8d2d0d0fcad1c1071142700a6dc157ab037e8583e5e7bac2b",
+	},
 }
 
 func commandDigest(content []byte) string {

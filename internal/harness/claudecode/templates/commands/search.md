@@ -14,7 +14,8 @@ Query (may be empty): $ARGUMENTS
    matching each hit's `kind`. Skip hits that are clearly unrelated.
 4. Answer the user's question from what you read, citing IDs (for example `D-3`, `T-12`). Separately list other
    relevant hits with a one-line summary each. If nothing relevant was found, say so plainly.
-5. If the result's `mode` is `keyword`, mention that semantic search was unavailable, with any warnings, and that
+5. Archived items are hidden from results unless asked for. If the user wants them, pass `include_archived`.
+6. If the result's `mode` is `keyword`, mention that semantic search was unavailable, with any warnings, and that
    `ralph index` embeds stale content once Ollama is reachable.
 
 Do not change anything.

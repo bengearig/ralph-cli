@@ -23,7 +23,6 @@ This page tracks what the skeleton deliberately leaves stubbed, and the open que
 - More PR providers, such as Bitbucket Data Center, GitHub, GitLab, or Azure DevOps, behind the `pr` registry.
 - More embedding providers, such as Voyage AI or OpenAI-compatible APIs, behind `embed.Embedder`.
 - Task dependencies beyond position ordering.
-- Archive commands, to hide finished initiatives and documents without deleting them.
 - `ralph doctor` to check git, the harness binary, Ollama and the model, MCP registration, and provider credentials
   in one place.
 - Developer tooling (Makefile, linters, CI, release builds) once the skeleton settles.

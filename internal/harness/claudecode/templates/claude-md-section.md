@@ -15,6 +15,8 @@ request → **H**uman review. The plan lives in ralph's store, reached through t
   re-articulation. Drop planned work with `CANCELLED`; delete only items created by mistake, and only with the user's
   agreement.
 - Search the store (`search`) before writing new documents or tasks.
+- Archived initiatives and documents are hidden from lists, status, and search unless `include_archived` is set. An
+  archived initiative, and everything under it, must be unarchived before it can be changed.
 - Before a pull request, resolve any branch drift (the branch no longer matching ralph's record) with
   `/ralph:reconcile` or `ralph milestone reconcile`.
 

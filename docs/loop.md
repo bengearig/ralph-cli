@@ -63,6 +63,9 @@ flowchart TD
 
 ### Before the first session
 
+0. **Archive check.** The loop refuses a milestone whose initiative is archived, with an error naming the
+   initiative and the `ralph initiative unarchive` command. `ralph pr create` does the same. See
+   [Archiving](data-model.md#archiving).
 1. **Lock.** The loop takes an exclusive lock on `.ralph/loop.lock` for the whole project, because one working tree
    can only serve one loop. A second `ralph loop` fails and names the PID and milestone holding the lock. The
    operating system releases the lock if ralph dies.

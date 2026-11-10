@@ -38,6 +38,7 @@ The authoritative list, with schemas, is whatever `tools/list` returns. The regi
 | `initiative_list` | All initiatives. |
 | `initiative_get` | One initiative with its brief. |
 | `initiative_update` | Edit title or brief; omitted fields are unchanged. |
+| `initiative_archive` / `initiative_unarchive` | Hide an initiative and everything in it and make it read-only, or undo that. Parameter `id`. Refused while a loop holds one of its milestones. |
 | `initiative_delete` | Destructive. Parameters `id` and optional `force`. Cascades to milestones, tasks, notes, and documents; refused without `force` when the initiative has milestones or documents. |
 
 ### Milestones
@@ -74,6 +75,7 @@ The authoritative list, with schemas, is whatever `tools/list` returns. The regi
 | `doc_list` | Documents without bodies, filtered by initiative, project scope, or kind. |
 | `doc_get` | A document with its body. |
 | `doc_update` | Edit kind, title, or body; a new body replaces the old one. |
+| `doc_archive` / `doc_unarchive` | Hide a document and make it read-only, or undo that. Parameter `id`. |
 | `doc_delete` | Destructive. Parameter `id`. Removes the document and its search index entries; nothing else cascades. |
 
 ### Deleting
@@ -89,6 +91,17 @@ per kind.
   `force`, a refusal is a tool error naming what blocks the delete. The tools have no confirmation step, so `force`
   and the user's approval are the only safeguards.
 - **Loop lock.** While a loop is running on an affected milestone, a delete is refused even with `force: true`.
+
+### Archiving
+
+The four archive tools (`initiative_archive`, `initiative_unarchive`, `doc_archive`, `doc_unarchive`) are idempotent
+writes, not destructive. The rules are in [Archiving](data-model.md#archiving).
+
+- `initiative_list`, `milestone_list`, `task_list`, `doc_list`, `status`, and `search` omit archived items unless
+  `include_archived` is `true`. The `_get` tools always work.
+- Changing an archived item, or anything in an archived initiative, is a tool error that says to unarchive it first.
+  Agents unarchive only with the user's agreement.
+- `task_next` refuses a milestone whose initiative is archived.
 
 ### Search and status
 

@@ -12,6 +12,8 @@ Initiative filter (may be empty): $ARGUMENTS
    - `BLOCKED` tasks, with their reasons (`task_list` with status `BLOCKED`, then `task_get`);
    - `PROPOSED` tasks that still need articulation, suggesting `/ralph:articulate <milestone ID>`;
    - milestones whose tasks are all `TODO`, which are ready for `ralph loop --milestone <ID>`.
-3. Suggest the single most useful next step.
+3. Archived initiatives are hidden unless asked for; pass `include_archived` to include them. An archived initiative
+   is read-only, so suggest unarchiving it before any change to it or to what it contains.
+4. Suggest the single most useful next step.
 
 Keep the summary short. Do not change anything.

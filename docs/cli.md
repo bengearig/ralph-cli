@@ -46,6 +46,7 @@ Commit hashes recorded by the loop are shown shortened in text output and in ful
 | `ralph doc create --kind <k> --title <t> [--initiative <id>] [--body \| --file] [--slug]` | Create a document. Without `--initiative` it is project-wide. |
 | `ralph doc list [--initiative <id> \| --project] [--kind <k>]` / `show <id>` / `update <id> ...` | Browse and edit documents. |
 | `ralph initiative delete <id>`, `milestone delete <id>`, `task delete <id>` `[--force] [--yes]`, `ralph doc delete <id>`, `ralph note delete <id>` `[--yes]` | Delete permanently. See [Deleting](#deleting). |
+| `ralph initiative archive <id>` / `unarchive <id>`, `ralph doc archive <id>` / `unarchive <id>` | Hide an item and make it read-only, or undo that. See [Archiving](#archiving). |
 | `ralph status [--initiative <id>]` | Progress summary: milestones with derived status and task counts. |
 
 ### Deleting
@@ -72,11 +73,22 @@ reason; delete is for items created by mistake. See [Deleting](data-model.md#del
   `{"id", "kind", "deleted"}`, where `deleted` maps each kind removed (`initiatives`, `milestones`, `tasks`, `notes`,
   `documents`) to its row count. This is the shape the MCP delete tools return.
 
+### Archiving
+
+Archiving hides finished initiatives and documents without deleting them. See [Archiving](data-model.md#archiving)
+for the rules.
+
+- `initiative archive`, `initiative unarchive`, `doc archive`, and `doc unarchive` take an ID and are idempotent.
+  Archiving or unarchiving an initiative is refused while a loop holds one of its milestones.
+- An archived item, and everything in an archived initiative, is read-only until it is unarchived. Deletes still work.
+- `initiative list`, `milestone list`, `task list`, `doc list`, `status`, and `search` leave archived items out
+  unless given `--archived`. `show` always works and prints an `archived:` line for an archived item.
+
 ## Search
 
 | Command | Purpose |
 |---|---|
-| `ralph search <query...> [--kind initiative,milestone,task,document] [--initiative <id>] [--limit n]` | Vector search with keyword fallback. The footer, or `mode` in JSON, says which ran. |
+| `ralph search <query...> [--kind initiative,milestone,task,document] [--initiative <id>] [--limit n] [--archived]` | Vector search with keyword fallback. The footer, or `mode` in JSON, says which ran. |
 | `ralph index [--rebuild]` | Embed stale chunks; with `--rebuild`, rechunk everything first. |
 
 ## Agent integration
@@ -94,6 +106,9 @@ reason; delete is for items created by mistake. See [Deleting](data-model.md#del
 | `ralph milestone reconcile <id> [--branch <name>] [--reopen <ids>] [--reason <text>] [--accept]` | Report how the milestone's branch differs from its record and resolve it. See [below](#ralph-milestone-reconcile). |
 | `ralph pr create --milestone <id> --dry-run` | Print the pull request that would be opened, the drift check's result, and any provider configuration problems. |
 | `ralph pr create --milestone <id>` | Open the pull request. *Not implemented yet (exit code 2).* |
+
+`ralph loop` and `ralph pr create`, including their dry runs, refuse a milestone whose initiative is
+[archived](#archiving).
 
 `ralph pr create` takes its source branch from the milestone's recorded branch, the one the loop worked on, and
 derives it from `loop.branch_template` only when none is recorded.

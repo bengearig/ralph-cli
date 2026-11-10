@@ -5,6 +5,9 @@ These terms are used consistently in code, documentation, CLI output, MCP tool d
 **Acceptance criteria.** Verifiable conditions, ideally tests or commands, that show a task is done. A task needs
 acceptance criteria before it can move to `TODO`.
 
+**Archive.** Hiding an initiative or document, and everything under an initiative, from lists, status, and search, and
+making it read-only, without deleting it. Archiving is reversible; see [Archiving](data-model.md#archiving).
+
 **Articulate.** The second phase: low-level planning. Each unplanned task is worked out with a person until a
 stranger, or a fresh agent, could implement and verify it from its description and acceptance criteria alone, and is
 then promoted to `TODO`.

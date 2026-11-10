@@ -19,7 +19,8 @@ automatically when the database is opened. Applied versions are tracked in `sche
 
 ### Initiative (`I-n`)
 
-One received set of instructions. `brief` holds them verbatim. `slug` is unique.
+One received set of instructions. `brief` holds them verbatim. `slug` is unique. `archived_at` is empty until the
+initiative is [archived](#archiving).
 
 ### Milestone (`M-n`)
 
@@ -74,7 +75,8 @@ note kind follows from the transition: kickbacks (to `BLOCKED`, or back to `PROP
 ### Document (`D-n`)
 
 Kinds are `brief`, `architecture`, `design`, `decision`, `reference`, and `note`. A document with no initiative is
-project-wide. Slugs are unique within their scope; the project scope counts as its own scope.
+project-wide. Slugs are unique within their scope; the project scope counts as its own scope. `archived_at` is empty
+until the document is [archived](#archiving).
 
 ## Git records
 
@@ -176,6 +178,41 @@ the user before deleting and never pass `force` without explicit approval. See
   and milestone. Stop the loop first.
 - **No git side effects.** A milestone's recorded branch is never touched.
 
+## Archiving
+
+Archiving hides finished initiatives and documents without deleting them, and makes them read-only. Only initiatives
+and documents have an `archived_at` column. It is empty when the item is not archived, and otherwise holds the time
+of archiving as an RFC 3339 timestamp. Archiving does not change `updated_at`.
+
+Milestones and tasks have no flag of their own; they inherit the state of their initiative. The **effective state**
+is computed whenever it is needed:
+
+| Entity | Archived when |
+|---|---|
+| Initiative | its `archived_at` is set |
+| Milestone, task | their initiative is archived |
+| Initiative-scoped document | its own `archived_at` is set, or its initiative is archived |
+| Project-wide document | its own `archived_at` is set |
+
+Views report the state: initiatives and documents carry `archived_at`, a document whose initiative is archived also
+reports `archived`, and milestones and tasks report `archived`.
+
+- **Read-only.** While an item is effectively archived, anything that would change it or anything under it is refused
+  with `service.ErrArchived`, whose message names the archived item and says to unarchive it first. That covers
+  updates, status changes, reopening, adding notes, creating milestones, tasks, or documents under an archived
+  initiative, and writing git records (and so applying drift reconciliation).
+- **Still allowed.** Archive, unarchive, get by ID, and deletes, which keep their [guards](#deleting) including
+  `force`. Archiving an archived item, or unarchiving one that is not archived, does nothing.
+- **Hiding.** List, status, and search operations leave out effectively archived items unless the caller opts in with
+  `--archived` on the [CLI](cli.md#archiving) or `include_archived` on the [MCP server](mcp.md#archiving). Get by ID
+  always works. Results do not say that anything was hidden. Search applies the filter when it queries chunks, so
+  archiving and unarchiving need no re-indexing.
+- **Loop lock.** Archiving or unarchiving an initiative is refused, even by a caller that could otherwise force it,
+  while a loop holds one of its milestones. Stop the loop first. The loop and `ralph pr create` in turn refuse
+  milestones of archived initiatives; see [the loop](loop.md#before-the-first-session).
+
+See [ADR 0019](adr/0019-archive-initiatives-and-documents.md).
+
 ## Search index
 
 | Table | Purpose |
@@ -196,3 +233,5 @@ Chunking rules:
   `ralph index --rebuild` rechunks everything first.
 - Deleting an entity, including through a foreign-key cascade, removes its chunks through triggers. See
   [Deleting](#deleting). Cancelling is the default way to drop a task.
+- Archived items keep their chunks and embeddings; search filters them out at query time. See
+  [Archiving](#archiving).
