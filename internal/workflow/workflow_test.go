@@ -200,3 +200,33 @@ func TestImportWorkflowContent(t *testing.T) {
 		}
 	}
 }
+
+func TestImportWorkflowTrackerSection(t *testing.T) {
+	cmd, err := RenderCommand("import")
+	if err != nil {
+		t.Fatal(err)
+	}
+	neutral, err := Render("import", Data{Target: Neutral})
+	if err != nil {
+		t.Fatal(err)
+	}
+	forbidden := []string{
+		"TRACKER.md", "ralph-loop", "TODO.md", "TASKS.md", "PLAN.md", "Jira", "GitHub", "GitLab", "Linear",
+		"Trello", "Asana", "Notion", "Azure DevOps", "Backlog", "Taskwarrior",
+	}
+	for name, out := range map[string]string{"claude_code": string(cmd), "neutral": neutral} {
+		for _, want := range []string{
+			"task_import", "initiative_create", "milestone_create", "confirm_outline", "PROPOSED",
+			"never `IN_PROGRESS`", "Imported from <path>.", "imported as I-n", "use `PROPOSED` and say so",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s rendering lacks %q", name, want)
+			}
+		}
+		for _, bad := range forbidden {
+			if strings.Contains(strings.ToLower(out), strings.ToLower(bad)) {
+				t.Errorf("%s rendering names the tool or file %q", name, bad)
+			}
+		}
+	}
+}

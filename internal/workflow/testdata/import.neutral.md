@@ -18,7 +18,9 @@ Paths to queue first:
    - new knowledge with no home: a **new document**, choosing a fitting kind and scope, split by subject if needed;
    - knowledge that extends an existing document: **merge** it into that document;
    - a duplicate of what ralph already holds: nothing;
-   - noise: nothing.
+   - noise: nothing;
+   - a list of work items, in whatever form: **import it as a task tracker**, following the section below, instead of
+     the document steps for that content.
 
    If the whole file has nothing worth importing, call `import_resolve` with `skipped` and a one-line note giving the
    reason, report it, and go to the next file.
@@ -49,6 +51,43 @@ Paths to queue first:
    - contradictions left open (declined or deferred): `deferred`, with a note listing each open item, and links for
      the changes that were applied.
 9. **Report this file's outcome** briefly, then continue with the next file.
+
+## Importing a task tracker
+
+A file is a task tracker when its content is a list of work items. Recognise it by its content, never by its name,
+extension or the tool that produced it. It may be a checklist, a table, headings with status fields, JSON, YAML, CSV
+records, an issue export, or a progress log. Each tracker becomes its own new initiative. Use this instead of steps 5
+to 7 for the tracker's work items; context in the same file that isn't work items still follows the normal steps.
+
+1. **Work out the structure.** Decide what groups items (headings, columns, fields, labels, phases) and becomes
+   milestones; what each item's title, description and acceptance criteria are, if present; and what marks progress
+   (checkboxes, a status field or column, words such as done or blocked, strike-through, a log of what happened).
+2. **Plan the outline.** Items without a group go into a milestone you name. Keep the tracker's order for milestones
+   and for items. Choose each item's status:
+   - `DONE` for completed items and `CANCELLED` for dropped ones;
+   - `BLOCKED` for blocked items, using the tracker's own blocker as the reason;
+   - `TODO` only when the item has both a description and acceptance criteria;
+   - otherwise `PROPOSED`.
+
+   Items in progress become `TODO` or `PROPOSED`, never `IN_PROGRESS`. Write a `reason` for every item that explains
+   how the tracker's own marker maps to the status. When you are unsure, use `PROPOSED` and say so in the `reason`.
+3. **Create the initiative** with `initiative_create`. The title comes from the tracker or the repository. The brief
+   starts with `Imported from <path>.`, followed verbatim by any summary or goal text the tracker has. Note
+   `confirm_outline` in the result.
+4. **Create the outline, first getting it approved if approval is needed.** Approval is needed if `confirm_outline` is
+   true, or if the user asked to approve changes before they are made: in the arguments, in the conversation, or in
+   project instructions. Otherwise it is not needed.
+   - **No approval needed:** create the milestones in tracker order with `milestone_create`, then each item in
+     tracker order with `task_import`, with its status, description and acceptance criteria where the tracker has
+     them, `reason` as above, and `source` set to the file's path. Then show the outline with the new IDs.
+   - **Approval needed:** present the full proposed initiative, milestones, tasks and statuses for approval before
+     creating anything. Get approval in the first of these ways that the harness supports: through its plan or approval mode, presenting the proposal as the plan (if the user rejects it with feedback, revise and present it again); otherwise through its structured question tool, showing the proposal and asking for an explicit yes or no; otherwise by presenting the proposal in a message and waiting for the user to explicitly confirm. In every case, apply nothing until it is approved. If the user declines, create nothing. Once it is
+     approved, create the initiative, milestones and tasks as above.
+5. **Integrate the context.** Notes, decisions and background in the tracker that are not work items become documents
+   through the normal steps above, scoped to the new initiative. Contradictions with existing documents or plans still
+   use the contradiction step.
+6. **Resolve the record** with `import_resolve`: `done`, with the note `imported as I-n` naming the new initiative,
+   linking every document created. The initiative and its tasks are listed in the report instead.
 
 When the queue is done, summarise every file's outcome: the documents created, updated and decided, the tasks kicked
 back, the duplicates you noticed, and any deferred records.

@@ -1,0 +1,6 @@
+sprint,task,owner,state,comment
+Sprint 1,Set up CI pipeline,kim,complete,
+Sprint 1,Write contributor guide,kim,complete,
+Sprint 2,Add plugin loader,lee,doing,half the hooks are wired
+Sprint 2,Benchmark startup time,lee,todo,
+Sprint 3,Publish packages,,on hold,waiting for the licence review

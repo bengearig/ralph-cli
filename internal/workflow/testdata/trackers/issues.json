@@ -1,0 +1,12 @@
+{
+  "project": "Field Notes app",
+  "description": "Offline-first notes for surveyors.",
+  "issues": [
+    {"key": "FN-12", "title": "Sync conflicts lose edits", "labels": ["sync"], "state": "closed", "resolution": "fixed",
+     "body": "Edits made offline are overwritten on reconnect."},
+    {"key": "FN-15", "title": "Add photo attachments", "labels": ["media"], "state": "open", "assignee": "sam",
+     "body": "Attach up to five photos per note.", "acceptance": "Photos survive an offline round trip."},
+    {"key": "FN-18", "title": "Dark mode", "labels": ["ui"], "state": "open", "blocked_by": "design tokens not finished"},
+    {"key": "FN-21", "title": "Support tablets", "labels": [], "state": "closed", "resolution": "wontfix"}
+  ]
+}
