@@ -45,10 +45,10 @@ The authoritative list, with schemas, is whatever `tools/list` returns. The regi
 
 | Tool | Purpose |
 |---|---|
-| `milestone_create` | Add a milestone to an initiative. |
+| `milestone_create` | Add a milestone to an initiative. The optional `depends_on` parameter lists the IDs of the milestones it depends on (for example `M-15`), which may be in other initiatives; unknown IDs and cycles are refused. |
 | `milestone_list` | Milestones with derived status and task counts, optionally for one initiative. |
-| `milestone_get` | A milestone with its tasks in loop order, and its recorded `branch`, `base_commit`, and `head_commit` when the loop has recorded them. |
-| `milestone_update` | Edit title, description, or position. The recorded git state cannot be changed. |
+| `milestone_get` | A milestone with its tasks in loop order, its `depends_on` IDs, and its recorded `branch`, `base_commit`, and `head_commit` when the loop has recorded them. `waiting_on` lists each unsatisfied dependency with its `state`, `reason`, and `fix`; it is omitted when nothing is unsatisfied or when git cannot be checked, and never makes the tool fail. |
+| `milestone_update` | Edit title, description, position, or dependencies. `depends_on` omitted leaves the dependencies unchanged, `[]` clears them, and any other list replaces the whole set. The recorded git state cannot be changed. |
 | `milestone_delete` | Destructive. Parameters `id` and optional `force`. Cascades to tasks and their notes; refused without `force` when the milestone has tasks. |
 | `milestone_drift` | Read-only. Compare the milestone's recorded git state with its branch and report the drift state, where each `DONE` task's work is now, and any extra, lost, or unattributed commits. See [Drift and reconcile](loop.md#drift-and-reconcile). |
 | `milestone_reconcile` | Destructive. Resolve drift with `branch`, `reopen` with `reason`, and `accept`, exactly as `ralph milestone reconcile` does, and return the report `before` and `after` the actions. Invalid actions are tool errors and change nothing. A milestone that is still not clean afterwards is a normal result, not an error. Agents should get the user's approval first, as `/ralph:reconcile` does. |

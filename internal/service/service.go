@@ -343,12 +343,16 @@ type MilestoneInput struct {
 	Slug         string
 	Description  string
 	Position     int
+	DependsOn    []int64
 }
 
+// MilestonePatch changes the fields that are set. A nil DependsOn leaves the dependencies unchanged; an empty
+// non-nil one clears them.
 type MilestonePatch struct {
 	Title       *string
 	Description *string
 	Position    *int
+	DependsOn   *[]int64
 }
 
 func (s *Service) CreateMilestone(ctx context.Context, in MilestoneInput) (MilestoneView, error) {
@@ -367,15 +371,22 @@ func (s *Service) CreateMilestone(ctx context.Context, in MilestoneInput) (Miles
 		Description:  strings.TrimSpace(in.Description),
 		Position:     in.Position,
 	}
-	err := createWithSlug(in.Slug, m.Title, "milestone", func(slug string) error {
-		m.Slug = slug
-		m.Position = in.Position
-		return s.store.CreateMilestone(ctx, &m)
+	err := s.InTx(ctx, func(tx *Service) error {
+		err := createWithSlug(in.Slug, m.Title, "milestone", func(slug string) error {
+			m.Slug = slug
+			m.Position = in.Position
+			return tx.store.CreateMilestone(ctx, &m)
+		})
+		if err != nil {
+			return err
+		}
+		return tx.setDependencies(ctx, m.ID, in.DependsOn)
 	})
 	if err != nil {
 		return MilestoneView{}, err
 	}
 	v := milestoneView(m, nil, false)
+	v.DependsOn = formatDependsOn(in.DependsOn)
 	v.IndexWarning = s.indexMilestone(ctx, m)
 	v.CardWarning = s.createCard(ctx, domain.KindMilestone, m.ID, s.cardClaimStale)
 	return v, nil
@@ -398,7 +409,12 @@ func (s *Service) GetMilestone(ctx context.Context, id int64) (MilestoneView, er
 	if err != nil {
 		return MilestoneView{}, err
 	}
+	deps, err := s.store.ListMilestoneDependencies(ctx, m.InitiativeID)
+	if err != nil {
+		return MilestoneView{}, err
+	}
 	v := milestoneView(m, tasks, archived)
+	v.DependsOn = formatDependsOn(deps[m.ID])
 	v.Card = cards.view(ctx, domain.KindMilestone, m.ID, cardID{domain.KindInitiative, m.InitiativeID})
 	return v, nil
 }
@@ -433,9 +449,14 @@ func (s *Service) listMilestones(ctx context.Context, initiativeID int64, opts L
 	if err != nil {
 		return nil, err
 	}
+	deps, err := s.store.ListMilestoneDependencies(ctx, initiativeID)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]MilestoneView, 0, len(ms))
 	for _, m := range ms {
 		v := milestoneView(m, byMilestone[m.ID], archived[m.InitiativeID])
+		v.DependsOn = formatDependsOn(deps[m.ID])
 		v.Card = cards.view(ctx, domain.KindMilestone, m.ID, cardID{domain.KindInitiative, m.InitiativeID})
 		out = append(out, v)
 	}
@@ -465,7 +486,15 @@ func (s *Service) UpdateMilestone(ctx context.Context, id int64, p MilestonePatc
 		}
 		m.Position = *p.Position
 	}
-	if err := s.store.UpdateMilestone(ctx, &m); err != nil {
+	err = s.InTx(ctx, func(tx *Service) error {
+		if p.DependsOn != nil {
+			if err := tx.setDependencies(ctx, id, *p.DependsOn); err != nil {
+				return err
+			}
+		}
+		return tx.store.UpdateMilestone(ctx, &m)
+	})
+	if err != nil {
 		return MilestoneView{}, err
 	}
 	tasks, err := s.store.ListTasks(ctx, store.TaskFilter{MilestoneID: id})
@@ -476,7 +505,12 @@ func (s *Service) UpdateMilestone(ctx context.Context, id int64, p MilestonePatc
 	if err != nil {
 		return MilestoneView{}, err
 	}
+	deps, err := s.store.ListMilestoneDependencies(ctx, m.InitiativeID)
+	if err != nil {
+		return MilestoneView{}, err
+	}
 	v := milestoneView(m, tasks, archived)
+	v.DependsOn = formatDependsOn(deps[m.ID])
 	v.IndexWarning = s.indexMilestone(ctx, m)
 	_, v.CardWarning = s.syncCard(ctx, domain.KindMilestone, m.ID, modeExisting, s.cardClaimStale)
 	return v, nil

@@ -224,6 +224,66 @@ func (s *Store) SetMilestoneGit(ctx context.Context, id int64, g domain.Mileston
 	return checkAffected(res, what)
 }
 
+func (s *Store) SetMilestoneDependencies(ctx context.Context, milestoneID int64, dependsOn []int64) error {
+	what := "setting dependencies of " + domain.FormatID(domain.KindMilestone, milestoneID)
+	return s.inTx(ctx, func(tx *Store) error {
+		if _, err := tx.q.ExecContext(ctx, `DELETE FROM milestone_dependencies WHERE milestone_id = ?`, milestoneID); err != nil {
+			return mapErr(err, what)
+		}
+		now := formatTime(tx.now())
+		for _, dep := range dependsOn {
+			if _, err := tx.q.ExecContext(ctx,
+				`INSERT INTO milestone_dependencies (milestone_id, depends_on_id, created_at) VALUES (?, ?, ?)`,
+				milestoneID, dep, now); err != nil {
+				return mapErr(err, what)
+			}
+		}
+		return nil
+	})
+}
+
+func (s *Store) ListMilestoneDependencies(ctx context.Context, initiativeID int64) (map[int64][]int64, error) {
+	q := `SELECT d.milestone_id, d.depends_on_id FROM milestone_dependencies d`
+	var args []any
+	if initiativeID != 0 {
+		q += ` JOIN milestones m ON m.id = d.milestone_id WHERE m.initiative_id = ?`
+		args = append(args, initiativeID)
+	}
+	q += ` ORDER BY d.milestone_id, d.depends_on_id`
+	rows, err := s.q.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, mapErr(err, "listing milestone dependencies")
+	}
+	defer rows.Close()
+	out := map[int64][]int64{}
+	for rows.Next() {
+		var from, to int64
+		if err := rows.Scan(&from, &to); err != nil {
+			return nil, fmt.Errorf("scanning row: %w", err)
+		}
+		out[from] = append(out[from], to)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListDependents(ctx context.Context, milestoneID int64) ([]int64, error) {
+	rows, err := s.q.QueryContext(ctx,
+		`SELECT milestone_id FROM milestone_dependencies WHERE depends_on_id = ? ORDER BY milestone_id`, milestoneID)
+	if err != nil {
+		return nil, mapErr(err, "listing dependents of "+domain.FormatID(domain.KindMilestone, milestoneID))
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scanning row: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) DeleteMilestone(ctx context.Context, id int64) error {
 	return s.deleteWithCards(ctx, "milestones", domain.KindMilestone, id,
 		cardsOf(domain.KindTask, `SELECT id FROM tasks WHERE milestone_id = ?`),

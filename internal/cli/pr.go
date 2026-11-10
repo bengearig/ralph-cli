@@ -25,7 +25,7 @@ func (a *app) newPRCommand() *cobra.Command {
 		Short: "Open pull requests for milestones",
 	}
 	var milestone string
-	var dryRun bool
+	var dryRun, force bool
 	create := &cobra.Command{
 		Use:   "create",
 		Short: "Open the pull request for a milestone's branch",
@@ -34,7 +34,10 @@ would be sent.
 
 The milestone's branch must match its recorded git state: otherwise pr create
 refuses (exit code 3) and points at ralph milestone reconcile. --dry-run
-reports the drift instead of refusing.`,
+reports the drift instead of refusing.
+
+It also refuses (exit code 3) while a milestone this one depends on is not
+merged; --force skips that check, and --dry-run reports it as warnings.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mID, err := parseIDArg(domain.KindMilestone, milestone)
@@ -93,6 +96,18 @@ reports the drift instead of refusing.`,
 					return fmt.Errorf("%w: %s; run: ralph milestone reconcile %s", errs.ErrNeedsHuman, report.Summary(), m.ID)
 				}
 			}
+			var depWarnings []string
+			if !force {
+				depWarnings, err = loop.UnmetDependencies(cmd.Context(), svc, l.Config, p.Root, mID)
+				if err != nil {
+					if !dryRun {
+						return err
+					}
+					depWarnings = []string{"dependency check failed: " + err.Error()}
+				} else if len(depWarnings) > 0 && !dryRun {
+					return loop.DependencyRefusal(depWarnings)
+				}
+			}
 			provider, err := newPRProvider(l.Config)
 			if err != nil {
 				return err
@@ -116,10 +131,14 @@ reports the drift instead of refusing.`,
 						Validation string        `json:"validation_errors,omitempty"`
 						Drift      *drift.Report `json:"drift"`
 						DriftError string        `json:"drift_error,omitempty"`
-					}{provider.Name(), req, validation, driftReport, driftError})
+						DepWarns   []string      `json:"dependency_warnings,omitempty"`
+					}{provider.Name(), req, validation, driftReport, driftError, depWarnings})
 				}
 				if validation != "" {
 					a.warn("provider is not ready:\n" + validation)
+				}
+				for _, w := range depWarnings {
+					a.warn(w)
 				}
 				driftLine := "not checked"
 				if driftErr != nil {
@@ -149,6 +168,7 @@ reports the drift instead of refusing.`,
 		},
 	}
 	create.Flags().StringVar(&milestone, "milestone", "", "milestone ID, e.g. M-1 (required)")
+	create.Flags().BoolVar(&force, "force", false, "ignore unmerged milestone dependencies")
 	create.Flags().BoolVar(&dryRun, "dry-run", false, "print the request without sending it")
 	_ = create.MarkFlagRequired("milestone")
 	cmd.AddCommand(create)

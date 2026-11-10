@@ -31,6 +31,7 @@ type MilestoneView struct {
 	Position     int            `json:"position"`
 	Status       string         `json:"status"`
 	TaskCounts   map[string]int `json:"task_counts"`
+	DependsOn    []string       `json:"depends_on,omitempty"`
 	Branch       string         `json:"branch,omitempty"`
 	BaseCommit   string         `json:"base_commit,omitempty"`
 	HeadCommit   string         `json:"head_commit,omitempty"`
@@ -245,6 +246,8 @@ type DeleteView struct {
 	ID      string         `json:"id"`
 	Kind    string         `json:"kind"`
 	Deleted map[string]int `json:"deleted"`
+	// Dependents lists milestones outside the deleted set that depend on one inside it ("M-5 depends on M-2").
+	Dependents []string `json:"dependents,omitempty"`
 	// Cards lists the cards moved to the canceled status, or in a preview those that will be.
 	Cards []DeletedCard `json:"cards,omitempty"`
 }

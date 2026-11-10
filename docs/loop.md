@@ -167,6 +167,47 @@ flowchart TD
    `--dry-run` records nothing.
 5. **Ignored paths.** Changes under `.ralph/` are never counted, staged, or stashed.
 
+### Milestone dependencies
+
+A milestone can record the milestones it depends on (see [Milestone dependencies](data-model.md#milestone-dependencies)).
+`ralph loop --milestone` and `ralph pr create --milestone` check them first, before the lock, the drift check, or any
+git change, so a refusal leaves the repository and the working tree as they were. Each dependency is checked in ID order:
+
+| Dependency | Result |
+|---|---|
+| `CANCELLED` (every task cancelled) | Satisfied: it will never be merged. |
+| Any status other than `DONE` | Not satisfied. |
+| `DONE` and the drift check reports `merged` | Satisfied. |
+| `DONE` and the drift check reports `unrecorded` or `branch_missing` | Not satisfied: whether it was merged cannot be told. |
+| `DONE` and any other drift state | Not satisfied: its branch is not merged into `pr.base_branch`. |
+
+A cancelled dependency counts as satisfied and an unknowable one refuses, rather than warning. What counts as merged is
+the drift check's own test (see [States](#states)), so work that was fast-forwarded, squashed, or rebased into the base
+branch counts.
+
+An unsatisfied dependency stops the command with exit code `3`. Each one gets a line of the form
+`<milestone> depends on <dependency>, which <reason>; <fix>`:
+
+| Reason | Fix |
+|---|---|
+| `is <STATUS>, not DONE` | `finish it first: ralph loop --milestone <dependency>` |
+| `its merge cannot be confirmed: no git record, or its branch is missing` | `ralph milestone reconcile <dependency>, or use --force` |
+| `branch <branch> is not merged into <base>` | `ralph milestone merge <dependency>` |
+
+For example, with `M-2` depending on a `DONE` `M-1` whose branch `ralph/first` is not in `main`:
+
+```
+$ ralph loop --milestone M-2
+ralph: needs a human: M-2 depends on M-1, which branch ralph/first is not merged into main; ralph milestone merge M-1
+$ echo $?
+3
+```
+
+`--force` skips the check. `--dry-run` runs it and prints each finding as a `warning:` line instead of refusing, then
+prints the plan as usual. Git is consulted only for a `DONE` dependency; when the project is not a git repository, the
+check fails with an error (exit code `1`) rather than guessing, and `--force` skips it. For `ralph pr create --dry-run`,
+a check that cannot be made is reported as a warning.
+
 ### Each iteration
 
 1. `NextTask` picks an interrupted `IN_PROGRESS` task first, otherwise the first `TODO` task by position. `BLOCKED` and

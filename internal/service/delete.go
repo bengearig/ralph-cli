@@ -18,11 +18,12 @@ var ErrNeedsForce = errors.New("needs force")
 // PreviewDelete reports what the matching delete would remove, or the error it
 // would refuse with, without deleting anything.
 func (s *Service) PreviewDelete(ctx context.Context, kind domain.Kind, id int64, force bool) (DeleteView, error) {
-	c, err := s.checkDelete(ctx, kind, id, force)
+	c, dependents, err := s.checkDelete(ctx, kind, id, force)
 	if err != nil {
 		return DeleteView{}, err
 	}
 	v := deleteView(kind, id, c)
+	v.Dependents = dependents
 	if s.taskManager != nil && s.cardCanceledStatus != "" {
 		cards, err := s.deleteCards(ctx, kind, id)
 		if err != nil {
@@ -64,7 +65,7 @@ func (s *Service) DeleteNote(ctx context.Context, id int64) (DeleteView, error) 
 func (s *Service) runDelete(ctx context.Context, kind domain.Kind, id int64, force bool) (DeleteView, error) {
 	var cards []DeletedCard
 	if s.taskManager != nil && !s.inTx {
-		if _, err := s.checkDelete(ctx, kind, id, force); err != nil {
+		if _, _, err := s.checkDelete(ctx, kind, id, force); err != nil {
 			return DeleteView{}, err
 		}
 		rows, err := s.deleteCards(ctx, kind, id)
@@ -84,7 +85,7 @@ func (s *Service) runDelete(ctx context.Context, kind domain.Kind, id int64, for
 	}
 	var v DeleteView
 	err := s.InTx(ctx, func(tx *Service) error {
-		c, err := tx.checkDelete(ctx, kind, id, force)
+		c, dependents, err := tx.checkDelete(ctx, kind, id, force)
 		if err != nil {
 			return err
 		}
@@ -92,6 +93,7 @@ func (s *Service) runDelete(ctx context.Context, kind domain.Kind, id int64, for
 			return err
 		}
 		v = deleteView(kind, id, c)
+		v.Dependents = dependents
 		v.Cards = cards
 		return nil
 	})
@@ -165,9 +167,44 @@ func (s *Service) deleteRow(ctx context.Context, kind domain.Kind, id int64) err
 	return fmt.Errorf("%w: cannot delete a %s", domain.ErrInvalid, kind)
 }
 
-// checkDelete applies every refusal a delete of the target is subject to and
-// returns the rows the delete would remove.
-func (s *Service) checkDelete(ctx context.Context, kind domain.Kind, id int64, force bool) (store.Cascade, error) {
+// checkDelete applies every refusal a delete of the target is subject to and returns the rows the delete would
+// remove and the dependencies it would drop, which refuse it without force.
+func (s *Service) checkDelete(ctx context.Context, kind domain.Kind, id int64, force bool) (store.Cascade, []string, error) {
+	c, err := s.checkCascade(ctx, kind, id, force)
+	if err != nil && !errors.Is(err, ErrNeedsForce) {
+		return c, nil, err
+	}
+	var deleted []int64
+	switch kind {
+	case domain.KindMilestone:
+		deleted = []int64{id}
+	case domain.KindInitiative:
+		ms, err := s.store.ListMilestones(ctx, id, false)
+		if err != nil {
+			return c, nil, err
+		}
+		for _, m := range ms {
+			deleted = append(deleted, m.ID)
+		}
+	}
+	dependents, derr := s.deleteDependents(ctx, deleted)
+	if derr != nil {
+		return c, nil, derr
+	}
+	if err != nil {
+		if len(dependents) > 0 {
+			err = fmt.Errorf("%w; %s", err, strings.Join(dependents, ", "))
+		}
+		return c, dependents, err
+	}
+	if !force && len(dependents) > 0 {
+		return c, dependents, fmt.Errorf("%w: %s; pass force to drop these dependencies",
+			ErrNeedsForce, strings.Join(dependents, ", "))
+	}
+	return c, dependents, nil
+}
+
+func (s *Service) checkCascade(ctx context.Context, kind domain.Kind, id int64, force bool) (store.Cascade, error) {
 	what := domain.FormatID(kind, id)
 	switch kind {
 	case domain.KindInitiative:

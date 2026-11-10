@@ -44,7 +44,7 @@ func (a *app) newDeleteCommand(kind domain.Kind, withForce bool, long string) *c
 				if a.jsonOut {
 					return a.writeJSON(preview)
 				}
-				return a.printf("would delete %s%s\n%s", preview.ID, countSuffix(preview), a.cardsLine(svc, preview))
+				return a.printf("would delete %s%s\n%s%s", preview.ID, countSuffix(preview), dependentsLine(preview), a.cardsLine(svc, preview))
 			}
 			if !yes {
 				ok, err := a.confirmDelete(svc, preview)
@@ -107,7 +107,7 @@ func (a *app) confirmDelete(svc *service.Service, v service.DeleteView) (bool, e
 	if c := countList(v); c != "" {
 		prompt += " with " + c
 	}
-	fmt.Fprint(a.streams.Err, a.cardsLine(svc, v)+prompt+"? This cannot be undone. [y/N] ")
+	fmt.Fprint(a.streams.Err, dependentsLine(v)+a.cardsLine(svc, v)+prompt+"? This cannot be undone. [y/N] ")
 	line, err := bufio.NewReader(a.streams.In).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return false, err
@@ -117,6 +117,14 @@ func (a *app) confirmDelete(svc *service.Service, v service.DeleteView) (bool, e
 		return true, nil
 	}
 	return false, nil
+}
+
+// dependentsLine lists milestones that depend on the deleted ones, with a trailing newline; empty when none.
+func dependentsLine(v service.DeleteView) string {
+	if len(v.Dependents) == 0 {
+		return ""
+	}
+	return "dependents: " + strings.Join(v.Dependents, ", ") + " (these dependencies are dropped)\n"
 }
 
 // cardsLine names the cards a delete will move to the canceled status, with a trailing newline; empty when none.

@@ -49,6 +49,20 @@ The loop records the milestone's git state as it works (see [Git records](#git-r
 | `base_commit` | The commit the branch started from: the base branch's tip when the loop created it, or its merge base with `pr.base_branch` when the loop adopted an existing branch. Stays empty if an adopted branch has no base branch or no history in common with it. |
 | `head_commit` | The branch tip as the loop last left it, updated after every iteration. The loop also moves it to the tip when it resumes on a branch with commits added on top, and `ralph milestone reconcile --accept` sets it to the tip it accepts. |
 
+### Milestone dependencies
+
+The `milestone_dependencies` table records that a milestone waits on others, possibly in other initiatives, and
+possibly in archived ones. Columns: `milestone_id` (the dependent), `depends_on_id`, and `created_at`; the primary key
+is both ids, both are foreign keys to `milestones` with `ON DELETE CASCADE`, and a check rejects a milestone depending
+on itself.
+
+- The service sets a milestone's dependencies as a whole set, and refuses an unknown id, a duplicate, the milestone
+  itself, or a cycle. The milestone's own initiative must not be archived.
+- Deleting a milestone, or an initiative, that a milestone outside the deleted set depends on is refused without
+  `force`; the refusal and the delete preview name the dependents. A forced delete drops the edges through the cascade.
+
+See [ADR 0028](adr/0028-milestone-dependencies.md).
+
 ### Task (`T-n`)
 
 Receive creates tasks as `PROPOSED` with only a title and perhaps a summary. Articulate fills in the description
@@ -194,7 +208,7 @@ the user before deleting and never pass `force` without explicit approval. See
 | Delete | Without `force` | With `force` |
 |---|---|---|
 | Initiative | Refused if it has milestones or documents. | Cascades to its milestones, their tasks and notes, and its documents. |
-| Milestone | Refused if it has tasks. | Cascades to its tasks and their notes. |
+| Milestone | Refused if it has tasks, or if a milestone outside the delete depends on it. | Cascades to its tasks and their notes. |
 | Task | Refused if it is `IN_PROGRESS` or `DONE`. | Deleted with its notes. |
 | Document | Allowed. | Not applicable. |
 | Note | Allowed. | Not applicable. |

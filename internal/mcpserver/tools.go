@@ -11,6 +11,7 @@ import (
 
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/drift"
+	"github.com/bengearig/ralph/internal/loop"
 	"github.com/bengearig/ralph/internal/service"
 )
 
@@ -19,9 +20,10 @@ type empty struct{}
 // ---- initiatives ----
 
 type initiativeCreateIn struct {
-	Title string `json:"title" jsonschema:"short title for the initiative"`
-	Brief string `json:"brief,omitempty" jsonschema:"the instructions exactly as received"`
-	Slug  string `json:"slug,omitempty" jsonschema:"optional slug; derived from title when omitted"`
+	Title     string   `json:"title" jsonschema:"short title for the initiative"`
+	Brief     string   `json:"brief,omitempty" jsonschema:"the instructions exactly as received"`
+	Slug      string   `json:"slug,omitempty" jsonschema:"optional slug; derived from title when omitted"`
+	DependsOn []string `json:"depends_on,omitempty" jsonschema:"IDs of milestones this one depends on, for example M-15; may be in other initiatives; cycles are refused"`
 }
 
 // initiativeCreateOut adds MCP-only guidance to the shared view (ADR 10).
@@ -139,12 +141,25 @@ func (t *tools) initiativeDelete(ctx context.Context, _ *mcp.CallToolRequest, in
 
 // ---- milestones ----
 
+func parseIDs(k domain.Kind, raw []string) ([]int64, error) {
+	ids := []int64{}
+	for _, r := range raw {
+		id, err := domain.ParseID(k, r)
+		if err != nil {
+			return nil, fmt.Errorf("depends_on: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
 type milestoneCreateIn struct {
-	InitiativeID string `json:"initiative_id" jsonschema:"initiative ID, for example I-1"`
-	Title        string `json:"title" jsonschema:"milestone title"`
-	Description  string `json:"description,omitempty" jsonschema:"what the milestone delivers and how it will be reviewed"`
-	Position     int    `json:"position,omitempty" jsonschema:"order within the initiative; defaults to last"`
-	Slug         string `json:"slug,omitempty" jsonschema:"optional slug, used in the branch name; derived from title when omitted"`
+	InitiativeID string   `json:"initiative_id" jsonschema:"initiative ID, for example I-1"`
+	Title        string   `json:"title" jsonschema:"milestone title"`
+	Description  string   `json:"description,omitempty" jsonschema:"what the milestone delivers and how it will be reviewed"`
+	Position     int      `json:"position,omitempty" jsonschema:"order within the initiative; defaults to last"`
+	Slug         string   `json:"slug,omitempty" jsonschema:"optional slug, used in the branch name; derived from title when omitted"`
+	DependsOn    []string `json:"depends_on,omitempty" jsonschema:"IDs of milestones this one depends on, for example M-15; may be in other initiatives; cycles are refused"`
 }
 
 func (t *tools) milestoneCreate(ctx context.Context, _ *mcp.CallToolRequest, in milestoneCreateIn) (*mcp.CallToolResult, service.MilestoneView, error) {
@@ -152,8 +167,12 @@ func (t *tools) milestoneCreate(ctx context.Context, _ *mcp.CallToolRequest, in 
 	if err != nil {
 		return nil, service.MilestoneView{}, err
 	}
+	deps, err := parseIDs(domain.KindMilestone, in.DependsOn)
+	if err != nil {
+		return nil, service.MilestoneView{}, err
+	}
 	v, err := t.svc.CreateMilestone(ctx, service.MilestoneInput{
-		InitiativeID: iID, Title: in.Title, Description: in.Description, Position: in.Position, Slug: in.Slug,
+		InitiativeID: iID, Title: in.Title, Description: in.Description, Position: in.Position, Slug: in.Slug, DependsOn: deps,
 	})
 	return nil, v, toolError(err)
 }
@@ -178,7 +197,8 @@ func (t *tools) milestoneList(ctx context.Context, _ *mcp.CallToolRequest, in mi
 
 type milestoneDetail struct {
 	service.MilestoneView
-	Tasks []service.TaskView `json:"tasks"`
+	WaitingOn []loop.DependencyFinding `json:"waiting_on,omitempty" jsonschema:"unsatisfied dependencies and why; omitted when none or when git cannot be checked"`
+	Tasks     []service.TaskView       `json:"tasks"`
 }
 
 func (t *tools) milestoneGet(ctx context.Context, _ *mcp.CallToolRequest, in idIn) (*mcp.CallToolResult, milestoneDetail, error) {
@@ -191,14 +211,50 @@ func (t *tools) milestoneGet(ctx context.Context, _ *mcp.CallToolRequest, in idI
 		return nil, milestoneDetail{}, toolError(err)
 	}
 	tasks, err := t.svc.ListTasks(ctx, service.TaskFilter{MilestoneID: id, IncludeArchived: true})
-	return nil, milestoneDetail{MilestoneView: m, Tasks: tasks}, toolError(err)
+	return nil, milestoneDetail{MilestoneView: m, WaitingOn: t.waitingOn(ctx, m), Tasks: tasks}, toolError(err)
+}
+
+// waitingOn lists m's unsatisfied dependencies. It is nil when drift cannot be
+// checked or any check fails.
+func (t *tools) waitingOn(ctx context.Context, m service.MilestoneView) []loop.DependencyFinding {
+	if len(m.DependsOn) == 0 || m.Status == service.MilestoneDone || m.Status == service.MilestoneCancelled {
+		return nil
+	}
+	own, err := t.driftInput(ctx, m.ID)
+	if err != nil {
+		return nil
+	}
+	var fs []loop.DependencyFinding
+	for _, ref := range m.DependsOn {
+		depID, err := domain.ParseID(domain.KindMilestone, ref)
+		if err != nil {
+			return nil
+		}
+		dm, err := t.svc.GetMilestone(ctx, depID)
+		if err != nil {
+			return nil
+		}
+		f, err := loop.ClassifyDependency(ctx, dm, own.BaseBranch, func(ctx context.Context) (drift.Report, error) {
+			din, err := t.driftInput(ctx, ref)
+			if err != nil {
+				return drift.Report{}, err
+			}
+			return drift.Check(ctx, din)
+		})
+		if err != nil {
+			return nil
+		}
+		fs = append(fs, f)
+	}
+	return loop.Unsatisfied(fs)
 }
 
 type milestoneUpdateIn struct {
-	ID          string  `json:"id" jsonschema:"milestone ID, for example M-1"`
-	Title       *string `json:"title,omitempty" jsonschema:"new title"`
-	Description *string `json:"description,omitempty" jsonschema:"new description"`
-	Position    *int    `json:"position,omitempty" jsonschema:"new position, at least 1"`
+	ID          string    `json:"id" jsonschema:"milestone ID, for example M-1"`
+	Title       *string   `json:"title,omitempty" jsonschema:"new title"`
+	Description *string   `json:"description,omitempty" jsonschema:"new description"`
+	Position    *int      `json:"position,omitempty" jsonschema:"new position, at least 1"`
+	DependsOn   *[]string `json:"depends_on,omitempty" jsonschema:"IDs of milestones this one depends on, for example M-15; omit to leave unchanged, [] to clear, otherwise replaces the whole set; may be in other initiatives; cycles are refused"`
 }
 
 func (t *tools) milestoneUpdate(ctx context.Context, _ *mcp.CallToolRequest, in milestoneUpdateIn) (*mcp.CallToolResult, service.MilestoneView, error) {
@@ -206,7 +262,15 @@ func (t *tools) milestoneUpdate(ctx context.Context, _ *mcp.CallToolRequest, in 
 	if err != nil {
 		return nil, service.MilestoneView{}, err
 	}
-	v, err := t.svc.UpdateMilestone(ctx, id, service.MilestonePatch{Title: in.Title, Description: in.Description, Position: in.Position})
+	var deps *[]int64
+	if in.DependsOn != nil {
+		ids, err := parseIDs(domain.KindMilestone, *in.DependsOn)
+		if err != nil {
+			return nil, service.MilestoneView{}, err
+		}
+		deps = &ids
+	}
+	v, err := t.svc.UpdateMilestone(ctx, id, service.MilestonePatch{Title: in.Title, Description: in.Description, Position: in.Position, DependsOn: deps})
 	return nil, v, toolError(err)
 }
 

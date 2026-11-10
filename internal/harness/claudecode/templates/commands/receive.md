@@ -32,11 +32,15 @@ Do the following, using the `ralph` MCP tools:
 7. Draw up an outline:
    - ordered milestones, each with a one-line description. Each milestone becomes one branch and one pull request, so
      each must be independently reviewable and leave the codebase working;
-   - under each milestone, its **unplanned tasks**: an imperative title and, optionally, a one-sentence summary.
+   - under each milestone, its **unplanned tasks**: an imperative title and, optionally, a one-sentence summary;
+   - for each milestone, the milestones it **depends on**: those whose code must be merged into the base branch before
+     it can start, in this initiative or another. Record them with `depends_on` (on `milestone_create`, or later on
+     `milestone_update`) instead of leaving "builds on X" only in prose. Order alone is not a dependency.
 8. Create the outline, first getting it approved if approval is needed. Approval is needed if `confirm_outline` from
    step 3 is true, or if the user asked to approve changes before they are made: in the arguments, in the
    conversation, or in project instructions such as CLAUDE.md. Otherwise it is not needed.
-   - **No approval needed:** create the outline right away: `milestone_create` for each milestone in order, then
+   - **No approval needed:** create the outline right away: `milestone_create` for each milestone in order (with
+     `depends_on` when it needs another milestone's code merged first, see below), then
      `task_create` for each task with its title and summary as the description. Do not write acceptance criteria. The
      tasks stay `PROPOSED` until Articulate. Then show the user the outline with the new IDs (milestones with their
      one-line descriptions, tasks under each) and invite changes. Do not end by asking for agreement.
@@ -86,7 +90,8 @@ Use this when the arguments are an initiative ID, typically after a kickback fro
    initiative's brief stays verbatim.
 3. Revisions always need approval. Present the revised outline in plan mode, as in **Approving through plan mode**
    above, and once the plan is approved, apply it:
-   - new milestones with `milestone_create`, changed ones with `milestone_update`;
+   - new milestones with `milestone_create`, changed ones with `milestone_update`, setting `depends_on` for any
+     milestone that needs another milestone's code merged first (the list replaces the existing one);
    - new unplanned tasks with `task_create`;
    - drop a task, or a whole milestone's tasks, with `task_set_status` `CANCELLED` and a reason. Cancel by default: delete (`task_delete`, `milestone_delete`) only items created by mistake, such as duplicates, and only after asking the user, never with `force` unless they explicitly approve;
    - move `TODO` tasks whose scope changed back to `PROPOSED`, with a reason, so they are articulated again.

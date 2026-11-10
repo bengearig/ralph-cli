@@ -69,6 +69,8 @@ type Planner struct {
 	Service *service.Service
 	Config  *config.Config
 	Root    string
+	// Force skips the dependency check; WarnOnly turns its refusal into warnings.
+	Force, WarnOnly bool
 }
 
 // PromptData is the data available to the iteration prompt template.
@@ -88,6 +90,19 @@ type PromptData struct {
 func (p Planner) Plan(ctx context.Context, milestoneID int64) (Plan, error) {
 	if err := p.Service.CheckMilestoneWritable(ctx, milestoneID); err != nil {
 		return Plan{}, err
+	}
+	var warnings []string
+	if !p.Force {
+		unmet, err := UnmetDependencies(ctx, p.Service, p.Config, p.Root, milestoneID)
+		if err != nil {
+			return Plan{}, err
+		}
+		if len(unmet) > 0 {
+			if !p.WarnOnly {
+				return Plan{}, DependencyRefusal(unmet)
+			}
+			warnings = unmet
+		}
 	}
 	m, err := p.Service.GetMilestone(ctx, milestoneID)
 	if err != nil {
@@ -111,6 +126,7 @@ func (p Planner) Plan(ctx context.Context, milestoneID int64) (Plan, error) {
 		CommitPerTask:     p.Config.Loop.CommitPerTask,
 		CommitTrailer:     p.Config.Loop.CommitTrailer,
 		CommitCardTrailer: p.Config.Loop.CommitCardTrailer,
+		Warnings:          warnings,
 	}
 	if plan.Branch, err = ResolveBranch(ctx, p.Service, p.Config, i, m); err != nil {
 		return Plan{}, err

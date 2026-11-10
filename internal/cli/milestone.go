@@ -23,6 +23,7 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 
 	var initiative, title, slug, description string
 	var position int
+	var dependsOn []string
 	create := &cobra.Command{
 		Use:   "create",
 		Short: "Add a milestone to an initiative",
@@ -32,12 +33,16 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			deps, err := parseDependsOn(dependsOn)
+			if err != nil {
+				return err
+			}
 			svc, err := a.service(cmd.Context())
 			if err != nil {
 				return err
 			}
 			v, err := svc.CreateMilestone(cmd.Context(), service.MilestoneInput{
-				InitiativeID: iID, Title: title, Slug: slug, Description: description, Position: position,
+				InitiativeID: iID, Title: title, Slug: slug, Description: description, Position: position, DependsOn: deps,
 			})
 			if err != nil {
 				return err
@@ -55,6 +60,7 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 	create.Flags().StringVar(&slug, "slug", "", "slug (default: derived from title)")
 	create.Flags().StringVar(&description, "description", "", "what this milestone delivers")
 	create.Flags().IntVar(&position, "position", 0, "order within the initiative (default: last)")
+	create.Flags().StringSliceVar(&dependsOn, "depends-on", nil, "milestones this one depends on, e.g. M-15,M-16 (repeatable)")
 	_ = create.MarkFlagRequired("initiative")
 	_ = create.MarkFlagRequired("title")
 
@@ -114,11 +120,18 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			var findings []loop.DependencyFinding
+			if len(m.DependsOn) > 0 {
+				if cfg, root, ok := a.waitingContext(); ok {
+					findings = a.dependencyFindings(cmd.Context(), svc, cfg, root, m, map[string][]loop.DependencyFinding{})
+				}
+			}
 			if a.jsonOut {
 				return a.writeJSON(struct {
 					service.MilestoneView
-					Tasks []service.TaskView `json:"tasks"`
-				}{m, tasks})
+					WaitingOn []loop.DependencyFinding `json:"waiting_on,omitempty"`
+					Tasks     []service.TaskView       `json:"tasks"`
+				}{m, loop.Unsatisfied(findings), tasks})
 			}
 			if err := a.printf("%s  %s\ninitiative: %s\nslug: %s\nstatus: %s\n", m.ID, m.Title, m.InitiativeID, m.Slug, m.Status); err != nil {
 				return err
@@ -131,6 +144,11 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 					return err
 				}
 			}
+			if len(m.DependsOn) > 0 {
+				if err := a.printf("depends on: %s\n", dependsOnLine(m.DependsOn, findings)); err != nil {
+					return err
+				}
+			}
 			if err := a.section("Description", m.Description); err != nil {
 				return err
 			}
@@ -140,6 +158,8 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 
 	var upTitle, upDescription string
 	var upPosition int
+	var upDependsOn []string
+	var upNoDependsOn bool
 	update := &cobra.Command{
 		Use:   "update <id>",
 		Short: "Edit a milestone",
@@ -149,6 +169,19 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if cmd.Flags().Changed("depends-on") && upNoDependsOn {
+				return fmt.Errorf("%w: use either --depends-on or --no-depends-on, not both", domain.ErrInvalid)
+			}
+			var deps *[]int64
+			if cmd.Flags().Changed("depends-on") {
+				ids, err := parseDependsOn(upDependsOn)
+				if err != nil {
+					return err
+				}
+				deps = &ids
+			} else if upNoDependsOn {
+				deps = &[]int64{}
+			}
 			svc, err := a.service(cmd.Context())
 			if err != nil {
 				return err
@@ -157,6 +190,7 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 				Title:       optString(cmd, "title", upTitle),
 				Description: optString(cmd, "description", upDescription),
 				Position:    optInt(cmd, "position", upPosition),
+				DependsOn:   deps,
 			})
 			if err != nil {
 				return err
@@ -171,9 +205,27 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 	update.Flags().StringVar(&upTitle, "title", "", "new title")
 	update.Flags().StringVar(&upDescription, "description", "", "new description")
 	update.Flags().IntVar(&upPosition, "position", 0, "new position")
+	update.Flags().StringSliceVar(&upDependsOn, "depends-on", nil, "replace the milestones this one depends on, e.g. M-15,M-16 (repeatable)")
+	update.Flags().BoolVar(&upNoDependsOn, "no-depends-on", false, "remove all dependencies")
 
 	cmd.AddCommand(create, list, show, update, a.newMilestoneReconcileCommand(), a.newMilestoneMergeCommand(), a.newDeleteCommand(domain.KindMilestone, true, "Delete a milestone. Without --force it must have no tasks; with --force its tasks and their notes are deleted too."))
 	return cmd
+}
+
+// parseDependsOn parses --depends-on values; blank entries are skipped.
+func parseDependsOn(raw []string) ([]int64, error) {
+	ids := []int64{}
+	for _, r := range raw {
+		if strings.TrimSpace(r) == "" {
+			continue
+		}
+		id, err := domain.ParseID(domain.KindMilestone, r)
+		if err != nil {
+			return nil, fmt.Errorf("--depends-on: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 func (a *app) newMilestoneReconcileCommand() *cobra.Command {
