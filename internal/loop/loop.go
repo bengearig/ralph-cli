@@ -46,21 +46,22 @@ type BranchKeys struct {
 
 // Plan is everything a loop run would do, resolved from config and the store.
 type Plan struct {
-	Project        string             `json:"project"`
-	Initiative     Ref                `json:"initiative"`
-	Milestone      Ref                `json:"milestone"`
-	Branch         string             `json:"branch"`
-	BaseBranch     string             `json:"base_branch"`
-	Harness        string             `json:"harness"`
-	Model          string             `json:"model,omitempty"`
-	Command        []string           `json:"command"`
-	Tasks          []service.TaskView `json:"tasks"`
-	MaxIterations  int                `json:"max_iterations"`
-	StallThreshold int                `json:"stall_threshold"`
-	CommitPerTask  bool               `json:"commit_per_task"`
-	CommitTrailer  bool               `json:"commit_trailer"`
-	FirstPrompt    string             `json:"first_prompt,omitempty"`
-	Warnings       []string           `json:"warnings,omitempty"`
+	Project           string             `json:"project"`
+	Initiative        Ref                `json:"initiative"`
+	Milestone         Ref                `json:"milestone"`
+	Branch            string             `json:"branch"`
+	BaseBranch        string             `json:"base_branch"`
+	Harness           string             `json:"harness"`
+	Model             string             `json:"model,omitempty"`
+	Command           []string           `json:"command"`
+	Tasks             []service.TaskView `json:"tasks"`
+	MaxIterations     int                `json:"max_iterations"`
+	StallThreshold    int                `json:"stall_threshold"`
+	CommitPerTask     bool               `json:"commit_per_task"`
+	CommitTrailer     bool               `json:"commit_trailer"`
+	CommitCardTrailer bool               `json:"commit_card_trailer"`
+	FirstPrompt       string             `json:"first_prompt,omitempty"`
+	Warnings          []string           `json:"warnings,omitempty"`
 }
 
 // Planner builds loop plans.
@@ -101,14 +102,15 @@ func (p Planner) Plan(ctx context.Context, milestoneID int64) (Plan, error) {
 		return Plan{}, err
 	}
 	plan := Plan{
-		Project:        p.Config.ProjectName(p.Root),
-		Initiative:     Ref{ID: i.ID, Slug: i.Slug, Title: i.Title},
-		Milestone:      Ref{ID: m.ID, Slug: m.Slug, Title: m.Title},
-		BaseBranch:     p.Config.PR.BaseBranch,
-		MaxIterations:  p.Config.Loop.MaxIterations,
-		StallThreshold: p.Config.Loop.StallThreshold,
-		CommitPerTask:  p.Config.Loop.CommitPerTask,
-		CommitTrailer:  p.Config.Loop.CommitTrailer,
+		Project:           p.Config.ProjectName(p.Root),
+		Initiative:        Ref{ID: i.ID, Slug: i.Slug, Title: i.Title},
+		Milestone:         Ref{ID: m.ID, Slug: m.Slug, Title: m.Title},
+		BaseBranch:        p.Config.PR.BaseBranch,
+		MaxIterations:     p.Config.Loop.MaxIterations,
+		StallThreshold:    p.Config.Loop.StallThreshold,
+		CommitPerTask:     p.Config.Loop.CommitPerTask,
+		CommitTrailer:     p.Config.Loop.CommitTrailer,
+		CommitCardTrailer: p.Config.Loop.CommitCardTrailer,
 	}
 	if plan.Branch, err = ResolveBranch(ctx, p.Service, p.Config, i, m); err != nil {
 		return Plan{}, err

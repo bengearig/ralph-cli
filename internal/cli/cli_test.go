@@ -416,7 +416,7 @@ func TestLoopDryRunShowsCommitTrailer(t *testing.T) {
 			t.Setenv("RALPH_LOOP__COMMIT_TRAILER", tc.env)
 		}
 		out := h.ok("loop", "--milestone", "M-1", "--dry-run")
-		policy := fmt.Sprintf("policy:     max 50 iterations, stall after 3 failures, commit per task: true, commit trailer: %t\n", tc.want)
+		policy := fmt.Sprintf("policy:     max 50 iterations, stall after 3 failures, commit per task: true, commit trailer: %t, commit card trailer: false\n", tc.want)
 		if !strings.Contains(out, policy) {
 			t.Errorf("RALPH_LOOP__COMMIT_TRAILER=%q: dry-run lacks %q:\n%s", tc.env, policy, out)
 		}
@@ -424,6 +424,9 @@ func TestLoopDryRunShowsCommitTrailer(t *testing.T) {
 		h.json(&plan, "loop", "--milestone", "M-1", "--dry-run")
 		if got, ok := plan["commit_trailer"].(bool); !ok || got != tc.want {
 			t.Errorf("RALPH_LOOP__COMMIT_TRAILER=%q: plan commit_trailer = %v", tc.env, plan["commit_trailer"])
+		}
+		if got, ok := plan["commit_card_trailer"].(bool); !ok || got {
+			t.Errorf("plan commit_card_trailer = %v, want false", plan["commit_card_trailer"])
 		}
 	}
 }

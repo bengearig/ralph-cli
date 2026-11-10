@@ -138,6 +138,7 @@ commands, so their overrides take effect once ralph launches those sessions itse
 | `loop.commit_per_task` | `true` | Commit after each completed task. Changes under `.ralph/` are never committed. |
 | `loop.commit_template` | `{{.Task.ID}}: {{.Task.Title}}` | Go `text/template` for those commit messages. Fields: `.Task` (the task view, such as `.ID` and `.Title`), `.Initiative`, and `.Milestone`. |
 | `loop.commit_trailer` | `true` | Add a `Ralph-Task: <task ID>` trailer to those commits, so ralph can match commits to tasks after history is rewritten (rebase, amend, squash). The trailer joins any trailer block the commit template already ends with. Needs git 2.32 or newer, because it uses `git commit --trailer`. |
+| `loop.commit_card_trailer` | `false` | Add a `Card: <key>` trailer, after `Ralph-Task`, holding the task's own task manager card key, only when the task has a card. The key makes the commit searchable from the task manager and survives edits to the subject line. Independent of `loop.commit_trailer` and of the commit template. |
 | `loop.prompt_template` | `""` | Path (relative to the project root) to a custom iteration prompt. Empty uses the built-in [`prompt.md`](../internal/loop/prompt.md). |
 
 ### `pr`

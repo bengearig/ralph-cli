@@ -94,13 +94,13 @@ func (a *app) printPlan(plan loop.Plan, showPrompt bool) error {
 	if model == "" {
 		model = "(harness default)"
 	}
-	if err := a.printf("milestone:  %s  %s\ninitiative: %s  %s\nbranch:     %s (from %s)\nharness:    %s, model %s\ncommand:    %s  < prompt on stdin\npolicy:     max %d iterations, stall after %d failures, commit per task: %t, commit trailer: %t\n",
+	if err := a.printf("milestone:  %s  %s\ninitiative: %s  %s\nbranch:     %s (from %s)\nharness:    %s, model %s\ncommand:    %s  < prompt on stdin\npolicy:     max %d iterations, stall after %d failures, commit per task: %t, commit trailer: %t, commit card trailer: %t\n",
 		plan.Milestone.ID, plan.Milestone.Title,
 		plan.Initiative.ID, plan.Initiative.Title,
 		plan.Branch, plan.BaseBranch,
 		plan.Harness, model,
 		strings.Join(plan.Command, " "),
-		plan.MaxIterations, plan.StallThreshold, plan.CommitPerTask, plan.CommitTrailer); err != nil {
+		plan.MaxIterations, plan.StallThreshold, plan.CommitPerTask, plan.CommitTrailer, plan.CommitCardTrailer); err != nil {
 		return err
 	}
 	for _, w := range plan.Warnings {

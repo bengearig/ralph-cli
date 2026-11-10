@@ -98,6 +98,10 @@ loop:
   # Add a `Ralph-Task: <task ID>` trailer to those commits, so ralph can match
   # commits to tasks after history is rewritten (rebase, amend, squash).
   commit_trailer: true
+  # Add a `Card: <key>` trailer holding the task's own task manager card key,
+  # only when the task has a card. The key makes the commit searchable from the
+  # task manager and survives edits to the subject line.
+  commit_card_trailer: false
   # Path to a custom iteration prompt template; empty uses the built-in one.
   prompt_template: ""
 

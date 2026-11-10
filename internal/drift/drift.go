@@ -16,6 +16,9 @@ import (
 // TrailerKey is the commit trailer naming the task a loop commit belongs to.
 const TrailerKey = "Ralph-Task"
 
+// CardTrailerKey is the optional commit trailer holding the task's card key.
+const CardTrailerKey = "Card"
+
 // State is how a milestone's branch relates to its record.
 type State string
 

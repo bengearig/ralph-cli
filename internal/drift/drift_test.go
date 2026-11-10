@@ -417,6 +417,20 @@ func TestTrailerNewestWins(t *testing.T) {
 	wantCommits(t, "unattributed", r.UnattributedCommits, e.rev("HEAD~1"))
 }
 
+func TestCardTrailerDoesNotHideOrImitateTaskTrailer(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	e.do(0, true)
+	e.do(1, false)
+	e.recordHere()
+	t0, t1 := taskID(e.tasks[0]), taskID(e.tasks[1])
+	gitCmd(t, e.root, "reset", "--quiet", "--hard", e.base)
+	both := e.commit("a.txt", "a\n", "Reworded\n\nRalph-Task: "+t0+"\nCard: ABC-1235")
+	e.commit("b.txt", "b\n", "Other work\n\nCard: "+t1)
+
+	r := e.check(e.input())
+	wantTasks(t, r, want{MatchTrailer, both}, want{MatchMissing, ""})
+}
+
 func TestSubjectMatch(t *testing.T) {
 	e := newEnv(t, "login", "logout")
 	e.do(0, false)

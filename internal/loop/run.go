@@ -507,6 +507,9 @@ func (r Runner) commit(ctx context.Context, repo git.Repo, tmpl *commitTemplate,
 	if r.Config.Loop.CommitTrailer {
 		trailers = append(trailers, "Ralph-Task: "+task.ID)
 	}
+	if key := commitTask(task).CardKey; r.Config.Loop.CommitCardTrailer && key != "" {
+		trailers = append(trailers, drift.CardTrailerKey+": "+key)
+	}
 	hash, committed, err := repo.CommitAll(ctx, msg, trailers...)
 	if err != nil {
 		return nil, fmt.Errorf("%s is DONE but the commit failed; commit by hand, then rerun: %w", task.ID, err)

@@ -137,13 +137,14 @@ type ImportConfig struct {
 }
 
 type LoopConfig struct {
-	MaxIterations  int    `koanf:"max_iterations"`
-	StallThreshold int    `koanf:"stall_threshold"`
-	BranchTemplate string `koanf:"branch_template"`
-	CommitPerTask  bool   `koanf:"commit_per_task"`
-	CommitTemplate string `koanf:"commit_template"`
-	CommitTrailer  bool   `koanf:"commit_trailer"`
-	PromptTemplate string `koanf:"prompt_template"`
+	MaxIterations     int    `koanf:"max_iterations"`
+	StallThreshold    int    `koanf:"stall_threshold"`
+	BranchTemplate    string `koanf:"branch_template"`
+	CommitPerTask     bool   `koanf:"commit_per_task"`
+	CommitTemplate    string `koanf:"commit_template"`
+	CommitTrailer     bool   `koanf:"commit_trailer"`
+	CommitCardTrailer bool   `koanf:"commit_card_trailer"`
+	PromptTemplate    string `koanf:"prompt_template"`
 }
 
 type PRConfig struct {

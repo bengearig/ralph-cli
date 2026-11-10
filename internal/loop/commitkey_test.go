@@ -130,3 +130,56 @@ func TestRunCommitSubjectCardKey(t *testing.T) {
 		}
 	}
 }
+
+func TestRunCommitCardTrailer(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		key         string
+		cardTrailer bool
+		trailer     bool
+		template    string
+		want        string
+	}{
+		{"both", "ABC-1235", true, true, "", "Ralph-Task: T-1\nCard: ABC-1235"},
+		{"no card", "", true, true, "", "Ralph-Task: T-1"},
+		{"off by default", "ABC-1235", false, true, "", "Ralph-Task: T-1"},
+		{"card only", "ABC-1235", true, false, "", "Card: ABC-1235"},
+		{"template uses key", "ABC-1235", true, true, "[{{.Task.CardKey}}] {{.Task.ID}}: {{.Task.Title}}", "Ralph-Task: T-1\nCard: ABC-1235"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newRunEnv(t, "a")
+			ctx := context.Background()
+			st, err := sqlite.Open(ctx, filepath.Join(e.root, project.DirName, "ralph.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { st.Close() })
+			prov := fake.New()
+			e.svc = service.New(st, &search.Index{Store: st, Chunker: search.Chunker{MaxChars: 500}}, service.Options{StallThreshold: 2, TaskManager: prov})
+			if tc.key != "" {
+				if err := e.svc.RecordCard(ctx, domain.KindTask, 1, "fake", tc.key, "", ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			e.cfg.Loop.CommitCardTrailer = tc.cardTrailer
+			e.cfg.Loop.CommitTrailer = tc.trailer
+			if tc.template != "" {
+				e.cfg.Loop.CommitTemplate = tc.template
+			}
+			h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+			if _, err := e.run(t, ctx, h); err != nil {
+				t.Fatal(err)
+			}
+			wantSubject := "T-1: a"
+			if tc.template != "" {
+				wantSubject = "[" + tc.key + "] T-1: a"
+			}
+			if got := gitCmd(t, e.root, "log", "-1", "--format=%s"); got != wantSubject {
+				t.Errorf("subject = %q, want %q", got, wantSubject)
+			}
+			if got := gitCmd(t, e.root, "log", "-1", "--format=%(trailers:only,unfold)"); strings.TrimSpace(got) != tc.want {
+				t.Errorf("trailers = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
