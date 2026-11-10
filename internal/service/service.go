@@ -14,6 +14,7 @@ import (
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/search"
 	"github.com/bengearig/ralph/internal/store"
+	"github.com/bengearig/ralph/internal/taskmanager"
 )
 
 // Service implements ralph's use cases over a store and search index.
@@ -27,6 +28,10 @@ type Service struct {
 	stallThreshold int
 	searchLimit    int
 	loopLockPath   string
+	// taskManager is nil when no provider is configured.
+	taskManager taskmanager.Provider
+	// inTx marks a service bound to a transaction, which never calls the provider.
+	inTx bool
 }
 
 // Options configures a Service.
@@ -38,6 +43,8 @@ type Options struct {
 	// LoopLockPath is the loop's lock file; deletes touching the held
 	// milestone are refused. Empty disables the guard.
 	LoopLockPath string
+	// TaskManager creates cards for new resources; nil disables it.
+	TaskManager taskmanager.Provider
 }
 
 // New returns a Service. The index must share the store.
@@ -51,7 +58,7 @@ func New(st store.Store, ix *search.Index, opts Options) *Service {
 		limit = 10
 	}
 	return &Service{store: st, index: ix, log: log, stallThreshold: opts.StallThreshold, searchLimit: limit,
-		loopLockPath: opts.LoopLockPath}
+		loopLockPath: opts.LoopLockPath, taskManager: opts.TaskManager}
 }
 
 // Store exposes the underlying store for read-only orchestration such as
@@ -66,6 +73,7 @@ func (s *Service) InTx(ctx context.Context, fn func(tx *Service) error) error {
 	return s.store.InTx(ctx, func(st store.Store) error {
 		inner := *s
 		inner.store = st
+		inner.inTx = true
 		if s.index != nil {
 			ix := *s.index
 			ix.Store = st
@@ -240,6 +248,7 @@ func (s *Service) CreateInitiative(ctx context.Context, in InitiativeInput) (Ini
 	}
 	v := initiativeView(i)
 	v.IndexWarning = s.indexInitiative(ctx, i)
+	v.CardWarning = s.createCard(ctx, domain.KindInitiative, i.ID)
 	return v, nil
 }
 
@@ -336,6 +345,7 @@ func (s *Service) CreateMilestone(ctx context.Context, in MilestoneInput) (Miles
 	}
 	v := milestoneView(m, nil, false)
 	v.IndexWarning = s.indexMilestone(ctx, m)
+	v.CardWarning = s.createCard(ctx, domain.KindMilestone, m.ID)
 	return v, nil
 }
 
@@ -543,6 +553,7 @@ func (s *Service) CreateTask(ctx context.Context, in TaskInput) (TaskView, error
 	}
 	v := taskView(t, nil, false)
 	v.IndexWarning = s.indexTask(ctx, t, m.InitiativeID)
+	v.CardWarning = s.createCard(ctx, domain.KindTask, t.ID)
 	return v, nil
 }
 

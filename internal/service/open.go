@@ -12,6 +12,7 @@ import (
 	"github.com/bengearig/ralph/internal/project"
 	"github.com/bengearig/ralph/internal/search"
 	"github.com/bengearig/ralph/internal/store/sqlite"
+	"github.com/bengearig/ralph/internal/taskmanager"
 )
 
 // NewEmbedder builds the configured embedder; nil means embeddings are off.
@@ -50,7 +51,21 @@ func Open(ctx context.Context, cfg *config.Config, root string, log *slog.Logger
 		Timeout:  cfg.Embeddings.Timeout,
 		Log:      log,
 	}
-	svc := New(st, ix, Options{StallThreshold: cfg.Loop.StallThreshold, SearchLimit: cfg.Search.Limit, Log: log,
+	svc := New(st, ix, Options{TaskManager: newTaskManager(cfg, log),
+		StallThreshold: cfg.Loop.StallThreshold, SearchLimit: cfg.Search.Limit, Log: log,
 		LoopLockPath: filepath.Join(root, project.DirName, "loop.lock")})
 	return svc, st.Close, nil
+}
+
+// newTaskManager builds the configured provider; a build failure is logged and
+// leaves cards disabled.
+func newTaskManager(cfg *config.Config, log *slog.Logger) taskmanager.Provider {
+	p, err := taskmanager.New(cfg)
+	if err != nil {
+		if log != nil {
+			log.Warn("task manager disabled", "error", err)
+		}
+		return nil
+	}
+	return p
 }

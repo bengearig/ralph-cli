@@ -18,6 +18,7 @@ type InitiativeView struct {
 	UpdatedAt    string `json:"updated_at"`
 	ArchivedAt   string `json:"archived_at,omitempty"`
 	IndexWarning string `json:"index_warning,omitempty"`
+	CardWarning  string `json:"card_warning,omitempty"`
 }
 
 type MilestoneView struct {
@@ -36,6 +37,7 @@ type MilestoneView struct {
 	UpdatedAt    string         `json:"updated_at"`
 	Archived     bool           `json:"archived,omitempty"`
 	IndexWarning string         `json:"index_warning,omitempty"`
+	CardWarning  string         `json:"card_warning,omitempty"`
 }
 
 type TaskView struct {
@@ -55,6 +57,7 @@ type TaskView struct {
 	UpdatedAt          string     `json:"updated_at"`
 	Archived           bool       `json:"archived,omitempty"`
 	IndexWarning       string     `json:"index_warning,omitempty"`
+	CardWarning        string     `json:"card_warning,omitempty"`
 }
 
 type NoteView struct {

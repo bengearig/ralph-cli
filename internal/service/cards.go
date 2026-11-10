@@ -8,6 +8,7 @@ import (
 
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/store"
+	"github.com/bengearig/ralph/internal/taskmanager"
 )
 
 // CardView is a card record on the wire. Key is empty while creation is failing.
@@ -104,4 +105,107 @@ func (s *Service) RecordCardFailure(ctx context.Context, kind domain.Kind, entit
 		c.AttemptedAt = time.Now().UTC()
 		return st.SetCard(ctx, &c)
 	})
+}
+
+// buildCardRequest composes the request for a resource from its stored state.
+func buildCardRequest(ctx context.Context, st store.Store, kind domain.Kind, id int64, parentKey string) (taskmanager.CardRequest, error) {
+	req := taskmanager.CardRequest{Kind: kind, ID: domain.FormatID(kind, id), ParentKey: parentKey}
+	switch kind {
+	case domain.KindInitiative:
+		i, err := st.GetInitiative(ctx, id)
+		if err != nil {
+			return req, err
+		}
+		req.Title, req.Description = i.Title, i.Brief
+	case domain.KindMilestone:
+		m, err := st.GetMilestone(ctx, id)
+		if err != nil {
+			return req, err
+		}
+		req.Title, req.Description = m.Title, m.Description
+	case domain.KindTask:
+		t, err := st.GetTask(ctx, id)
+		if err != nil {
+			return req, err
+		}
+		req.Title, req.Description = t.Title, t.Description
+		if t.AcceptanceCriteria != "" {
+			req.Description += "\n\n## Acceptance criteria\n\n" + t.AcceptanceCriteria
+		}
+	default:
+		return req, fmt.Errorf("%w: %s has no card", domain.ErrInvalid, kind)
+	}
+	return req, nil
+}
+
+// cardParent returns the resource whose card is the parent of this one.
+func (s *Service) cardParent(ctx context.Context, kind domain.Kind, id int64) (domain.Kind, int64, error) {
+	switch kind {
+	case domain.KindMilestone:
+		m, err := s.store.GetMilestone(ctx, id)
+		return domain.KindInitiative, m.InitiativeID, err
+	case domain.KindTask:
+		t, err := s.store.GetTask(ctx, id)
+		return domain.KindMilestone, t.MilestoneID, err
+	}
+	return "", 0, nil
+}
+
+// createCard makes sure the resource, and any parent missing a card, has one.
+// It returns a warning when the resource's card could not be created; it is
+// empty on success and when cards are disabled. The provider is called only
+// outside transactions.
+func (s *Service) createCard(ctx context.Context, kind domain.Kind, id int64) string {
+	if s.taskManager == nil || s.inTx {
+		return ""
+	}
+	if _, err := s.ensureCard(ctx, kind, id); err != nil {
+		return fmt.Sprintf("%s card for %s not created: %v", s.taskManager.Name(), domain.FormatID(kind, id), err)
+	}
+	return ""
+}
+
+func (s *Service) ensureCard(ctx context.Context, kind domain.Kind, id int64) (string, error) {
+	p := s.taskManager
+	if c, err := s.store.GetCard(ctx, kind, id, p.Name()); err == nil && c.Key != "" {
+		return c.Key, nil
+	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return "", err
+	}
+
+	var parentKey string
+	if kind != domain.KindInitiative {
+		pk, pid, err := s.cardParent(ctx, kind, id)
+		if err != nil {
+			return "", err
+		}
+		parentKey, err = s.ensureCard(ctx, pk, pid)
+		if parentKey == "" {
+			err = fmt.Errorf("parent %s has no card: %w", domain.FormatID(pk, pid), err)
+			return "", s.failCard(ctx, kind, id, err)
+		}
+	}
+
+	req, err := buildCardRequest(ctx, s.store, kind, id, parentKey)
+	if err != nil {
+		return "", err
+	}
+	card, err := p.Create(ctx, req)
+	if err != nil {
+		return "", s.failCard(ctx, kind, id, err)
+	}
+	if err := s.RecordCard(ctx, kind, id, p.Name(), card.Key, card.URL, req.Hash()); err != nil {
+		s.log.Error("recording card", "id", req.ID, "key", card.Key, "error", err)
+		return card.Key, fmt.Errorf("created %s but recording it failed: %w", card.Key, err)
+	}
+	return card.Key, nil
+}
+
+// failCard records cause on the card row and returns it, adding any error from recording.
+func (s *Service) failCard(ctx context.Context, kind domain.Kind, id int64, cause error) error {
+	if err := s.RecordCardFailure(ctx, kind, id, s.taskManager.Name(), cause); err != nil {
+		s.log.Error("recording card failure", "id", domain.FormatID(kind, id), "error", err)
+		return fmt.Errorf("%w (recording the failure also failed: %v)", cause, err)
+	}
+	return cause
 }
