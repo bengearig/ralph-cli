@@ -137,8 +137,8 @@ task_manager:
     # Name of the status a card moves to when its resource is cancelled or
     # deleted. Empty leaves the card alone.
     canceled_status: ""
-    # Labels added to every card when it is created, besides ralph's own
-    # ("ralph"). Labels cannot contain whitespace.
+    # Labels added to every card when it is created; ralph adds none of its
+    # own. Labels cannot contain whitespace.
     labels: []
     # Maps a ralph status (task or milestone) to the name of the Jira status
     # its card moves to. A blank value means do not move the card; a status

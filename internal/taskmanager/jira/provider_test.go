@@ -202,8 +202,15 @@ func TestConfiguredLabels(t *testing.T) {
 	for _, l := range f.last(t).fields()["labels"].([]any) {
 		got = append(got, l.(string))
 	}
-	if want := []string{"ralph", "workflow-2.0"}; !slices.Equal(got, want) {
+	if want := []string{"workflow-2.0", "ralph"}; !slices.Equal(got, want) {
 		t.Errorf("labels %v, want %v", got, want)
+	}
+
+	if _, err := newTestProvider(f.URL).Create(context.Background(), taskmanager.CardRequest{Kind: domain.KindTask, ID: "T-12", Title: "t", ParentKey: "PROJ-5"}); err != nil {
+		t.Fatal(err)
+	}
+	if l, ok := f.last(t).fields()["labels"]; ok {
+		t.Errorf("labels %v sent with none configured", l)
 	}
 
 	cfg.Labels = []string{"two words"}
@@ -222,9 +229,6 @@ func TestSummaryLabelsParent(t *testing.T) {
 	fl := f.last(t).fields()
 	if fl["summary"] != "T-12: Add X" {
 		t.Errorf("summary %v", fl["summary"])
-	}
-	if l := fl["labels"].([]any); len(l) != 1 || l[0] != "ralph" {
-		t.Errorf("labels %v", l)
 	}
 	if fl["parent"].(map[string]any)["key"] != "PROJ-5" {
 		t.Errorf("parent %v", fl["parent"])

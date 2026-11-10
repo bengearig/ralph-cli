@@ -14,10 +14,9 @@ what an update may change.
 
 - **Jira Cloud only.** The provider uses the REST API v3 with Basic authentication: an account email and an API token,
   each read from an environment variable named in config. Jira Server and Data Center are out of scope.
-- **Summary prefix plus a label.** A card's summary is `<ID>: <title>`, and it carries the label `ralph`. The prefix
-  makes a card recognizable in any list and the label makes cards searchable, without needing anything configured in
-  the Jira project. The ID is deliberately not a label, so labels stay a small, meaningful set; extra labels come from
-  `task_manager.jira.labels`.
+- **Summary prefix, labels from config.** A card's summary is `<ID>: <title>`, which makes it recognizable in any list
+  without needing anything configured in the Jira project. Ralph adds no labels of its own: it never reads them, and a
+  team that wants cards searchable lists a label in `task_manager.jira.labels`. The ID is deliberately not a label.
 - **A small in-repo Markdown to ADF converter.** Jira Cloud's v3 API takes rich text as Atlassian Document Format. A
   converter in `internal/taskmanager/jira/adf` handles common Markdown (headings, lists, code blocks, quotes, rules,
   and inline emphasis, code, and links) and keeps anything else as plain text, never dropping text. It adds no

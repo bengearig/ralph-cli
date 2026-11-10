@@ -249,7 +249,7 @@ func (p *Provider) mapRequest(req taskmanager.CardRequest) (IssueFields, error) 
 }
 
 func (p *Provider) labels() []string {
-	out := []string{"ralph"}
+	var out []string
 	for _, l := range p.cfg.Labels {
 		if l = strings.TrimSpace(l); l != "" && !slices.Contains(out, l) {
 			out = append(out, l)

@@ -265,9 +265,9 @@ refuses a request that has no parent card key.
 
 - **Summary.** `<ID>: <title>`, for example `T-12: Add the login form`. It is cut to 255 characters, ending with an
   ellipsis when it is cut, which is the longest summary Jira accepts.
-- **Labels.** `ralph`, then any in `task_manager.jira.labels`. The `ralph` label finds every card ralph made. The
-  resource's ID is in the summary, not in a label. Configured labels are added when a card is created, so cards made
-  before a label was configured do not get it.
+- **Labels.** Only those in `task_manager.jira.labels`; ralph adds none of its own, and none is added with no
+  setting. The resource's ID is in the summary, not in a label. Configured labels are added when a card is created, so
+  cards made before a label was configured do not get it.
 - **Description.** The resource's Markdown body, converted to Jira's Atlassian Document Format (ADF), the structured
   rich text that Jira Cloud's API requires. The converter is small and lives in the repository; it handles common
   Markdown:
@@ -333,7 +333,7 @@ Use a scratch project, because the check creates cards.
          "description": {"version": 1, "type": "doc", "content": [
            {"type": "paragraph", "content": [{"type": "text", "text": "Hello from ralph."}]}
          ]},
-         "labels": ["ralph"]
+         "labels": ["workflow-2.0"]
        }
      }'
    ```
@@ -344,7 +344,7 @@ Use a scratch project, because the check creates cards.
    builds a provider with `jira.NewProvider` and calls `Create` for each, passing the parent's key from the previous
    call). Confirm in Jira:
    - the returned keys exist, and each returned URL opens its card;
-   - each card has the label `ralph`, and no label with its ID;
+   - each card has exactly the configured labels, and no label with its ID;
    - the Task's parent is the Epic and the Sub-task's parent is the Task;
    - the description renders: headings, lists, a code block, bold and italic text, and a link appear as such, a table
      appears as plain text, and the footer is last. Include each in the body you send.
