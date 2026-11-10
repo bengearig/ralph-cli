@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -739,6 +740,7 @@ func TestRebuildMigrationPreservesEverything(t *testing.T) {
 		before[tbl] = count(t, s.db, `SELECT COUNT(*) FROM `+tbl)
 	}
 	embedded := count(t, s.db, `SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL`)
+	autoincBefore := count(t, s.db, `SELECT COUNT(*) FROM sqlite_master WHERE sql LIKE '%AUTOINCREMENT%'`)
 	originalState := dbState(t, s.db)
 
 	body := fmt.Sprintf(rebuildMilestonesSQL, "", milestonesTriggerSQL)
@@ -756,8 +758,8 @@ func TestRebuildMigrationPreservesEverything(t *testing.T) {
 	if got := count(t, s.db, fmt.Sprintf(`SELECT COUNT(*) FROM schema_migrations WHERE version = %d`, rebuildVersion)); got != 1 {
 		t.Errorf("schema_migrations rows for rebuild = %d, want 1", got)
 	}
-	if got := count(t, s.db, `SELECT COUNT(*) FROM sqlite_master WHERE sql LIKE '%AUTOINCREMENT%'`); got != 1 {
-		t.Errorf("AUTOINCREMENT tables = %d, want 1", got)
+	if got := count(t, s.db, `SELECT COUNT(*) FROM sqlite_master WHERE sql LIKE '%AUTOINCREMENT%'`); got != autoincBefore {
+		t.Errorf("AUTOINCREMENT tables = %d, want %d", got, autoincBefore)
 	}
 	requireForeignKeysOn(t, s)
 
@@ -869,5 +871,297 @@ func TestRebuildMarkerMustBeFirstLine(t *testing.T) {
 	}
 	if last := ms[len(ms)-1]; last.rebuild {
 		t.Errorf("%s detected as rebuild; marker is not on the first line", last.name)
+	}
+}
+
+var idTables = []string{"initiatives", "milestones", "tasks", "task_notes", "documents"}
+
+func TestPermanentIDsAutoincrement(t *testing.T) {
+	s := openTest(t)
+	for _, tbl := range idTables {
+		var def string
+		if err := s.db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, tbl).Scan(&def); err != nil {
+			t.Fatalf("%s: %v", tbl, err)
+		}
+		if !strings.Contains(def, "AUTOINCREMENT") {
+			t.Errorf("%s definition lacks AUTOINCREMENT: %s", tbl, def)
+		}
+	}
+}
+
+// openAtPreviousVersion creates a database migrated through the migration
+// before the permanent-ID rebuild, using the raw driver so Open does not
+// upgrade it.
+func openAtPreviousVersion(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	ms, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var prev []migration
+	for _, m := range ms {
+		if m.name == "0003_permanent_ids.sql" {
+			break
+		}
+		prev = append(prev, m)
+	}
+	if len(prev) == 0 || len(prev) == len(ms) {
+		t.Fatalf("migration 0003_permanent_ids.sql not found among %d migrations", len(ms))
+	}
+	raw, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw.SetMaxOpenConns(1)
+	t.Cleanup(func() { raw.Close() })
+	if _, err := raw.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range prev {
+		if _, err := raw.Exec(m.sql); err != nil {
+			t.Fatalf("applying %s: %v", m.name, err)
+		}
+		if _, err := raw.Exec(`INSERT INTO schema_migrations (version, applied_at) VALUES (?, '2026-01-01T00:00:00Z')`, m.version); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return raw
+}
+
+func pragmaRows(t *testing.T, db *sql.DB, pragma, table string, drop ...string) []string {
+	t.Helper()
+	rows, err := db.Query(fmt.Sprintf(`SELECT * FROM pragma_%s('%s')`, pragma, table))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	cols, _ := rows.Columns()
+	var out []string
+	for rows.Next() {
+		vals := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			t.Fatal(err)
+		}
+		var parts []string
+		for i, c := range cols {
+			skip := false
+			for _, d := range drop {
+				skip = skip || c == d
+			}
+			if !skip {
+				parts = append(parts, fmt.Sprintf("%s=%v", c, vals[i]))
+			}
+		}
+		out = append(out, strings.Join(parts, ","))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestPermanentIDsSchemaEquivalence(t *testing.T) {
+	old := openAtPreviousVersion(t, filepath.Join(t.TempDir(), "old.db"))
+	fresh := openTest(t)
+	for _, tbl := range idTables {
+		for _, p := range []struct {
+			name string
+			drop []string
+			sort bool
+		}{
+			{"table_info", nil, false},
+			{"foreign_key_list", nil, true},
+			{"index_list", []string{"seq"}, true},
+		} {
+			want := pragmaRows(t, old, p.name, tbl, p.drop...)
+			got := pragmaRows(t, fresh.db, p.name, tbl, p.drop...)
+			if p.sort {
+				sort.Strings(want)
+				sort.Strings(got)
+			}
+			if strings.Join(got, "\n") != strings.Join(want, "\n") {
+				t.Errorf("%s %s differs:\n got %q\nwant %q", tbl, p.name, got, want)
+			}
+		}
+	}
+}
+
+func dataRows(t *testing.T, db *sql.DB) []string {
+	t.Helper()
+	var out []string
+	for _, line := range strings.Split(dbState(t, db), "\n") {
+		for _, tbl := range append(append([]string{}, idTables...), "chunks") {
+			if strings.HasPrefix(line, tbl+" [") {
+				out = append(out, line)
+			}
+		}
+	}
+	return out
+}
+
+func TestPermanentIDsUpgradePreservesData(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "ralph.db")
+	old := openAtPreviousVersion(t, path)
+	const now = "2026-01-01T00:00:00Z"
+	for _, stmt := range []string{
+		`INSERT INTO initiatives (id, slug, title, brief, created_at, updated_at) VALUES (1, 'i', 'I', 'brief', '` + now + `', '` + now + `'), (4, 'j', 'J', '', '` + now + `', '` + now + `')`,
+		`INSERT INTO milestones (id, initiative_id, slug, title, description, position, created_at, updated_at, branch, base_commit, head_commit) VALUES (1, 1, 'm1', 'M1', 'desc', 1, '` + now + `', '` + now + `', 'ralph/m1', 'aaa', 'bbb'), (7, 4, 'm2', 'M2', '', 1, '` + now + `', '` + now + `', '', '', '')`,
+		`INSERT INTO tasks (id, milestone_id, title, description, acceptance_criteria, status, position, failure_count, blocked_reason, created_at, updated_at, commit_hash) VALUES (1, 1, 'T1', 'd', 'ac', 'DONE', 1, 2, 'r', '` + now + `', '` + now + `', 'abc123'), (9, 7, 'T2', '', '', 'TODO', 1, 0, '', '` + now + `', '` + now + `', '')`,
+		`INSERT INTO task_notes (id, task_id, kind, body, created_at) VALUES (1, 1, 'NOTE', 'a', '` + now + `'), (5, 9, 'ITERATION', 'b', '` + now + `')`,
+		`INSERT INTO documents (id, initiative_id, kind, slug, title, body, created_at, updated_at) VALUES (1, 1, 'design', 'd', 'D', 'text', '` + now + `', '` + now + `'), (3, NULL, 'note', 'p', 'P', '', '` + now + `', '` + now + `')`,
+		`INSERT INTO chunks (owner_kind, owner_id, initiative_id, seq, text, content_hash, model, dims, embedding) VALUES
+			('initiative', 1, 1, 0, 'quokka brief', 'h0', '', 0, NULL),
+			('milestone', 1, 1, 0, 'quokka alpha', 'h1', 'm', 1, x'00000000'),
+			('task', 1, 1, 0, 'gamma', 'h3', 'm', 1, x'00000000'),
+			('document', 1, 1, 0, 'delta quokka', 'h4', '', 0, NULL)`,
+	} {
+		if _, err := old.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("populating: %v", err)
+		}
+	}
+	hits := func(db *sql.DB) string {
+		rows, err := db.Query(`SELECT c.owner_kind, c.owner_id, c.seq FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid WHERE chunks_fts MATCH 'quokka' ORDER BY c.id`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var b strings.Builder
+		for rows.Next() {
+			var k string
+			var id, seq int
+			if err := rows.Scan(&k, &id, &seq); err != nil {
+				t.Fatal(err)
+			}
+			fmt.Fprintf(&b, "%s/%d/%d ", k, id, seq)
+		}
+		return b.String()
+	}
+	wantRows := dataRows(t, old)
+	wantHits := hits(old)
+	chunks := count(t, old, `SELECT COUNT(*) FROM chunks`)
+	embedded := count(t, old, `SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL`)
+	if wantHits == "" {
+		t.Fatal("known query has no hits before upgrade")
+	}
+	if err := old.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+	if got := dataRows(t, s.db); strings.Join(got, "\n") != strings.Join(wantRows, "\n") {
+		t.Errorf("rows changed:\n got %q\nwant %q", got, wantRows)
+	}
+	if got := count(t, s.db, `SELECT COUNT(*) FROM chunks`); got != chunks {
+		t.Errorf("chunks = %d, want %d", got, chunks)
+	}
+	if got := count(t, s.db, `SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL`); got != embedded {
+		t.Errorf("embedded chunks = %d, want %d", got, embedded)
+	}
+	if got := hits(s.db); got != wantHits {
+		t.Errorf("search hits = %q, want %q", got, wantHits)
+	}
+	bs, err := filepath.Glob(path + ".pre-*.bak")
+	if err != nil || len(bs) != 1 {
+		t.Errorf("backups = %v, %v; want exactly one", bs, err)
+	}
+	requireForeignKeysOn(t, s)
+
+	if err := s.CreateInitiative(ctx, &domain.Initiative{Slug: "k", Title: "K"}); err != nil {
+		t.Fatal(err)
+	}
+	var seq int
+	if err := s.db.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'initiatives'`).Scan(&seq); err != nil || seq != 5 {
+		t.Errorf("initiatives sequence = %d, %v; want 5", seq, err)
+	}
+}
+
+func TestPermanentIDsNotReused(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	i, m := seed(t, s)
+	task := domain.Task{MilestoneID: m.ID, Title: "T", Status: domain.StatusTodo}
+	if err := s.CreateTask(ctx, &task); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddTaskNote(ctx, &domain.TaskNote{TaskID: task.ID, Kind: domain.NoteGeneral, Body: "n"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateDocument(ctx, &domain.Document{InitiativeID: &i.ID, Kind: domain.DocNote, Slug: "d", Title: "D"}); err != nil {
+		t.Fatal(err)
+	}
+	create := map[string]func() (int64, error){
+		"task_notes": func() (int64, error) {
+			n := domain.TaskNote{TaskID: task.ID, Kind: domain.NoteGeneral, Body: "again"}
+			err := s.AddTaskNote(ctx, &n)
+			return n.ID, err
+		},
+		"documents": func() (int64, error) {
+			d := domain.Document{InitiativeID: &i.ID, Kind: domain.DocNote, Slug: "d2", Title: "D2"}
+			err := s.CreateDocument(ctx, &d)
+			return d.ID, err
+		},
+		"tasks": func() (int64, error) {
+			tk := domain.Task{MilestoneID: m.ID, Title: "T2", Status: domain.StatusTodo}
+			err := s.CreateTask(ctx, &tk)
+			return tk.ID, err
+		},
+		"milestones": func() (int64, error) {
+			mm := domain.Milestone{InitiativeID: i.ID, Slug: "m2", Title: "M2"}
+			err := s.CreateMilestone(ctx, &mm)
+			return mm.ID, err
+		},
+		"initiatives": func() (int64, error) {
+			in := domain.Initiative{Slug: "other", Title: "Other"}
+			err := s.CreateInitiative(ctx, &in)
+			return in.ID, err
+		},
+	}
+	// Children first, so each parent still exists when its children are recreated.
+	for _, tbl := range []string{"task_notes", "documents", "tasks", "milestones", "initiatives"} {
+		var maxID int64
+		if err := s.db.QueryRow(`SELECT MAX(id) FROM ` + tbl).Scan(&maxID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`DELETE FROM `+tbl+` WHERE id = ?`, maxID); err != nil {
+			t.Fatal(err)
+		}
+		id, err := create[tbl]()
+		if err != nil {
+			t.Fatalf("%s: %v", tbl, err)
+		}
+		if id <= maxID {
+			t.Errorf("%s: new ID %d not greater than deleted ID %d", tbl, id, maxID)
+		}
+	}
+}
+
+func TestPermanentIDsCascadesStillWork(t *testing.T) {
+	s, _ := openPopulated(t)
+	if _, err := s.db.Exec(`DELETE FROM initiatives WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`SELECT COUNT(*) FROM milestones`,
+		`SELECT COUNT(*) FROM tasks`,
+		`SELECT COUNT(*) FROM task_notes`,
+		`SELECT COUNT(*) FROM documents WHERE initiative_id IS NOT NULL`,
+		`SELECT COUNT(*) FROM chunks`,
+		`SELECT COUNT(*) FROM chunks_fts WHERE chunks_fts MATCH 'alpha OR beta OR gamma OR delta'`,
+	} {
+		if n := count(t, s.db, q); n != 0 {
+			t.Errorf("%s = %d, want 0", q, n)
+		}
+	}
+	if n := count(t, s.db, `SELECT COUNT(*) FROM documents`); n != 1 {
+		t.Errorf("project-scoped documents = %d, want 1", n)
 	}
 }
