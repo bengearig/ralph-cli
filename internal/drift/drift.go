@@ -360,18 +360,7 @@ func findTasks(ctx context.Context, in Input, r *Report, head string, tasks []se
 	if err != nil {
 		return err
 	}
-	patchIDs := map[string]string{}
-	patchID := func(hash string) (string, error) {
-		if id, ok := patchIDs[hash]; ok {
-			return id, nil
-		}
-		id, err := in.Repo.PatchID(ctx, hash)
-		if err != nil {
-			return "", err
-		}
-		patchIDs[hash] = id
-		return id, nil
-	}
+	patchID := cachedPatchID(ctx, in.Repo.PatchID)
 
 	claimed := map[string]bool{}
 	for _, t := range tasks {
@@ -413,16 +402,8 @@ func match(ctx context.Context, in Input, head string, t service.TaskView, candi
 		}
 	}
 
-	id, err := domain.ParseID(domain.KindTask, t.ID)
-	if err != nil {
-		return "", "", err
-	}
-	for _, c := range candidates {
-		for _, v := range c.Trailers[TrailerKey] {
-			if n, err := domain.ParseID(domain.KindTask, strings.TrimSpace(v)); err == nil && n == id {
-				return MatchTrailer, c.Hash, nil
-			}
-		}
+	if hash, err := trailerCommit(t.ID, candidates); err != nil || hash != "" {
+		return MatchTrailer, hash, err
 	}
 
 	if recordedExists {
@@ -456,4 +437,37 @@ func match(ctx context.Context, in Input, head string, t service.TaskView, candi
 		}
 	}
 	return MatchMissing, "", nil
+}
+
+// cachedPatchID memoises fn per commit.
+func cachedPatchID(ctx context.Context, fn func(context.Context, string) (string, error)) func(string) (string, error) {
+	cache := map[string]string{}
+	return func(hash string) (string, error) {
+		if id, ok := cache[hash]; ok {
+			return id, nil
+		}
+		id, err := fn(ctx, hash)
+		if err != nil {
+			return "", err
+		}
+		cache[hash] = id
+		return id, nil
+	}
+}
+
+// trailerCommit returns the first of candidates whose Ralph-Task trailer
+// names taskID, or "".
+func trailerCommit(taskID string, candidates []git.LogCommit) (string, error) {
+	id, err := domain.ParseID(domain.KindTask, taskID)
+	if err != nil {
+		return "", err
+	}
+	for _, c := range candidates {
+		for _, v := range c.Trailers[TrailerKey] {
+			if n, err := domain.ParseID(domain.KindTask, strings.TrimSpace(v)); err == nil && n == id {
+				return c.Hash, nil
+			}
+		}
+	}
+	return "", nil
 }

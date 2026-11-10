@@ -1034,3 +1034,145 @@ func TestSubjectCandidates(t *testing.T) {
 	r = e.check(in)
 	wantTasks(t, r, want{MatchMissing, ""}, want{MatchTrailer, e.rev("HEAD")})
 }
+
+func (e *env) doneViews() []service.TaskView {
+	e.t.Helper()
+	var out []service.TaskView
+	for _, id := range e.tasks {
+		tv, err := e.svc.GetTask(context.Background(), id)
+		if err != nil {
+			e.t.Fatal(err)
+		}
+		if tv.Status == string(domain.StatusDone) {
+			out = append(out, tv)
+		}
+	}
+	return out
+}
+
+func (e *env) inBase(tasks []service.TaskView) ([]TaskFinding, bool) {
+	e.t.Helper()
+	f, all, err := tasksInBase(context.Background(), git.Repo{Dir: e.root}, e.base, "refs/heads/main", tasks)
+	if err != nil {
+		e.t.Fatalf("tasksInBase: %v", err)
+	}
+	return f, all
+}
+
+func wantFindings(t *testing.T, got []TaskFinding, ws ...want) {
+	t.Helper()
+	wantTasks(t, Report{Tasks: got}, ws...)
+}
+
+func TestTasksInBaseSquashKeepsTrailers(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	e.do(0, true)
+	e.do(1, true)
+	t1, t2 := taskID(e.tasks[0]), taskID(e.tasks[1])
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	gitCmd(t, e.root, "merge", "--squash", "--quiet", branch)
+	gitCmd(t, e.root, "commit", "--quiet", "-m", "Login and logout\n\nRalph-Task: "+t1+"\nRalph-Task: "+t2)
+	sq := e.rev("HEAD")
+
+	found, all := e.inBase(e.doneViews())
+	wantFindings(t, found, want{MatchTrailer, sq}, want{MatchTrailer, sq})
+	if !all {
+		t.Error("all = false, want true")
+	}
+	if found[0].ID != t1 || found[0].Title != "login" || found[0].RecordedCommit == "" {
+		t.Errorf("finding fields = %+v", found[0])
+	}
+}
+
+func TestTasksInBaseRebaseWithoutTrailers(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	c1, c2 := e.do(0, false), e.do(1, false)
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	gitCmd(t, e.root, "cherry-pick", c1)
+	p1 := e.rev("HEAD")
+	gitCmd(t, e.root, "cherry-pick", c2)
+	p2 := e.rev("HEAD")
+
+	found, all := e.inBase(e.doneViews())
+	wantFindings(t, found, want{MatchPatchID, p1}, want{MatchPatchID, p2})
+	if !all {
+		t.Error("all = false, want true")
+	}
+}
+
+func TestTasksInBasePartial(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	c1 := e.do(0, false)
+	e.do(1, false)
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	gitCmd(t, e.root, "cherry-pick", c1)
+	p1 := e.rev("HEAD")
+
+	found, all := e.inBase(e.doneViews())
+	wantFindings(t, found, want{MatchPatchID, p1}, want{MatchMissing, ""})
+	if all {
+		t.Error("all = true, want false")
+	}
+}
+
+func TestTasksInBaseSubjectNeverCounts(t *testing.T) {
+	e := newEnv(t, "login")
+	e.do(0, true)
+	tv := e.doneViews()[0]
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	e.commit("other.txt", "something else\n", subject(tv))
+
+	found, all := e.inBase(e.doneViews())
+	wantFindings(t, found, want{MatchMissing, ""})
+	if all {
+		t.Error("all = true, want false")
+	}
+}
+
+func TestTasksInBaseNoTasks(t *testing.T) {
+	e := newEnv(t, "login")
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	e.commit("other.txt", "x\n", "other")
+	found, all := e.inBase(nil)
+	if len(found) != 0 || all {
+		t.Errorf("found %+v all %v, want none and false", found, all)
+	}
+}
+
+func TestTasksInBaseEmptyRange(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	e.do(0, true)
+	e.do(1, true)
+	f, all, err := tasksInBase(context.Background(), git.Repo{Dir: e.root}, e.base, e.base, e.doneViews())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFindings(t, f, want{MatchMissing, ""}, want{MatchMissing, ""})
+	if all {
+		t.Error("all = true, want false")
+	}
+}
+
+func TestTasksInBasePatchIDsAreLazy(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	e.do(0, true)
+	e.do(1, true)
+	t1, t2 := taskID(e.tasks[0]), taskID(e.tasks[1])
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	e.commit("a.txt", "a\n", "A\n\nRalph-Task: "+t1)
+	e.commit("b.txt", "b\n", "B\n\nRalph-Task: "+t2)
+
+	repo := git.Repo{Dir: e.root}
+	calls := 0
+	count := func(ctx context.Context, h string) (string, error) {
+		calls++
+		return repo.PatchID(ctx, h)
+	}
+	found, all, err := findInBase(context.Background(), repo, count, e.base, "refs/heads/main", e.doneViews())
+	if err != nil || !all {
+		t.Fatalf("found %+v all %v err %v", found, all, err)
+	}
+	if calls != 0 {
+		t.Errorf("PatchID called %d times, want 0 when every task matches by trailer", calls)
+	}
+}
