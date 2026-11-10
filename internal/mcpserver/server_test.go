@@ -504,3 +504,19 @@ func TestInitiativeCreateOutputSchema(t *testing.T) {
 	}
 	t.Fatal("initiative_create not listed")
 }
+
+func TestTaskNextRefusesArchivedInitiative(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	cs := connectService(t, svc, Options{})
+	var ms service.MilestoneView
+	mustOK(t, cs, "initiative_create", map[string]any{"title": "Customer SSO"}, nil)
+	mustOK(t, cs, "milestone_create", map[string]any{"initiative_id": "I-1", "title": "OIDC login"}, &ms)
+	if _, err := svc.ArchiveInitiative(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	res := call(t, cs, "task_next", map[string]any{"milestone_id": ms.ID}, nil)
+	if !res.IsError || !strings.Contains(text(res), "I-1 is archived") {
+		t.Fatalf("task_next on archived initiative: error=%v %q", res.IsError, text(res))
+	}
+}

@@ -198,3 +198,21 @@ func TestCommitSubject(t *testing.T) {
 		t.Errorf("failing template: subject = %q, want empty", got)
 	}
 }
+
+func TestPlanRefusesArchivedInitiative(t *testing.T) {
+	ctx := context.Background()
+	p, mID := setup(t)
+	if _, err := p.Service.ArchiveInitiative(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	_, err := p.Plan(ctx, mID)
+	if !errors.Is(err, service.ErrArchived) || !strings.Contains(err.Error(), "ralph initiative unarchive I-1") {
+		t.Fatalf("Plan on archived initiative: err = %v", err)
+	}
+	if _, err := p.Service.UnarchiveInitiative(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Plan(ctx, mID); err != nil {
+		t.Fatalf("Plan after unarchive: %v", err)
+	}
+}

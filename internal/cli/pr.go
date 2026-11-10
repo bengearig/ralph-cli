@@ -53,6 +53,9 @@ reports the drift instead of refusing.`,
 			if err != nil {
 				return err
 			}
+			if err := svc.CheckMilestoneWritable(cmd.Context(), mID); err != nil {
+				return err
+			}
 			m, err := svc.GetMilestone(cmd.Context(), mID)
 			if err != nil {
 				return err

@@ -73,6 +73,9 @@ type PromptData struct {
 
 // Plan resolves the loop for a milestone without changing anything.
 func (p Planner) Plan(ctx context.Context, milestoneID int64) (Plan, error) {
+	if err := p.Service.CheckMilestoneWritable(ctx, milestoneID); err != nil {
+		return Plan{}, err
+	}
 	m, err := p.Service.GetMilestone(ctx, milestoneID)
 	if err != nil {
 		return Plan{}, err

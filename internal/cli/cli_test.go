@@ -1038,3 +1038,44 @@ func TestShowArchivedState(t *testing.T) {
 		}
 	}
 }
+
+func TestLoopAndPRRefuseArchivedInitiative(t *testing.T) {
+	h := newTestEnv(t, true)
+	h.ok("initiative", "create", "--title", "Customer SSO")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Callback")
+	h.ok("task", "create", "--milestone", "M-1", "--title", "Route", "--description", "Add route", "--criteria", "Tests pass")
+	h.ok("task", "status", "T-1", "TODO")
+	setArchived := func(on bool) {
+		cfg, err := config.Defaults()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.Embeddings.Provider = config.EmbeddingsNone
+		svc, closeFn, err := service.Open(context.Background(), cfg, h.dir, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer closeFn()
+		if on {
+			_, err = svc.ArchiveInitiative(context.Background(), 1)
+		} else {
+			_, err = svc.UnarchiveInitiative(context.Background(), 1)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	setArchived(true)
+
+	for _, args := range [][]string{
+		{"loop", "--milestone", "M-1", "--dry-run"},
+		{"pr", "create", "--milestone", "M-1", "--dry-run"},
+	} {
+		_, _, err := h.run("", args...)
+		if err == nil || !strings.Contains(err.Error(), "I-1 is archived") || !strings.Contains(err.Error(), "ralph initiative unarchive I-1") {
+			t.Errorf("ralph %v: err = %v; want archived refusal", args, err)
+		}
+	}
+	setArchived(false)
+	h.ok("loop", "--milestone", "M-1", "--dry-run")
+}

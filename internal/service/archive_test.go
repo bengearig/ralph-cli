@@ -252,3 +252,22 @@ func toJSON(t *testing.T, v any) string {
 	}
 	return string(b)
 }
+
+func TestNextTaskRefusesArchivedInitiative(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	ini, m := e.scaffold(t)
+	if _, err := e.svc.ArchiveInitiative(ctx, ini); err != nil {
+		t.Fatal(err)
+	}
+	v, err := e.svc.NextTask(ctx, m)
+	if !errors.Is(err, ErrArchived) || v != nil || !strings.Contains(err.Error(), "ralph initiative unarchive I-1") {
+		t.Fatalf("NextTask = %+v, %v; want ErrArchived with unarchive hint", v, err)
+	}
+	if _, err := e.svc.UnarchiveInitiative(ctx, ini); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.NextTask(ctx, m); err != nil {
+		t.Errorf("NextTask after unarchive: %v", err)
+	}
+}

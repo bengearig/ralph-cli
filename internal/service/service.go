@@ -781,9 +781,10 @@ func (s *Service) AddTaskNote(ctx context.Context, id int64, kind domain.NoteKin
 
 // NextTask returns the task the loop should work on in a milestone: an
 // interrupted IN_PROGRESS task first, otherwise the first TODO by position.
-// It returns nil when nothing is loopable.
+// It returns nil when nothing is loopable, and an ErrArchived error when the
+// milestone's initiative is archived.
 func (s *Service) NextTask(ctx context.Context, milestoneID int64) (*TaskView, error) {
-	if _, err := s.store.GetMilestone(ctx, milestoneID); err != nil {
+	if err := s.CheckMilestoneWritable(ctx, milestoneID); err != nil {
 		return nil, err
 	}
 	for _, st := range []domain.Status{domain.StatusInProgress, domain.StatusTodo} {
