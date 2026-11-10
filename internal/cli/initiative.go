@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"strings"
+
 	"github.com/spf13/cobra"
 
 	"github.com/bengearig/ralph/internal/domain"
@@ -115,7 +117,7 @@ func (a *app) newInitiativeCommand() *cobra.Command {
 			if err := a.section("Brief", v.Brief); err != nil {
 				return err
 			}
-			return a.printMilestoneTable(st.Initiatives[0].Milestones)
+			return a.printMilestoneTable(st.Initiatives[0].Milestones, nil)
 		},
 	}
 
@@ -156,7 +158,7 @@ func (a *app) newInitiativeCommand() *cobra.Command {
 	return cmd
 }
 
-func (a *app) printMilestoneTable(ms []service.MilestoneView) error {
+func (a *app) printMilestoneTable(ms []service.MilestoneView, waiting map[string][]string) error {
 	if len(ms) == 0 {
 		return a.printf("\nno milestones\n")
 	}
@@ -166,7 +168,11 @@ func (a *app) printMilestoneTable(ms []service.MilestoneView) error {
 	rows := make([][]string, 0, len(ms))
 	cards := make([]*service.CardView, 0, len(ms))
 	for _, m := range ms {
-		rows = append(rows, []string{m.ID, m.Status, m.Title, service.FormatCounts(m.TaskCounts)})
+		status := m.Status
+		if w := waiting[m.ID]; len(w) > 0 {
+			status += "  waiting on " + strings.Join(w, ", ")
+		}
+		rows = append(rows, []string{m.ID, status, m.Title, service.FormatCounts(m.TaskCounts)})
 		cards = append(cards, m.Card)
 	}
 	header, rows := a.withCard([]string{"MILESTONE", "STATUS", "TITLE", "TASKS"}, rows, cards)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/drift"
+	"github.com/bengearig/ralph/internal/loop"
 	"github.com/bengearig/ralph/internal/service"
 )
 
@@ -196,7 +197,8 @@ func (t *tools) milestoneList(ctx context.Context, _ *mcp.CallToolRequest, in mi
 
 type milestoneDetail struct {
 	service.MilestoneView
-	Tasks []service.TaskView `json:"tasks"`
+	WaitingOn []loop.DependencyFinding `json:"waiting_on,omitempty" jsonschema:"unsatisfied dependencies and why; omitted when none or when git cannot be checked"`
+	Tasks     []service.TaskView       `json:"tasks"`
 }
 
 func (t *tools) milestoneGet(ctx context.Context, _ *mcp.CallToolRequest, in idIn) (*mcp.CallToolResult, milestoneDetail, error) {
@@ -209,7 +211,42 @@ func (t *tools) milestoneGet(ctx context.Context, _ *mcp.CallToolRequest, in idI
 		return nil, milestoneDetail{}, toolError(err)
 	}
 	tasks, err := t.svc.ListTasks(ctx, service.TaskFilter{MilestoneID: id, IncludeArchived: true})
-	return nil, milestoneDetail{MilestoneView: m, Tasks: tasks}, toolError(err)
+	return nil, milestoneDetail{MilestoneView: m, WaitingOn: t.waitingOn(ctx, m), Tasks: tasks}, toolError(err)
+}
+
+// waitingOn lists m's unsatisfied dependencies. It is nil when drift cannot be
+// checked or any check fails.
+func (t *tools) waitingOn(ctx context.Context, m service.MilestoneView) []loop.DependencyFinding {
+	if len(m.DependsOn) == 0 || m.Status == service.MilestoneDone || m.Status == service.MilestoneCancelled {
+		return nil
+	}
+	own, err := t.driftInput(ctx, m.ID)
+	if err != nil {
+		return nil
+	}
+	var fs []loop.DependencyFinding
+	for _, ref := range m.DependsOn {
+		depID, err := domain.ParseID(domain.KindMilestone, ref)
+		if err != nil {
+			return nil
+		}
+		dm, err := t.svc.GetMilestone(ctx, depID)
+		if err != nil {
+			return nil
+		}
+		f, err := loop.ClassifyDependency(ctx, dm, own.BaseBranch, func(ctx context.Context) (drift.Report, error) {
+			din, err := t.driftInput(ctx, ref)
+			if err != nil {
+				return drift.Report{}, err
+			}
+			return drift.Check(ctx, din)
+		})
+		if err != nil {
+			return nil
+		}
+		fs = append(fs, f)
+	}
+	return loop.Unsatisfied(fs)
 }
 
 type milestoneUpdateIn struct {

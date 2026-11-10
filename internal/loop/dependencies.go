@@ -81,46 +81,64 @@ func DependencyCheck(ctx context.Context, svc *service.Service, cfg *config.Conf
 
 	findings := []DependencyFinding{}
 	for _, d := range deps {
-		dm, err := svc.GetMilestone(ctx, d.id)
+		f, err := CheckDependency(ctx, svc, cfg, root, d.id)
 		if err != nil {
 			return nil, err
-		}
-		f := DependencyFinding{ID: d.ref}
-		switch {
-		case dm.Status == service.MilestoneCancelled:
-			f.Satisfied, f.State = true, DependencyCancelled
-		case dm.Status != service.MilestoneDone:
-			f.State = DependencyNotDone
-			f.Reason = fmt.Sprintf("is %s, not DONE", dm.Status)
-			f.Fix = "finish it first: ralph loop --milestone " + d.ref
-		default:
-			in, err := DriftInput(ctx, svc, cfg, root, d.id)
-			if err != nil {
-				if errors.Is(err, project.ErrNotGitRepo) {
-					return nil, errors.New("checking dependencies needs a git repository")
-				}
-				return nil, err
-			}
-			report, err := drift.Check(ctx, in)
-			if err != nil {
-				return nil, err
-			}
-			switch report.State {
-			case drift.StateMerged:
-				f.Satisfied, f.State = true, DependencySatisfied
-			case drift.StateUnrecorded, drift.StateBranchMissing:
-				f.State = DependencyUnknown
-				f.Reason = "its merge cannot be confirmed: no git record, or its branch is missing"
-				f.Fix = fmt.Sprintf("ralph milestone reconcile %s, or use --force", d.ref)
-			default:
-				f.State = DependencyNotMerged
-				f.Reason = fmt.Sprintf("branch %s is not merged into %s", report.Branch, cfg.PR.BaseBranch)
-				f.Fix = "ralph milestone merge " + d.ref
-			}
 		}
 		findings = append(findings, f)
 	}
 	return findings, nil
+}
+
+// CheckDependency reports whether the milestone with the given ID is
+// satisfied as a dependency. Git is touched only when it is DONE.
+func CheckDependency(ctx context.Context, svc *service.Service, cfg *config.Config, root string, id int64) (DependencyFinding, error) {
+	dm, err := svc.GetMilestone(ctx, id)
+	if err != nil {
+		return DependencyFinding{}, err
+	}
+	return ClassifyDependency(ctx, dm, cfg.PR.BaseBranch, func(ctx context.Context) (drift.Report, error) {
+		in, err := DriftInput(ctx, svc, cfg, root, id)
+		if err != nil {
+			if errors.Is(err, project.ErrNotGitRepo) {
+				return drift.Report{}, errors.New("checking dependencies needs a git repository")
+			}
+			return drift.Report{}, err
+		}
+		return drift.Check(ctx, in)
+	})
+}
+
+// ClassifyDependency turns a dependency milestone into a finding. report runs
+// the drift check and is called only when the milestone is DONE.
+func ClassifyDependency(ctx context.Context, dm service.MilestoneView, baseBranch string, report func(context.Context) (drift.Report, error)) (DependencyFinding, error) {
+	f := DependencyFinding{ID: dm.ID}
+	switch {
+	case dm.Status == service.MilestoneCancelled:
+		f.Satisfied, f.State = true, DependencyCancelled
+	case dm.Status != service.MilestoneDone:
+		f.State = DependencyNotDone
+		f.Reason = fmt.Sprintf("is %s, not DONE", dm.Status)
+		f.Fix = "finish it first: ralph loop --milestone " + dm.ID
+	default:
+		r, err := report(ctx)
+		if err != nil {
+			return f, err
+		}
+		switch r.State {
+		case drift.StateMerged:
+			f.Satisfied, f.State = true, DependencySatisfied
+		case drift.StateUnrecorded, drift.StateBranchMissing:
+			f.State = DependencyUnknown
+			f.Reason = "its merge cannot be confirmed: no git record, or its branch is missing"
+			f.Fix = fmt.Sprintf("ralph milestone reconcile %s, or use --force", dm.ID)
+		default:
+			f.State = DependencyNotMerged
+			f.Reason = fmt.Sprintf("branch %s is not merged into %s", r.Branch, baseBranch)
+			f.Fix = "ralph milestone merge " + dm.ID
+		}
+	}
+	return f, nil
 }
 
 // DependencyRefusal is the ErrNeedsHuman error listing unsatisfied messages.

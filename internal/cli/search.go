@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bengearig/ralph/internal/domain"
+	"github.com/bengearig/ralph/internal/loop"
 	"github.com/bengearig/ralph/internal/service"
 )
 
@@ -125,8 +126,19 @@ func (a *app) newStatusCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			waiting := map[string][]string{}
+			if cfg, root, ok := a.waitingContext(); ok {
+				cache := map[string][]loop.DependencyFinding{}
+				for _, i := range st.Initiatives {
+					for _, m := range i.Milestones {
+						if w := a.waitingOn(cmd.Context(), svc, cfg, root, m, cache); len(w) > 0 {
+							waiting[m.ID] = findingIDs(w)
+						}
+					}
+				}
+			}
 			if a.jsonOut {
-				return a.writeJSON(st)
+				return a.writeJSON(statusJSON(st, waiting))
 			}
 			if len(st.Initiatives) == 0 {
 				return a.printf("no initiatives yet; start with `ralph initiative create` or /ralph:receive in Claude Code\n")
@@ -140,7 +152,7 @@ func (a *app) newStatusCommand() *cobra.Command {
 				if err := a.printf("%s  %s  (%d document(s); %s)\n", i.ID, i.Title, i.Documents, service.FormatCounts(i.TaskCounts)); err != nil {
 					return err
 				}
-				if err := a.printMilestoneTable(i.Milestones); err != nil {
+				if err := a.printMilestoneTable(i.Milestones, waiting); err != nil {
 					return err
 				}
 			}
@@ -150,4 +162,30 @@ func (a *app) newStatusCommand() *cobra.Command {
 	cmd.Flags().StringVar(&initiative, "initiative", "", "only this initiative")
 	cmd.Flags().BoolVar(&archived, "archived", false, "include archived initiatives and documents, and their contents")
 	return cmd
+}
+
+type statusMilestone struct {
+	service.MilestoneView
+	WaitingOn []string `json:"waiting_on,omitempty"`
+}
+
+type statusInitiative struct {
+	service.InitiativeStatus
+	Milestones []statusMilestone `json:"milestones"`
+}
+
+func statusJSON(st service.StatusView, waiting map[string][]string) struct {
+	Initiatives []statusInitiative `json:"initiatives"`
+} {
+	out := struct {
+		Initiatives []statusInitiative `json:"initiatives"`
+	}{Initiatives: make([]statusInitiative, 0, len(st.Initiatives))}
+	for _, i := range st.Initiatives {
+		si := statusInitiative{InitiativeStatus: i, Milestones: make([]statusMilestone, 0, len(i.Milestones))}
+		for _, m := range i.Milestones {
+			si.Milestones = append(si.Milestones, statusMilestone{MilestoneView: m, WaitingOn: waiting[m.ID]})
+		}
+		out.Initiatives = append(out.Initiatives, si)
+	}
+	return out
 }

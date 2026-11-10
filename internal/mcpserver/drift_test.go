@@ -245,3 +245,50 @@ func TestDriftToolsUnavailableWithoutDriftInput(t *testing.T) {
 		}
 	}
 }
+
+func TestMilestoneGetWaitingOn(t *testing.T) {
+	e := newRebasedMilestone(t)
+	ctx := context.Background()
+	two, err := e.svc.CreateMilestone(ctx, service.MilestoneInput{InitiativeID: 1, Title: "After login", DependsOn: []int64{e.mID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := connectService(t, e.svc, e.options())
+
+	type got struct {
+		DependsOn []string `json:"depends_on"`
+		WaitingOn []struct {
+			ID     string `json:"id"`
+			State  string `json:"state"`
+			Reason string `json:"reason"`
+		} `json:"waiting_on"`
+	}
+	var g got
+	mustOK(t, cs, "milestone_get", map[string]any{"id": two.ID}, &g)
+	if len(g.WaitingOn) != 1 || g.WaitingOn[0].ID != "M-1" || g.WaitingOn[0].State != "not_merged" || !strings.Contains(g.WaitingOn[0].Reason, "is not merged into main") {
+		t.Fatalf("waiting_on = %+v", g.WaitingOn)
+	}
+
+	for name, args := range map[string][2]any{"milestone_list": {"milestone_list", map[string]any{}}, "status": {"status", map[string]any{}}} {
+		res := call(t, cs, args[0].(string), args[1].(map[string]any), nil)
+		out := text(res)
+		if res.IsError || !strings.Contains(out, `"depends_on"`) || strings.Contains(out, "waiting_on") {
+			t.Errorf("%s: %s", name, out)
+		}
+	}
+
+	var bare got
+	res := call(t, connectService(t, e.svc, Options{}), "milestone_get", map[string]any{"id": two.ID}, &bare)
+	if res.IsError || len(bare.DependsOn) != 1 || strings.Contains(text(res), "waiting_on") {
+		t.Fatalf("without drift: %s", text(res))
+	}
+
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	gitCmd(t, e.root, "merge", "--quiet", "--ff-only", driftBranch)
+	g = got{}
+	mustOK(t, cs, "milestone_get", map[string]any{"id": two.ID}, &g)
+	if len(g.WaitingOn) != 0 || len(g.DependsOn) != 1 {
+		t.Fatalf("after merge: %+v", g)
+	}
+
+}

@@ -120,11 +120,18 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			var findings []loop.DependencyFinding
+			if len(m.DependsOn) > 0 {
+				if cfg, root, ok := a.waitingContext(); ok {
+					findings = a.dependencyFindings(cmd.Context(), svc, cfg, root, m, map[string][]loop.DependencyFinding{})
+				}
+			}
 			if a.jsonOut {
 				return a.writeJSON(struct {
 					service.MilestoneView
-					Tasks []service.TaskView `json:"tasks"`
-				}{m, tasks})
+					WaitingOn []loop.DependencyFinding `json:"waiting_on,omitempty"`
+					Tasks     []service.TaskView       `json:"tasks"`
+				}{m, loop.Unsatisfied(findings), tasks})
 			}
 			if err := a.printf("%s  %s\ninitiative: %s\nslug: %s\nstatus: %s\n", m.ID, m.Title, m.InitiativeID, m.Slug, m.Status); err != nil {
 				return err
@@ -138,7 +145,7 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 				}
 			}
 			if len(m.DependsOn) > 0 {
-				if err := a.printf("depends on: %s\n", strings.Join(m.DependsOn, ", ")); err != nil {
+				if err := a.printf("depends on: %s\n", dependsOnLine(m.DependsOn, findings)); err != nil {
 					return err
 				}
 			}
