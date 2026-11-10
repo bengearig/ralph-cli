@@ -54,7 +54,9 @@ flowchart TD
 | `internal/looplock` | The project-wide loop lock on `.ralph/loop.lock`: `Acquire` and `Release` for the loop, and `Probe` to see whether and by whom it is held. Imported by `loop`, which takes the lock, and by `service`, whose deletes refuse to touch a milestone a running loop is working on. `mcpserver` imports it only to recognise `ErrLoopRunning`. |
 | `internal/git` | The git commands the loop needs, run through the `git` CLI, always excluding `.ralph/`. |
 | `internal/pr` | The pull-request provider interface, registry, and milestone request builder. `pr/bitbucketcloud` validates its configuration; creation is stubbed. |
-| `internal/taskmanager` | The provider-neutral task manager interface, the registry, and the `CardRequest` with its content hash. It imports `config` and `domain` but must not import `service`, so that `service` can call a provider. No provider is registered yet. |
+| `internal/taskmanager` | The provider-neutral task manager interface, the registry, and the `CardRequest` with its content hash. It imports `config` and `domain` but must not import `service`, so that `service` can call a provider. |
+| `internal/taskmanager/jira` | The Jira Cloud provider and its REST client. The client makes one attempt per call and never retries. The provider maps a card request onto Jira fields and registers itself under `jira`. |
+| `internal/taskmanager/jira/adf` | Converts Markdown to Atlassian Document Format, the rich text Jira Cloud's API takes. |
 | `internal/taskmanager/fake` | A test provider that records its calls and can be told to fail. |
 | `internal/errs` | Sentinel errors shared across packages. |
 | `internal/version` | Build version, from `-ldflags` or the Go toolchain's VCS stamp. |

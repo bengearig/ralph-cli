@@ -17,9 +17,11 @@
 - [MCP server](mcp.md): the tools an agent harness uses.
 - [Claude Code integration](claude-code.md): what `ralph init` installs and how to use it.
 - [The loop](loop.md): how the loop plans, runs, and stops, and how branch drift is detected and reconciled.
+- [Jira](jira.md): setting up the Jira Cloud provider, what its cards look like, and how to check it by hand.
 - [Roadmap](roadmap.md): what is stubbed and what comes next.
 
 ## Decisions
 
 Architecture decision records live in [adr/](adr/). Each one records the context, the decision, and its
-consequences. Add a new record rather than editing an accepted one; mark the old record superseded.
+consequences. For example, [ADR 21](adr/0021-jira-cloud-as-the-first-task-manager-provider.md) records the Jira
+provider. Add a new record rather than editing an accepted one; mark the old record superseded.
