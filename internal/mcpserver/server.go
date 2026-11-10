@@ -34,7 +34,8 @@ Receive instructions → Articulate a solution → Loop over tasks → Pull requ
 - The loop works TODO tasks in position order. Use BLOCKED (with a reason) or PROPOSED to kick work back
   instead of guessing. IDs look like I-1, M-2, T-3, D-4.
 - Search before writing new documents or tasks, to build on what already exists.
-- Deleting is for mistakes such as duplicates and needs the user's agreement; CANCELLED is the normal way to drop work.`
+- Deleting is for mistakes such as duplicates and needs the user's agreement; CANCELLED is the normal way to drop work.
+- Archived initiatives and documents are hidden and read-only; list them with include_archived.`
 
 // Options configures tool behavior that comes from ralph's config.
 type Options struct {
@@ -72,6 +73,8 @@ func toolError(err error) error {
 		return fmt.Errorf("%v (choose a different slug or omit it to derive one)", err)
 	case errors.Is(err, service.ErrNeedsForce):
 		return fmt.Errorf("%v (ask the user before retrying with force: true)", err)
+	case errors.Is(err, service.ErrArchived):
+		return fmt.Errorf("%v (unarchive it first if the user wants to change it)", err)
 	case errors.Is(err, looplock.ErrLoopRunning):
 		return fmt.Errorf("%v (wait for the loop to finish or stop it)", err)
 	}
@@ -103,6 +106,8 @@ func destructive(title string) *mcp.ToolAnnotations {
 const deletePolicy = "Deletes are permanent. To drop work, use task_set_status with CANCELLED instead. " +
 	"Delete only mistakes such as duplicates or wrongly created items, and only after the user has agreed. "
 
+const archivePolicy = "Archiving is reversible, unlike deleting; prefer it for work that is finished or no longer relevant. "
+
 const forcePolicy = "Never pass force without the user's explicit approval. "
 
 func (t *tools) register(s *mcp.Server) {
@@ -110,7 +115,7 @@ func (t *tools) register(s *mcp.Server) {
 		Description: "Record a newly received set of instructions as an initiative. Put the instructions verbatim in brief. " +
 			"The result's confirm_outline says whether Receive must ask the user before creating the outline."}, t.initiativeCreate)
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_list", Annotations: readOnly("List initiatives"),
-		Description: "List all initiatives."}, t.initiativeList)
+		Description: "List initiatives. Archived ones are hidden unless include_archived is set."}, t.initiativeList)
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_get", Annotations: readOnly("Get initiative"),
 		Description: "Get an initiative with its brief."}, t.initiativeGet)
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_update", Annotations: write("Update initiative"),
@@ -119,10 +124,17 @@ func (t *tools) register(s *mcp.Server) {
 		Description: deletePolicy + forcePolicy + "Cascades to the initiative's milestones, their tasks and notes, and its documents. " +
 			"Refused without force when the initiative has milestones or documents, and while a loop is running on one of its milestones."}, t.initiativeDelete)
 
+	mcp.AddTool(s, &mcp.Tool{Name: "initiative_archive", Annotations: write("Archive initiative"),
+		Description: archivePolicy + "Archives the initiative: it and its milestones, tasks, and documents are hidden from lists, status, and search " +
+			"and become read-only. Refused while a loop is running on one of its milestones."}, t.initiativeArchive)
+	mcp.AddTool(s, &mcp.Tool{Name: "initiative_unarchive", Annotations: write("Unarchive initiative"),
+		Description: "Reverse initiative_archive, making the initiative and its contents visible and editable again. " +
+			"Refused while a loop is running on one of its milestones."}, t.initiativeUnarchive)
+
 	mcp.AddTool(s, &mcp.Tool{Name: "milestone_create", Annotations: write("Create milestone"),
 		Description: "Add a milestone to an initiative. Each milestone becomes one branch and one pull request, so keep it independently reviewable."}, t.milestoneCreate)
 	mcp.AddTool(s, &mcp.Tool{Name: "milestone_list", Annotations: readOnly("List milestones"),
-		Description: "List milestones with derived status and task counts, optionally for one initiative."}, t.milestoneList)
+		Description: "List milestones with derived status and task counts, optionally for one initiative. Milestones of archived initiatives are hidden unless include_archived is set."}, t.milestoneList)
 	mcp.AddTool(s, &mcp.Tool{Name: "milestone_get", Annotations: readOnly("Get milestone"),
 		Description: "Get a milestone with its tasks in loop order."}, t.milestoneGet)
 	mcp.AddTool(s, &mcp.Tool{Name: "milestone_update", Annotations: write("Update milestone"),
@@ -139,7 +151,7 @@ func (t *tools) register(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{Name: "task_create", Annotations: write("Propose task"),
 		Description: "Propose a task in a milestone. It starts PROPOSED; refine it, then promote it to TODO with task_set_status."}, t.taskCreate)
 	mcp.AddTool(s, &mcp.Tool{Name: "task_list", Annotations: readOnly("List tasks"),
-		Description: "List tasks in loop order, filtered by milestone, initiative, or statuses."}, t.taskList)
+		Description: "List tasks in loop order, filtered by milestone, initiative, or statuses. Tasks of archived initiatives are hidden unless include_archived is set."}, t.taskList)
 	mcp.AddTool(s, &mcp.Tool{Name: "task_get", Annotations: readOnly("Get task"),
 		Description: "Get a task with its notes and the statuses it may move to."}, t.taskGet)
 	mcp.AddTool(s, &mcp.Tool{Name: "task_update", Annotations: write("Update task"),
@@ -161,16 +173,20 @@ func (t *tools) register(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{Name: "doc_create", Annotations: write("Create document"),
 		Description: "Create a markdown document. Omit initiative_id for project-wide documents such as overall architecture."}, t.docCreate)
 	mcp.AddTool(s, &mcp.Tool{Name: "doc_list", Annotations: readOnly("List documents"),
-		Description: "List documents (without bodies), optionally filtered by initiative, project scope, or kind."}, t.docList)
+		Description: "List documents (without bodies), optionally filtered by initiative, project scope, or kind. Archived documents and those of archived initiatives are hidden unless include_archived is set."}, t.docList)
 	mcp.AddTool(s, &mcp.Tool{Name: "doc_get", Annotations: readOnly("Get document"),
 		Description: "Get a document including its body."}, t.docGet)
 	mcp.AddTool(s, &mcp.Tool{Name: "doc_update", Annotations: write("Update document"),
 		Description: "Edit a document's kind, title, or body. Omitted fields are unchanged; body replaces the whole body."}, t.docUpdate)
+	mcp.AddTool(s, &mcp.Tool{Name: "doc_archive", Annotations: write("Archive document"),
+		Description: archivePolicy + "Archives the document: it is hidden from lists and search and becomes read-only."}, t.docArchive)
+	mcp.AddTool(s, &mcp.Tool{Name: "doc_unarchive", Annotations: write("Unarchive document"),
+		Description: "Reverse doc_archive. A document in an archived initiative stays hidden and read-only until the initiative is unarchived; the view's archived field says so."}, t.docUnarchive)
 	mcp.AddTool(s, &mcp.Tool{Name: "doc_delete", Annotations: destructive("Delete document"),
 		Description: deletePolicy + "Removes only that document and its search index entries; nothing else cascades and nothing blocks it."}, t.docDelete)
 
 	mcp.AddTool(s, &mcp.Tool{Name: "search", Annotations: readOnly("Search"),
-		Description: "Semantic search across initiatives, milestones, tasks, and documents. Falls back to keyword search when embeddings are unavailable; the result reports which mode ran."}, t.search)
+		Description: "Semantic search across initiatives, milestones, tasks, and documents. Falls back to keyword search when embeddings are unavailable; the result reports which mode ran. Archived items are excluded unless include_archived is set."}, t.search)
 	mcp.AddTool(s, &mcp.Tool{Name: "status", Annotations: readOnly("Status"),
-		Description: "Summarize progress: per initiative, its milestones with derived status and task counts."}, t.status)
+		Description: "Summarize progress: per initiative, its milestones with derived status and task counts. Archived initiatives are hidden unless include_archived is set."}, t.status)
 }

@@ -58,6 +58,7 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 	_ = create.MarkFlagRequired("title")
 
 	var listInitiative string
+	var listArchived bool
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List milestones with derived status",
@@ -71,7 +72,7 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ms, err := svc.ListMilestones(cmd.Context(), iID, service.ListOptions{})
+			ms, err := svc.ListMilestones(cmd.Context(), iID, service.ListOptions{IncludeArchived: listArchived})
 			if err != nil {
 				return err
 			}
@@ -86,6 +87,7 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 		},
 	}
 	list.Flags().StringVar(&listInitiative, "initiative", "", "only this initiative")
+	list.Flags().BoolVar(&listArchived, "archived", false, "include archived initiatives and documents, and their contents")
 
 	show := &cobra.Command{
 		Use:   "show <id>",

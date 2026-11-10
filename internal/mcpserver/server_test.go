@@ -127,6 +127,7 @@ func TestToolsAreListedWithSchemas(t *testing.T) {
 		"task_create", "task_list", "task_get", "task_update", "task_set_status", "task_add_note", "task_next",
 		"doc_create", "doc_list", "doc_get", "doc_update", "search", "status",
 		"initiative_delete", "milestone_delete", "task_delete", "doc_delete", "note_delete",
+		"initiative_archive", "initiative_unarchive", "doc_archive", "doc_unarchive",
 	} {
 		if !slices.Contains(names, want) {
 			t.Errorf("missing tool %s", want)
@@ -134,6 +135,8 @@ func TestToolsAreListedWithSchemas(t *testing.T) {
 	}
 	if init := cs.InitializeResult(); init == nil || !strings.Contains(init.Instructions, "RALPH") {
 		t.Error("server instructions missing")
+	} else if !strings.Contains(init.Instructions, "include_archived") {
+		t.Error("server instructions do not mention archived items")
 	}
 	for _, tool := range res.Tools {
 		if !slices.Contains(deleteTools, tool.Name) {
@@ -518,5 +521,74 @@ func TestTaskNextRefusesArchivedInitiative(t *testing.T) {
 	res := call(t, cs, "task_next", map[string]any{"milestone_id": ms.ID}, nil)
 	if !res.IsError || !strings.Contains(text(res), "I-1 is archived") {
 		t.Fatalf("task_next on archived initiative: error=%v %q", res.IsError, text(res))
+	}
+}
+
+func TestArchiveToolsAndIncludeArchived(t *testing.T) {
+	cs := connect(t)
+	_, task := seedDeletable(t, cs)
+	var list struct {
+		Initiatives []service.InitiativeView `json:"initiatives"`
+	}
+	var arch service.InitiativeView
+	mustOK(t, cs, "initiative_archive", map[string]any{"id": "I-1"}, &arch)
+	if arch.ArchivedAt == "" {
+		t.Errorf("initiative_archive view lacks archived_at: %+v", arch)
+	}
+	mustOK(t, cs, "initiative_list", map[string]any{}, &list)
+	if len(list.Initiatives) != 0 {
+		t.Errorf("archived initiative listed by default: %+v", list.Initiatives)
+	}
+	mustOK(t, cs, "initiative_list", map[string]any{"include_archived": true}, &list)
+	if len(list.Initiatives) != 1 {
+		t.Errorf("include_archived lists %d initiatives, want 1", len(list.Initiatives))
+	}
+
+	var hits service.SearchView
+	mustOK(t, cs, "search", map[string]any{"query": "Task"}, &hits)
+	if len(hits.Hits) != 0 {
+		t.Errorf("search found archived items by default: %+v", hits.Hits)
+	}
+	mustOK(t, cs, "search", map[string]any{"query": "Task", "include_archived": true}, &hits)
+	if len(hits.Hits) == 0 {
+		t.Error("search with include_archived found nothing")
+	}
+
+	res := call(t, cs, "task_set_status", map[string]any{"id": task.ID, "status": "CANCELLED"}, nil)
+	if !res.IsError || !strings.Contains(text(res), "unarchive it first if the user wants to change it") {
+		t.Fatalf("mutation on archived task: error=%v %q", res.IsError, text(res))
+	}
+
+	var unarch service.InitiativeView
+	mustOK(t, cs, "initiative_unarchive", map[string]any{"id": "I-1"}, &unarch)
+	if unarch.ArchivedAt != "" {
+		t.Errorf("initiative_unarchive left archived_at = %q", unarch.ArchivedAt)
+	}
+	mustOK(t, cs, "task_set_status", map[string]any{"id": task.ID, "status": "CANCELLED"}, nil)
+}
+
+func TestDocArchiveTools(t *testing.T) {
+	cs := connect(t)
+	var d service.DocumentView
+	mustOK(t, cs, "doc_create", map[string]any{"kind": "architecture", "title": "Layout"}, &d)
+	mustOK(t, cs, "doc_archive", map[string]any{"id": d.ID}, &d)
+	if d.ArchivedAt == "" {
+		t.Errorf("doc_archive view lacks archived_at: %+v", d)
+	}
+	var list struct {
+		Documents []service.DocumentView `json:"documents"`
+	}
+	mustOK(t, cs, "doc_list", map[string]any{}, &list)
+	if len(list.Documents) != 0 {
+		t.Errorf("archived document listed by default")
+	}
+	mustOK(t, cs, "doc_list", map[string]any{"include_archived": true}, &list)
+	if len(list.Documents) != 1 {
+		t.Errorf("include_archived lists %d documents, want 1", len(list.Documents))
+	}
+	var restored service.DocumentView
+	mustOK(t, cs, "doc_unarchive", map[string]any{"id": d.ID}, &restored)
+	if restored.ArchivedAt != "" {
+		t.Errorf("doc_unarchive left archived_at = %q", restored.ArchivedAt)
 	}
 }

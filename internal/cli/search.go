@@ -14,6 +14,7 @@ func (a *app) newSearchCommand() *cobra.Command {
 	var kinds []string
 	var initiative string
 	var limit int
+	var archived bool
 	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search initiatives, milestones, tasks, and documents",
@@ -36,7 +37,7 @@ func (a *app) newSearchCommand() *cobra.Command {
 				return err
 			}
 			res, err := svc.Search(cmd.Context(), service.SearchInput{
-				Query: strings.Join(args, " "), Kinds: ks, InitiativeID: iID, Limit: limit,
+				Query: strings.Join(args, " "), Kinds: ks, InitiativeID: iID, Limit: limit, IncludeArchived: archived,
 			})
 			if err != nil {
 				return err
@@ -63,6 +64,7 @@ func (a *app) newSearchCommand() *cobra.Command {
 	cmd.Flags().StringSliceVar(&kinds, "kind", nil, "only these kinds: initiative, milestone, task, document")
 	cmd.Flags().StringVar(&initiative, "initiative", "", "only this initiative")
 	cmd.Flags().IntVar(&limit, "limit", 0, "maximum results (default: search.limit)")
+	cmd.Flags().BoolVar(&archived, "archived", false, "include archived initiatives and documents, and their contents")
 	return cmd
 }
 
@@ -105,6 +107,7 @@ chunking settings.`,
 
 func (a *app) newStatusCommand() *cobra.Command {
 	var initiative string
+	var archived bool
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Summarize initiatives, milestones, and task progress",
@@ -118,7 +121,7 @@ func (a *app) newStatusCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			st, err := svc.Status(cmd.Context(), iID, service.ListOptions{})
+			st, err := svc.Status(cmd.Context(), iID, service.ListOptions{IncludeArchived: archived})
 			if err != nil {
 				return err
 			}
@@ -145,5 +148,6 @@ func (a *app) newStatusCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&initiative, "initiative", "", "only this initiative")
+	cmd.Flags().BoolVar(&archived, "archived", false, "include archived initiatives and documents, and their contents")
 	return cmd
 }

@@ -1079,3 +1079,98 @@ func TestLoopAndPRRefuseArchivedInitiative(t *testing.T) {
 	setArchived(false)
 	h.ok("loop", "--milestone", "M-1", "--dry-run")
 }
+
+func TestArchiveCommandsRoundTrip(t *testing.T) {
+	h := newTestEnv(t, true)
+	h.ok("initiative", "create", "--title", "Customer SSO")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Callback")
+	h.ok("task", "create", "--milestone", "M-1", "--title", "Route", "--description", "Add route", "--criteria", "Tests pass")
+	h.ok("doc", "create", "--initiative", "I-1", "--kind", "design", "--title", "Scoped", "--body", "scoped")
+	h.ok("doc", "create", "--kind", "design", "--title", "Wide", "--body", "wide")
+
+	if got := h.ok("initiative", "archive", "I-1"); got != "archived I-1\n" {
+		t.Errorf("initiative archive = %q", got)
+	}
+	var inits []service.InitiativeView
+	h.json(&inits, "initiative", "list")
+	if len(inits) != 0 {
+		t.Errorf("initiative list shows archived: %+v", inits)
+	}
+	h.json(&inits, "initiative", "list", "--archived")
+	if len(inits) != 1 || inits[0].ArchivedAt == "" {
+		t.Errorf("initiative list --archived = %+v", inits)
+	}
+	var tasks []service.TaskView
+	h.json(&tasks, "task", "list")
+	if len(tasks) != 0 {
+		t.Errorf("task list shows archived: %+v", tasks)
+	}
+	h.json(&tasks, "task", "list", "--archived")
+	if len(tasks) != 1 || !tasks[0].Archived {
+		t.Errorf("task list --archived = %+v", tasks)
+	}
+	if got := h.ok("milestone", "list"); strings.Contains(got, "M-1") {
+		t.Errorf("milestone list shows archived:\n%s", got)
+	}
+	if got := h.ok("milestone", "list", "--archived"); !strings.Contains(got, "M-1") {
+		t.Errorf("milestone list --archived lacks M-1:\n%s", got)
+	}
+	if got := h.ok("status"); strings.Contains(got, "I-1") {
+		t.Errorf("status shows archived:\n%s", got)
+	}
+	if got := h.ok("status", "--archived"); !strings.Contains(got, "I-1") {
+		t.Errorf("status --archived lacks I-1:\n%s", got)
+	}
+	if got := h.ok("search", "Route"); !strings.Contains(got, "no matches") {
+		t.Errorf("search shows archived:\n%s", got)
+	}
+	if got := h.ok("search", "--archived", "Route"); !strings.Contains(got, "T-1") {
+		t.Errorf("search --archived lacks T-1:\n%s", got)
+	}
+	var docs []service.DocumentView
+	h.json(&docs, "doc", "list")
+	if len(docs) != 1 || docs[0].ID != "D-2" {
+		t.Errorf("doc list = %+v, want only the project-wide document", docs)
+	}
+	h.json(&docs, "doc", "list", "--archived")
+	if len(docs) != 2 {
+		t.Errorf("doc list --archived = %+v", docs)
+	}
+
+	// Unarchiving a document inside an archived initiative warns.
+	out, errOut, err := h.run("", "doc", "unarchive", "D-1")
+	if err != nil || out != "unarchived D-1\n" || !strings.Contains(errOut, "D-1 stays hidden until I-1 is unarchived") {
+		t.Errorf("doc unarchive in archived initiative: out=%q err=%q %v", out, errOut, err)
+	}
+
+	var archived service.InitiativeView
+	if got := h.ok("initiative", "unarchive", "I-1"); got != "unarchived I-1\n" {
+		t.Errorf("initiative unarchive = %q", got)
+	}
+	h.json(&archived, "initiative", "show", "I-1")
+	if archived.ArchivedAt != "" {
+		t.Errorf("initiative still archived: %+v", archived)
+	}
+	h.json(&inits, "initiative", "list")
+	if len(inits) != 1 {
+		t.Errorf("initiative list after unarchive = %+v", inits)
+	}
+
+	var doc service.DocumentView
+	h.json(&doc, "doc", "archive", "D-2")
+	if doc.ArchivedAt == "" {
+		t.Errorf("doc archive --json lacks archived_at: %+v", doc)
+	}
+	h.json(&docs, "doc", "list", "--project")
+	if len(docs) != 0 {
+		t.Errorf("archived document listed: %+v", docs)
+	}
+	out, errOut, err = h.run("", "doc", "unarchive", "D-2")
+	if err != nil || out != "unarchived D-2\n" || errOut != "" {
+		t.Errorf("doc unarchive: out=%q err=%q %v", out, errOut, err)
+	}
+	h.json(&docs, "doc", "list", "--project")
+	if len(docs) != 1 {
+		t.Errorf("document missing after unarchive: %+v", docs)
+	}
+}

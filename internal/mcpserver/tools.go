@@ -38,13 +38,53 @@ func (t *tools) initiativeCreate(ctx context.Context, _ *mcp.CallToolRequest, in
 	return nil, initiativeCreateOut{InitiativeView: v, ConfirmOutline: t.confirmOutline}, nil
 }
 
+type initiativeListIn struct {
+	IncludeArchived bool `json:"include_archived,omitempty" jsonschema:"also include archived initiatives and documents, and their contents"`
+}
+
 type initiativeList struct {
 	Initiatives []service.InitiativeView `json:"initiatives"`
 }
 
-func (t *tools) initiativeList(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, initiativeList, error) {
-	all, err := t.svc.ListInitiatives(ctx, service.ListOptions{})
+func (t *tools) initiativeList(ctx context.Context, _ *mcp.CallToolRequest, in initiativeListIn) (*mcp.CallToolResult, initiativeList, error) {
+	all, err := t.svc.ListInitiatives(ctx, service.ListOptions{IncludeArchived: in.IncludeArchived})
 	return nil, initiativeList{Initiatives: all}, toolError(err)
+}
+
+func (t *tools) initiativeArchive(ctx context.Context, _ *mcp.CallToolRequest, in idIn) (*mcp.CallToolResult, service.InitiativeView, error) {
+	id, err := domain.ParseID(domain.KindInitiative, in.ID)
+	if err != nil {
+		return nil, service.InitiativeView{}, err
+	}
+	v, err := t.svc.ArchiveInitiative(ctx, id)
+	return nil, v, toolError(err)
+}
+
+func (t *tools) initiativeUnarchive(ctx context.Context, _ *mcp.CallToolRequest, in idIn) (*mcp.CallToolResult, service.InitiativeView, error) {
+	id, err := domain.ParseID(domain.KindInitiative, in.ID)
+	if err != nil {
+		return nil, service.InitiativeView{}, err
+	}
+	v, err := t.svc.UnarchiveInitiative(ctx, id)
+	return nil, v, toolError(err)
+}
+
+func (t *tools) docArchive(ctx context.Context, _ *mcp.CallToolRequest, in idIn) (*mcp.CallToolResult, service.DocumentView, error) {
+	id, err := domain.ParseID(domain.KindDocument, in.ID)
+	if err != nil {
+		return nil, service.DocumentView{}, err
+	}
+	v, err := t.svc.ArchiveDocument(ctx, id)
+	return nil, v, toolError(err)
+}
+
+func (t *tools) docUnarchive(ctx context.Context, _ *mcp.CallToolRequest, in idIn) (*mcp.CallToolResult, service.DocumentView, error) {
+	id, err := domain.ParseID(domain.KindDocument, in.ID)
+	if err != nil {
+		return nil, service.DocumentView{}, err
+	}
+	v, err := t.svc.UnarchiveDocument(ctx, id)
+	return nil, v, toolError(err)
 }
 
 type idIn struct {
@@ -119,7 +159,8 @@ func (t *tools) milestoneCreate(ctx context.Context, _ *mcp.CallToolRequest, in 
 }
 
 type milestoneListIn struct {
-	InitiativeID string `json:"initiative_id,omitempty" jsonschema:"only this initiative"`
+	InitiativeID    string `json:"initiative_id,omitempty" jsonschema:"only this initiative"`
+	IncludeArchived bool   `json:"include_archived,omitempty" jsonschema:"also include archived initiatives and documents, and their contents"`
 }
 
 type milestoneList struct {
@@ -131,7 +172,7 @@ func (t *tools) milestoneList(ctx context.Context, _ *mcp.CallToolRequest, in mi
 	if err != nil {
 		return nil, milestoneList{}, err
 	}
-	ms, err := t.svc.ListMilestones(ctx, iID, service.ListOptions{})
+	ms, err := t.svc.ListMilestones(ctx, iID, service.ListOptions{IncludeArchived: in.IncludeArchived})
 	return nil, milestoneList{Milestones: ms}, toolError(err)
 }
 
@@ -273,9 +314,10 @@ func (t *tools) taskCreate(ctx context.Context, _ *mcp.CallToolRequest, in taskC
 }
 
 type taskListIn struct {
-	MilestoneID  string   `json:"milestone_id,omitempty" jsonschema:"only this milestone"`
-	InitiativeID string   `json:"initiative_id,omitempty" jsonschema:"only this initiative"`
-	Statuses     []string `json:"statuses,omitempty" jsonschema:"only these statuses: PROPOSED, TODO, IN_PROGRESS, BLOCKED, CANCELLED, DONE"`
+	MilestoneID     string   `json:"milestone_id,omitempty" jsonschema:"only this milestone"`
+	InitiativeID    string   `json:"initiative_id,omitempty" jsonschema:"only this initiative"`
+	Statuses        []string `json:"statuses,omitempty" jsonschema:"only these statuses: PROPOSED, TODO, IN_PROGRESS, BLOCKED, CANCELLED, DONE"`
+	IncludeArchived bool     `json:"include_archived,omitempty" jsonschema:"also include archived initiatives and documents, and their contents"`
 }
 
 type taskList struct {
@@ -299,7 +341,7 @@ func (t *tools) taskList(ctx context.Context, _ *mcp.CallToolRequest, in taskLis
 		}
 		statuses = append(statuses, st)
 	}
-	tasks, err := t.svc.ListTasks(ctx, service.TaskFilter{MilestoneID: mID, InitiativeID: iID, Statuses: statuses})
+	tasks, err := t.svc.ListTasks(ctx, service.TaskFilter{MilestoneID: mID, InitiativeID: iID, Statuses: statuses, IncludeArchived: in.IncludeArchived})
 	return nil, taskList{Tasks: tasks}, toolError(err)
 }
 
@@ -437,9 +479,10 @@ func (t *tools) docCreate(ctx context.Context, _ *mcp.CallToolRequest, in docCre
 }
 
 type docListIn struct {
-	InitiativeID string `json:"initiative_id,omitempty" jsonschema:"only this initiative's documents"`
-	ProjectOnly  bool   `json:"project_only,omitempty" jsonschema:"only project-wide documents"`
-	Kind         string `json:"kind,omitempty" jsonschema:"only this kind"`
+	InitiativeID    string `json:"initiative_id,omitempty" jsonschema:"only this initiative's documents"`
+	ProjectOnly     bool   `json:"project_only,omitempty" jsonschema:"only project-wide documents"`
+	Kind            string `json:"kind,omitempty" jsonschema:"only this kind"`
+	IncludeArchived bool   `json:"include_archived,omitempty" jsonschema:"also include archived initiatives and documents, and their contents"`
 }
 
 type docList struct {
@@ -451,7 +494,7 @@ func (t *tools) docList(ctx context.Context, _ *mcp.CallToolRequest, in docListI
 	if err != nil {
 		return nil, docList{}, err
 	}
-	f := service.DocumentFilter{InitiativeID: iID, ProjectOnly: in.ProjectOnly}
+	f := service.DocumentFilter{InitiativeID: iID, ProjectOnly: in.ProjectOnly, IncludeArchived: in.IncludeArchived}
 	if in.Kind != "" {
 		if f.Kind, err = domain.ParseDocKind(in.Kind); err != nil {
 			return nil, docList{}, err
@@ -503,10 +546,11 @@ func (t *tools) docDelete(ctx context.Context, _ *mcp.CallToolRequest, in delete
 // ---- search & status ----
 
 type searchIn struct {
-	Query        string   `json:"query" jsonschema:"natural-language query"`
-	Kinds        []string `json:"kinds,omitempty" jsonschema:"only these kinds: initiative, milestone, task, document"`
-	InitiativeID string   `json:"initiative_id,omitempty" jsonschema:"only this initiative"`
-	Limit        int      `json:"limit,omitempty" jsonschema:"maximum results; defaults to the configured search.limit"`
+	Query           string   `json:"query" jsonschema:"natural-language query"`
+	Kinds           []string `json:"kinds,omitempty" jsonschema:"only these kinds: initiative, milestone, task, document"`
+	InitiativeID    string   `json:"initiative_id,omitempty" jsonschema:"only this initiative"`
+	Limit           int      `json:"limit,omitempty" jsonschema:"maximum results; defaults to the configured search.limit"`
+	IncludeArchived bool     `json:"include_archived,omitempty" jsonschema:"also include archived initiatives and documents, and their contents"`
 }
 
 func (t *tools) search(ctx context.Context, _ *mcp.CallToolRequest, in searchIn) (*mcp.CallToolResult, service.SearchView, error) {
@@ -522,12 +566,13 @@ func (t *tools) search(ctx context.Context, _ *mcp.CallToolRequest, in searchIn)
 	if err != nil {
 		return nil, service.SearchView{}, err
 	}
-	v, err := t.svc.Search(ctx, service.SearchInput{Query: in.Query, Kinds: kinds, InitiativeID: iID, Limit: in.Limit})
+	v, err := t.svc.Search(ctx, service.SearchInput{Query: in.Query, Kinds: kinds, InitiativeID: iID, Limit: in.Limit, IncludeArchived: in.IncludeArchived})
 	return nil, v, toolError(err)
 }
 
 type statusIn struct {
-	InitiativeID string `json:"initiative_id,omitempty" jsonschema:"only this initiative"`
+	InitiativeID    string `json:"initiative_id,omitempty" jsonschema:"only this initiative"`
+	IncludeArchived bool   `json:"include_archived,omitempty" jsonschema:"also include archived initiatives and documents, and their contents"`
 }
 
 func (t *tools) status(ctx context.Context, _ *mcp.CallToolRequest, in statusIn) (*mcp.CallToolResult, service.StatusView, error) {
@@ -535,6 +580,6 @@ func (t *tools) status(ctx context.Context, _ *mcp.CallToolRequest, in statusIn)
 	if err != nil {
 		return nil, service.StatusView{}, err
 	}
-	v, err := t.svc.Status(ctx, iID, service.ListOptions{})
+	v, err := t.svc.Status(ctx, iID, service.ListOptions{IncludeArchived: in.IncludeArchived})
 	return nil, v, toolError(err)
 }

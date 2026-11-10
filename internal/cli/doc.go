@@ -71,7 +71,7 @@ func (a *app) newDocCommand() *cobra.Command {
 	_ = create.MarkFlagRequired("title")
 
 	var listInitiative, listKind string
-	var projectOnly bool
+	var projectOnly, listArchived bool
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List documents",
@@ -84,7 +84,7 @@ func (a *app) newDocCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			f := service.DocumentFilter{InitiativeID: iID, ProjectOnly: projectOnly}
+			f := service.DocumentFilter{InitiativeID: iID, ProjectOnly: projectOnly, IncludeArchived: listArchived}
 			if listKind != "" {
 				if f.Kind, err = domain.ParseDocKind(listKind); err != nil {
 					return err
@@ -111,6 +111,7 @@ func (a *app) newDocCommand() *cobra.Command {
 	list.Flags().StringVar(&listInitiative, "initiative", "", "only this initiative's documents")
 	list.Flags().BoolVar(&projectOnly, "project", false, "only project-wide documents")
 	list.Flags().StringVar(&listKind, "kind", "", "only this kind")
+	list.Flags().BoolVar(&listArchived, "archived", false, "include archived documents and those of archived initiatives")
 
 	show := &cobra.Command{
 		Use:   "show <id>",
@@ -182,7 +183,7 @@ func (a *app) newDocCommand() *cobra.Command {
 	update.Flags().StringVar(&upBody, "body", "", "new body")
 	update.Flags().StringVar(&upFile, "file", "", "read the new body from a file, or - for stdin")
 
-	cmd.AddCommand(create, list, show, update, a.newDeleteCommand(domain.KindDocument, false, "Delete a document and its search index entries."))
+	cmd.AddCommand(create, list, show, update, a.newDocArchiveCommand(true), a.newDocArchiveCommand(false), a.newDeleteCommand(domain.KindDocument, false, "Delete a document and its search index entries."))
 	return cmd
 }
 
@@ -191,4 +192,42 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+func (a *app) newDocArchiveCommand(archive bool) *cobra.Command {
+	use, short, verb := "unarchive <id>", "Make an archived document editable again", "unarchived"
+	if archive {
+		use, short, verb = "archive <id>", "Archive a document, hiding it and making it read-only", "archived"
+	}
+	return &cobra.Command{
+		Use:   use,
+		Short: short,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := parseIDArg(domain.KindDocument, args[0])
+			if err != nil {
+				return err
+			}
+			svc, err := a.service(cmd.Context())
+			if err != nil {
+				return err
+			}
+			var v service.DocumentView
+			if archive {
+				v, err = svc.ArchiveDocument(cmd.Context(), id)
+			} else {
+				v, err = svc.UnarchiveDocument(cmd.Context(), id)
+			}
+			if err != nil {
+				return err
+			}
+			if !archive && v.Archived {
+				a.warn(v.ID + " stays hidden until " + v.InitiativeID + " is unarchived")
+			}
+			if a.jsonOut {
+				return a.writeJSON(v)
+			}
+			return a.printf("%s %s\n", verb, v.ID)
+		},
+	}
 }

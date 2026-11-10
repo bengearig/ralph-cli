@@ -57,6 +57,7 @@ func (a *app) newTaskCommand() *cobra.Command {
 
 	var listMilestone, listInitiative string
 	var listStatus []string
+	var listArchived bool
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List tasks in loop order",
@@ -78,7 +79,7 @@ func (a *app) newTaskCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			tasks, err := svc.ListTasks(cmd.Context(), service.TaskFilter{MilestoneID: mID, InitiativeID: iID, Statuses: statuses})
+			tasks, err := svc.ListTasks(cmd.Context(), service.TaskFilter{MilestoneID: mID, InitiativeID: iID, Statuses: statuses, IncludeArchived: listArchived})
 			if err != nil {
 				return err
 			}
@@ -91,6 +92,7 @@ func (a *app) newTaskCommand() *cobra.Command {
 	list.Flags().StringVar(&listMilestone, "milestone", "", "only this milestone")
 	list.Flags().StringVar(&listInitiative, "initiative", "", "only this initiative")
 	list.Flags().StringSliceVar(&listStatus, "status", nil, "only these statuses (comma-separated or repeated)")
+	list.Flags().BoolVar(&listArchived, "archived", false, "include archived initiatives and documents, and their contents")
 
 	show := &cobra.Command{
 		Use:   "show <id>",
