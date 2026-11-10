@@ -181,7 +181,7 @@ func (a *app) newDocCommand() *cobra.Command {
 	update.Flags().StringVar(&upBody, "body", "", "new body")
 	update.Flags().StringVar(&upFile, "file", "", "read the new body from a file, or - for stdin")
 
-	cmd.AddCommand(create, list, show, update)
+	cmd.AddCommand(create, list, show, update, a.newDeleteCommand(domain.KindDocument, false, "Delete a document and its search index entries."))
 	return cmd
 }
 

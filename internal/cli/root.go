@@ -19,6 +19,9 @@ type Streams struct {
 	In  io.Reader
 	Out io.Writer
 	Err io.Writer
+
+	// IsTerminal reports whether In is an interactive terminal.
+	IsTerminal bool
 }
 
 type app struct {
@@ -73,6 +76,7 @@ open a pull request, and hand off to humans for review.`,
 		a.newMilestoneCommand(),
 		a.newTaskCommand(),
 		a.newDocCommand(),
+		a.newNoteCommand(),
 		a.newSearchCommand(),
 		a.newIndexCommand(),
 		a.newStatusCommand(),

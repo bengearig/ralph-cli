@@ -864,3 +864,122 @@ func TestPRCreateDriftGate(t *testing.T) {
 		t.Errorf("provider called %d times, want 1", fake.created)
 	}
 }
+
+func (h *testEnv) runStreams(stdin string, terminal bool, args ...string) (string, string, error) {
+	h.t.Helper()
+	var out, errOut bytes.Buffer
+	full := append([]string{"--project-dir", h.dir}, args...)
+	err := Execute(context.Background(), Streams{In: strings.NewReader(stdin), Out: &out, Err: &errOut, IsTerminal: terminal}, full)
+	return out.String(), errOut.String(), err
+}
+
+func (h *testEnv) exists(args ...string) bool {
+	h.t.Helper()
+	_, _, err := h.run("", args...)
+	return err == nil
+}
+
+func deleteFixture(t *testing.T) *testEnv {
+	t.Helper()
+	h := newTestEnv(t, true)
+	h.ok("initiative", "create", "--title", "Init", "--brief", "brief")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Mile")
+	h.ok("task", "create", "--milestone", "M-1", "--title", "One", "--description", "d", "--criteria", "c")
+	h.ok("task", "create", "--milestone", "M-1", "--title", "Two", "--description", "d", "--criteria", "c")
+	h.ok("task", "note", "T-1", "a note")
+	return h
+}
+
+func TestDeleteTaskYes(t *testing.T) {
+	h := deleteFixture(t)
+	out := h.ok("task", "delete", "T-2", "--yes")
+	if out != "deleted T-2\n" {
+		t.Errorf("output = %q", out)
+	}
+	if h.exists("task", "show", "T-2") {
+		t.Error("T-2 still exists")
+	}
+}
+
+func TestDeleteConfirmation(t *testing.T) {
+	h := deleteFixture(t)
+	for _, in := range []string{"n\n", "", "maybe\n"} {
+		out, errOut, err := h.runStreams(in, true, "task", "delete", "T-1")
+		if err != nil || out != "cancelled\n" {
+			t.Errorf("stdin %q: out=%q err=%v", in, out, err)
+		}
+		if !strings.Contains(errOut, "Delete T-1 with 1 note?") || !strings.Contains(errOut, "[y/N]") {
+			t.Errorf("prompt = %q", errOut)
+		}
+		if !h.exists("task", "show", "T-1") {
+			t.Fatalf("stdin %q deleted the task", in)
+		}
+	}
+	out, _, err := h.runStreams("YES\n", true, "task", "delete", "T-1")
+	if err != nil || out != "deleted T-1 (1 note)\n" {
+		t.Errorf("out=%q err=%v", out, err)
+	}
+	if h.exists("task", "show", "T-1") {
+		t.Error("T-1 still exists")
+	}
+}
+
+func TestDeleteRefusesWithoutTerminal(t *testing.T) {
+	h := deleteFixture(t)
+	_, _, err := h.runStreams("y\n", false, "task", "delete", "T-2")
+	if err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("err = %v", err)
+	}
+	if !h.exists("task", "show", "T-2") {
+		t.Error("task deleted without confirmation")
+	}
+}
+
+func TestDeleteMilestoneForce(t *testing.T) {
+	h := deleteFixture(t)
+	_, _, err := h.run("", "milestone", "delete", "M-1", "--yes")
+	if !errors.Is(err, service.ErrNeedsForce) || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("err = %v", err)
+	}
+	out := h.ok("milestone", "delete", "M-1", "--force", "--yes")
+	if out != "deleted M-1 (2 tasks, 1 note)\n" {
+		t.Errorf("output = %q", out)
+	}
+	if h.exists("milestone", "show", "M-1") {
+		t.Error("M-1 still exists")
+	}
+}
+
+func TestDeleteNoteAndDoc(t *testing.T) {
+	h := deleteFixture(t)
+	h.ok("doc", "create", "--kind", "reference", "--title", "Ref", "--body", "text")
+	if out := h.ok("note", "delete", "N-1", "--yes"); out != "deleted N-1\n" {
+		t.Errorf("output = %q", out)
+	}
+	if out := h.ok("doc", "delete", "D-1", "--yes"); out != "deleted D-1\n" {
+		t.Errorf("output = %q", out)
+	}
+	if h.exists("doc", "show", "D-1") {
+		t.Error("D-1 still exists")
+	}
+	if _, _, err := h.run("", "note", "delete", "T-1", "--yes"); err == nil {
+		t.Error("note delete accepted a task ID")
+	}
+}
+
+func TestDeleteJSON(t *testing.T) {
+	h := deleteFixture(t)
+	var v struct {
+		ID      string
+		Kind    string
+		Deleted map[string]int
+	}
+	h.json(&v, "task", "delete", "T-2", "--yes")
+	if v.ID != "T-2" || v.Kind != "task" || v.Deleted["tasks"] != 1 {
+		t.Errorf("view = %+v", v)
+	}
+	out, errOut, err := h.runStreams("y\n", true, "--json", "task", "delete", "T-1")
+	if err != nil || !strings.Contains(errOut, "[y/N]") || !strings.Contains(out, `"id": "T-1"`) {
+		t.Errorf("out=%q errOut=%q err=%v", out, errOut, err)
+	}
+}

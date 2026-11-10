@@ -8,6 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/mattn/go-isatty"
+
 	"github.com/bengearig/ralph/internal/cli"
 	"github.com/bengearig/ralph/internal/errs"
 )
@@ -20,7 +22,7 @@ const (
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	err := cli.Execute(ctx, cli.Streams{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}, os.Args[1:])
+	err := cli.Execute(ctx, cli.Streams{In: os.Stdin, Out: os.Stdout, Err: os.Stderr, IsTerminal: isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd())}, os.Args[1:])
 	stop()
 	if err == nil {
 		return

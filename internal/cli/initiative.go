@@ -142,7 +142,7 @@ func (a *app) newInitiativeCommand() *cobra.Command {
 	update.Flags().StringVar(&upBrief, "brief", "", "new brief")
 	update.Flags().StringVar(&upBriefFile, "brief-file", "", "read the new brief from a file, or - for stdin")
 
-	cmd.AddCommand(create, list, show, update)
+	cmd.AddCommand(create, list, show, update, a.newDeleteCommand(domain.KindInitiative, true, "Delete an initiative. Without --force it must have no milestones or documents; with --force they are deleted too."))
 	return cmd
 }
 

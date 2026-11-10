@@ -15,24 +15,92 @@ import (
 // target, or a task that has progressed; the caller may retry with force.
 var ErrNeedsForce = errors.New("needs force")
 
+// PreviewDelete reports what the matching delete would remove, or the error it
+// would refuse with, without deleting anything.
+func (s *Service) PreviewDelete(ctx context.Context, kind domain.Kind, id int64, force bool) (DeleteView, error) {
+	c, err := s.checkDelete(ctx, kind, id, force)
+	if err != nil {
+		return DeleteView{}, err
+	}
+	return deleteView(kind, id, c), nil
+}
+
 func (s *Service) DeleteInitiative(ctx context.Context, id int64, force bool) (DeleteView, error) {
+	return s.runDelete(ctx, domain.KindInitiative, id, force)
+}
+
+func (s *Service) DeleteMilestone(ctx context.Context, id int64, force bool) (DeleteView, error) {
+	return s.runDelete(ctx, domain.KindMilestone, id, force)
+}
+
+func (s *Service) DeleteTask(ctx context.Context, id int64, force bool) (DeleteView, error) {
+	return s.runDelete(ctx, domain.KindTask, id, force)
+}
+
+func (s *Service) DeleteDocument(ctx context.Context, id int64) (DeleteView, error) {
+	return s.runDelete(ctx, domain.KindDocument, id, false)
+}
+
+// DeleteNote removes one task note. Notes are history, so any task status
+// allows it, but a running loop's milestone does not. Notes are not indexed.
+func (s *Service) DeleteNote(ctx context.Context, id int64) (DeleteView, error) {
+	return s.runDelete(ctx, domain.KindNote, id, false)
+}
+
+// runDelete checks the guards and deletes in one transaction, so the check and
+// the delete see the same state.
+func (s *Service) runDelete(ctx context.Context, kind domain.Kind, id int64, force bool) (DeleteView, error) {
 	var v DeleteView
 	err := s.InTx(ctx, func(tx *Service) error {
-		c, err := tx.store.CountCascade(ctx, domain.KindInitiative, id)
+		c, err := tx.checkDelete(ctx, kind, id, force)
 		if err != nil {
 			return err
 		}
-		what := domain.FormatID(domain.KindInitiative, id)
-		ms, err := tx.store.ListMilestones(ctx, id)
-		if err != nil {
+		if err := tx.deleteRow(ctx, kind, id); err != nil {
 			return err
+		}
+		v = deleteView(kind, id, c)
+		return nil
+	})
+	return v, err
+}
+
+func (s *Service) deleteRow(ctx context.Context, kind domain.Kind, id int64) error {
+	switch kind {
+	case domain.KindInitiative:
+		return s.store.DeleteInitiative(ctx, id)
+	case domain.KindMilestone:
+		return s.store.DeleteMilestone(ctx, id)
+	case domain.KindTask:
+		return s.store.DeleteTask(ctx, id)
+	case domain.KindDocument:
+		return s.store.DeleteDocument(ctx, id)
+	case domain.KindNote:
+		return s.store.DeleteTaskNote(ctx, id)
+	}
+	return fmt.Errorf("%w: cannot delete a %s", domain.ErrInvalid, kind)
+}
+
+// checkDelete applies every refusal a delete of the target is subject to and
+// returns the rows the delete would remove.
+func (s *Service) checkDelete(ctx context.Context, kind domain.Kind, id int64, force bool) (store.Cascade, error) {
+	what := domain.FormatID(kind, id)
+	switch kind {
+	case domain.KindInitiative:
+		c, err := s.store.CountCascade(ctx, kind, id)
+		if err != nil {
+			return c, err
+		}
+		ms, err := s.store.ListMilestones(ctx, id)
+		if err != nil {
+			return c, err
 		}
 		affected := make([]int64, len(ms))
 		for i, m := range ms {
 			affected[i] = m.ID
 		}
-		if err := tx.guardLoop(what, affected); err != nil {
-			return err
+		if err := s.guardLoop(what, affected); err != nil {
+			return c, err
 		}
 		if !force && (c.Milestones > 0 || c.Documents > 0) {
 			var parts []string
@@ -42,105 +110,60 @@ func (s *Service) DeleteInitiative(ctx context.Context, id int64, force bool) (D
 			if c.Documents > 0 {
 				parts = append(parts, plural(c.Documents, "document"))
 			}
-			return fmt.Errorf("%w: %s has %s; pass force to delete them too",
+			return c, fmt.Errorf("%w: %s has %s; pass force to delete them too",
 				ErrNeedsForce, what, strings.Join(parts, " and "))
 		}
-		if err := tx.store.DeleteInitiative(ctx, id); err != nil {
-			return err
-		}
-		v = deleteView(domain.KindInitiative, id, c)
-		return nil
-	})
-	return v, err
-}
-
-func (s *Service) DeleteMilestone(ctx context.Context, id int64, force bool) (DeleteView, error) {
-	var v DeleteView
-	err := s.InTx(ctx, func(tx *Service) error {
-		c, err := tx.store.CountCascade(ctx, domain.KindMilestone, id)
+		return c, nil
+	case domain.KindMilestone:
+		c, err := s.store.CountCascade(ctx, kind, id)
 		if err != nil {
-			return err
+			return c, err
 		}
-		what := domain.FormatID(domain.KindMilestone, id)
-		if err := tx.guardLoop(what, []int64{id}); err != nil {
-			return err
+		if err := s.guardLoop(what, []int64{id}); err != nil {
+			return c, err
 		}
 		if !force && c.Tasks > 0 {
-			return fmt.Errorf("%w: %s has %s; pass force to delete them too",
+			return c, fmt.Errorf("%w: %s has %s; pass force to delete them too",
 				ErrNeedsForce, what, plural(c.Tasks, "task"))
 		}
-		if err := tx.store.DeleteMilestone(ctx, id); err != nil {
-			return err
-		}
-		v = deleteView(domain.KindMilestone, id, c)
-		return nil
-	})
-	return v, err
-}
-
-func (s *Service) DeleteTask(ctx context.Context, id int64, force bool) (DeleteView, error) {
-	var v DeleteView
-	err := s.InTx(ctx, func(tx *Service) error {
-		c, err := tx.store.CountCascade(ctx, domain.KindTask, id)
+		return c, nil
+	case domain.KindTask:
+		c, err := s.store.CountCascade(ctx, kind, id)
 		if err != nil {
-			return err
+			return c, err
 		}
-		t, err := tx.store.GetTask(ctx, id)
+		t, err := s.store.GetTask(ctx, id)
 		if err != nil {
-			return err
+			return c, err
 		}
-		what := domain.FormatID(domain.KindTask, id)
-		if err := tx.guardLoop(what, []int64{t.MilestoneID}); err != nil {
-			return err
+		if err := s.guardLoop(what, []int64{t.MilestoneID}); err != nil {
+			return c, err
 		}
 		if !force && (t.Status == domain.StatusInProgress || t.Status == domain.StatusDone) {
-			return fmt.Errorf("%w: %s is %s; pass force to delete it",
+			return c, fmt.Errorf("%w: %s is %s; pass force to delete it",
 				ErrNeedsForce, what, t.Status)
 		}
-		if err := tx.store.DeleteTask(ctx, id); err != nil {
-			return err
+		return c, nil
+	case domain.KindDocument:
+		if _, err := s.store.GetDocument(ctx, id); err != nil {
+			return store.Cascade{}, err
 		}
-		v = deleteView(domain.KindTask, id, c)
-		return nil
-	})
-	return v, err
-}
-
-func (s *Service) DeleteDocument(ctx context.Context, id int64) (DeleteView, error) {
-	var v DeleteView
-	err := s.InTx(ctx, func(tx *Service) error {
-		if err := tx.store.DeleteDocument(ctx, id); err != nil {
-			return err
-		}
-		v = deleteView(domain.KindDocument, id, store.Cascade{Documents: 1})
-		return nil
-	})
-	return v, err
-}
-
-// DeleteNote removes one task note. Notes are history, so any task status
-// allows it, but a running loop's milestone does not. Notes are not indexed.
-func (s *Service) DeleteNote(ctx context.Context, id int64) (DeleteView, error) {
-	var v DeleteView
-	err := s.InTx(ctx, func(tx *Service) error {
-		n, err := tx.store.GetTaskNote(ctx, id)
+		return store.Cascade{Documents: 1}, nil
+	case domain.KindNote:
+		n, err := s.store.GetTaskNote(ctx, id)
 		if err != nil {
-			return err
+			return store.Cascade{}, err
 		}
-		t, err := tx.store.GetTask(ctx, n.TaskID)
+		t, err := s.store.GetTask(ctx, n.TaskID)
 		if err != nil {
-			return err
+			return store.Cascade{}, err
 		}
-		if err := tx.guardLoop(domain.FormatID(domain.KindNote, id), []int64{t.MilestoneID}); err != nil {
-			return err
+		if err := s.guardLoop(what, []int64{t.MilestoneID}); err != nil {
+			return store.Cascade{}, err
 		}
-		if err := tx.store.DeleteTaskNote(ctx, id); err != nil {
-			return err
-		}
-		v = deleteView(domain.KindNote, id, store.Cascade{Notes: 1})
-		return nil
-	})
-	return v, err
+		return store.Cascade{Notes: 1}, nil
+	}
+	return store.Cascade{}, fmt.Errorf("%w: cannot delete a %s", domain.ErrInvalid, kind)
 }
 
 // guardLoop refuses a delete that touches the milestone a running loop holds,

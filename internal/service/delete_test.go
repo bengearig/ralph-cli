@@ -436,3 +436,43 @@ func TestDeleteNoteLoopLockGuard(t *testing.T) {
 		t.Errorf("note in another milestone: %v", err)
 	}
 }
+
+func TestPreviewDeleteMatchesDelete(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	ini, ms := e.scaffold(t)
+	e.task(t, ms, domain.StatusProposed)
+	done := e.task(t, ms, domain.StatusDone)
+
+	_, perr := e.svc.PreviewDelete(ctx, domain.KindMilestone, ms, false)
+	_, derr := e.svc.DeleteMilestone(ctx, ms, false)
+	if !errors.Is(perr, ErrNeedsForce) || perr == nil || derr == nil || perr.Error() != derr.Error() {
+		t.Fatalf("preview err = %v, delete err = %v", perr, derr)
+	}
+	_, perr = e.svc.PreviewDelete(ctx, domain.KindTask, done, false)
+	if !errors.Is(perr, ErrNeedsForce) {
+		t.Errorf("task preview err = %v", perr)
+	}
+
+	pv, err := e.svc.PreviewDelete(ctx, domain.KindMilestone, ms, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Store().GetMilestone(ctx, ms); err != nil {
+		t.Fatalf("preview deleted the milestone: %v", err)
+	}
+	dv, err := e.svc.DeleteMilestone(ctx, ms, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(pv, dv) {
+		t.Errorf("preview %+v != delete %+v", pv, dv)
+	}
+
+	if _, err := e.svc.PreviewDelete(ctx, domain.KindInitiative, ini, true); err != nil {
+		t.Error(err)
+	}
+	if _, err := e.svc.PreviewDelete(ctx, domain.KindTask, done, true); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("preview of a deleted task err = %v", err)
+	}
+}

@@ -163,7 +163,7 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 	update.Flags().StringVar(&upDescription, "description", "", "new description")
 	update.Flags().IntVar(&upPosition, "position", 0, "new position")
 
-	cmd.AddCommand(create, list, show, update, a.newMilestoneReconcileCommand())
+	cmd.AddCommand(create, list, show, update, a.newMilestoneReconcileCommand(), a.newDeleteCommand(domain.KindMilestone, true, "Delete a milestone. Without --force it must have no tasks; with --force its tasks and their notes are deleted too."))
 	return cmd
 }
 

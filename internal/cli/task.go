@@ -245,7 +245,7 @@ func (a *app) newTaskCommand() *cobra.Command {
 	next.Flags().StringVar(&nextMilestone, "milestone", "", "milestone ID (required)")
 	_ = next.MarkFlagRequired("milestone")
 
-	cmd.AddCommand(create, list, show, update, status, note, next)
+	cmd.AddCommand(create, list, show, update, status, note, next, a.newDeleteCommand(domain.KindTask, true, "Delete a task and its notes. Without --force the task must not be IN_PROGRESS or DONE."))
 	return cmd
 }
 
