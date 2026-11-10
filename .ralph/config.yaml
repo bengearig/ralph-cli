@@ -1,0 +1,109 @@
+# ralph project configuration.
+# Layers, lowest to highest precedence: built-in defaults, global config,
+# this file, --config, RALPH_* environment variables, flags.
+# Uncomment a setting to override it for this project.
+
+# project:
+  # Display name; empty means the project root directory's name.
+#   name: ""
+
+# storage:
+  # SQLite database; relative paths resolve against the project root.
+#   path: .ralph/ralph.db
+
+# log:
+  # debug | info | warn | error. Logs always go to stderr.
+#   level: info
+  # text | json
+#   format: text
+
+# embeddings:
+  # ollama | none. With none, search uses keyword matching only.
+#   provider: ollama
+  # Per-request timeout for embedding calls.
+#   timeout: 30s
+#   chunk:
+    # Documents are split on markdown headings, then packed up to this size.
+#     max_chars: 2000
+    # Characters repeated between consecutive chunks of an oversized section.
+#     overlap_chars: 200
+#   ollama:
+#     base_url: http://localhost:11434
+#     model: nomic-embed-text
+    # Text prepended to search queries and to stored content before embedding.
+    # "auto" uses the prefixes the model's authors specify (none for unknown
+    # models); any other value, including "", is used as-is. Changing
+    # document_prefix makes stored embeddings stale until `ralph index` runs.
+#     query_prefix: auto
+#     document_prefix: auto
+
+# search:
+  # Default number of results.
+#   limit: 10
+
+# harness:
+  # Harness used by every step unless the step overrides it.
+#   default: claude_code
+#   claude_code:
+#     binary: claude
+    # Empty uses the harness's own default model.
+#     model: ""
+    # Passed as --permission-mode to headless loop runs. Loop runs also pass
+    # --permission-prompts none, so anything that would prompt is denied.
+#     permission_mode: auto
+    # Spending cap per loop iteration in USD, passed as --max-budget-usd.
+    # 0 means no cap. A session that hits the cap counts as a failed iteration.
+#     max_budget_usd: 0
+    # Appended verbatim to every invocation.
+#     extra_args: []
+
+# Per-step overrides. Empty values inherit from the harness section.
+# steps:
+#   receive:
+#     harness: ""
+#     model: ""
+#   articulate:
+#     harness: ""
+#     model: ""
+#   loop:
+#     harness: ""
+#     model: ""
+#   pr:
+#     harness: ""
+#     model: ""
+
+# loop:
+  # Hard cap on iterations in one loop run.
+#   max_iterations: 50
+  # Stall Statute: consecutive failed iterations on one task before it is
+  # marked BLOCKED and the loop stops to ask for help.
+#   stall_threshold: 3
+  # Go text/template; fields: .Initiative and .Milestone (each with .ID, .Slug, .Title).
+#   branch_template: "ralph/{{.Milestone.Slug}}"
+  # Commit after each completed task.
+#   commit_per_task: true
+  # Go text/template for those commits; fields: .Task (.ID, .Title, ...),
+  # .Initiative and .Milestone (each with .ID, .Slug, .Title).
+#   commit_template: "{{.Task.ID}}: {{.Task.Title}}"
+  # Path to a custom iteration prompt template; empty uses the built-in one.
+#   prompt_template: ""
+
+# pr:
+  # bitbucket_cloud
+#   provider: bitbucket_cloud
+#   base_branch: main
+#   draft: true
+#   bitbucket_cloud:
+#     workspace: ""
+#     repo_slug: ""
+    # Name of the environment variable holding the API token. Never put the
+    # token itself in a config file.
+#     token_env: RALPH_BITBUCKET_TOKEN
+
+task_manager:
+  provider: jira
+  jira:
+    base_url: https://autoclubgroup-sandbox.atlassian.net
+    project_key: AIN
+    labels:
+      - workflow-2.0

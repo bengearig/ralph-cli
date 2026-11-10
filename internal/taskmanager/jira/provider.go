@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -67,6 +68,11 @@ func (p *Provider) Validate() error {
 	} {
 		if strings.TrimSpace(f.val) == "" {
 			bad("task_manager.jira.%s must not be empty", f.key)
+		}
+	}
+	for _, l := range c.Labels {
+		if strings.TrimSpace(l) == "" || strings.ContainsAny(l, " \t\r\n") {
+			bad("task_manager.jira.labels %q must not be empty or contain whitespace", l)
 		}
 	}
 	for _, f := range []struct{ setting, name string }{
@@ -169,9 +175,19 @@ func (p *Provider) mapRequest(req taskmanager.CardRequest) (IssueFields, error) 
 		IssueType:   issueType,
 		Summary:     summary(req),
 		Description: adf.FromMarkdown(body(req)).JSON(),
-		Labels:      []string{"ralph", req.ID},
+		Labels:      p.labels(req.ID),
 		ParentKey:   parent,
 	}, nil
+}
+
+func (p *Provider) labels(id string) []string {
+	out := []string{"ralph", id}
+	for _, l := range p.cfg.Labels {
+		if l = strings.TrimSpace(l); l != "" && !slices.Contains(out, l) {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 func summary(req taskmanager.CardRequest) string {

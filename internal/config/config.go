@@ -174,6 +174,7 @@ type JiraConfig struct {
 	IssueTypes     JiraIssueTypes    `koanf:"issue_types"`
 	CanceledStatus string            `koanf:"canceled_status"`
 	StatusMap      map[string]string `koanf:"status_map"`
+	Labels         []string          `koanf:"labels"`
 }
 
 type JiraIssueTypes struct {
@@ -360,6 +361,11 @@ func (c *Config) Validate() error {
 		} {
 			if strings.TrimSpace(f.val) == "" {
 				bad("task_manager.jira."+f.key, "must not be empty")
+			}
+		}
+		for _, l := range j.Labels {
+			if strings.TrimSpace(l) == "" || strings.ContainsAny(l, " \t\r\n") {
+				bad("task_manager.jira.labels", "%q must not be empty or contain whitespace", l)
 			}
 		}
 		keys := make([]string, 0, len(j.StatusMap))

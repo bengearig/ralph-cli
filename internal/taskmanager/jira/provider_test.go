@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -112,6 +113,28 @@ func TestIssueTypes(t *testing.T) {
 		if got := f.last(t).fields()["issuetype"].(map[string]any)["name"]; got != want {
 			t.Errorf("custom %s: issue type %v, want %s", c.kind, got, want)
 		}
+	}
+}
+
+func TestConfiguredLabels(t *testing.T) {
+	f := newFakeJira(t)
+	cfg := testCfg(f.URL)
+	cfg.Labels = []string{"workflow-2.0", " ralph ", "T-12", "workflow-2.0", ""}
+	p := NewProvider(cfg, 0, env(goodEnv), nil)
+	if _, err := p.Create(context.Background(), taskmanager.CardRequest{Kind: domain.KindTask, ID: "T-12", Title: "t", ParentKey: "PROJ-5"}); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, l := range f.last(t).fields()["labels"].([]any) {
+		got = append(got, l.(string))
+	}
+	if want := []string{"ralph", "T-12", "workflow-2.0"}; !slices.Equal(got, want) {
+		t.Errorf("labels %v, want %v", got, want)
+	}
+
+	cfg.Labels = []string{"two words"}
+	if err := NewProvider(cfg, 0, env(goodEnv), nil).Validate(); err == nil || !strings.Contains(err.Error(), "task_manager.jira.labels") {
+		t.Errorf("Validate = %v, want a labels error", err)
 	}
 }
 

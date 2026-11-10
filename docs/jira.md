@@ -239,7 +239,9 @@ refuses a request that has no parent card key.
 
 - **Summary.** `<ID>: <title>`, for example `T-12: Add the login form`. It is cut to 255 characters, ending with an
   ellipsis when it is cut, which is the longest summary Jira accepts.
-- **Labels.** `ralph` and the resource's ID. The `ralph` label finds every card ralph made; the ID label finds one.
+- **Labels.** `ralph` and the resource's ID, then any in `task_manager.jira.labels`. The `ralph` label finds every
+  card ralph made; the ID label finds one. Configured labels are added when a card is created, so cards made before a
+  label was configured do not get it.
 - **Description.** The resource's Markdown body, converted to Jira's Atlassian Document Format (ADF), the structured
   rich text that Jira Cloud's API requires. The converter is small and lives in the repository; it handles common
   Markdown:

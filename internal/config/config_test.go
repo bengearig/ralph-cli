@@ -53,7 +53,7 @@ func TestDefaults(t *testing.T) {
 	if tm.Provider != TaskManagerNone || tm.Timeout != 10*time.Second {
 		t.Errorf("task_manager defaults = %+v", tm)
 	}
-	if j := tm.Jira; j.EmailEnv != "RALPH_JIRA_EMAIL" || j.TokenEnv != "RALPH_JIRA_TOKEN" || j.CanceledStatus != "" ||
+	if j := tm.Jira; j.EmailEnv != "RALPH_JIRA_EMAIL" || j.TokenEnv != "RALPH_JIRA_TOKEN" || j.CanceledStatus != "" || len(j.Labels) != 0 ||
 		j.IssueTypes != (JiraIssueTypes{Initiative: "Epic", Milestone: "Task", Task: "Sub-task"}) {
 		t.Errorf("jira defaults = %+v", j)
 	}
@@ -113,6 +113,18 @@ func TestValidateTaskManager(t *testing.T) {
 			complete(c)
 			c.TaskManager.Jira.StatusMap["CANCELLED"] = "Cancelled"
 		}, []string{"task_manager.jira.status_map:", "canceled_status"}},
+		{"labels", func(c *Config) {
+			complete(c)
+			c.TaskManager.Jira.Labels = []string{"workflow-2.0", "team_a"}
+		}, nil},
+		{"label with whitespace", func(c *Config) {
+			complete(c)
+			c.TaskManager.Jira.Labels = []string{"two words"}
+		}, []string{"task_manager.jira.labels:", "two words"}},
+		{"blank label", func(c *Config) {
+			complete(c)
+			c.TaskManager.Jira.Labels = []string{" "}
+		}, []string{"task_manager.jira.labels:"}},
 		{"none ignores invalid status_map", func(c *Config) {
 			c.TaskManager.Jira.StatusMap = map[string]string{"WAITING": "x", "CANCELLED": "y"}
 		}, nil},
