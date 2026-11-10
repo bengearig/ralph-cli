@@ -124,7 +124,18 @@ func newRunEnv(t *testing.T, titles ...string) *runEnv {
 	return &runEnv{root: root, svc: svc, cfg: cfg, mID: mID}
 }
 
+// run runs the loop and then checks the milestone branch back out, so tests
+// can inspect its work tree; runRaw leaves the tree where Run put it.
 func (e *runEnv) run(t *testing.T, ctx context.Context, h harness.Harness) (Outcome, error) {
+	t.Helper()
+	out, err := e.runRaw(t, ctx, h)
+	if out.Iterations > 0 && gitCmd(t, e.root, "branch", "--show-current") != out.Branch {
+		gitCmd(t, e.root, "switch", "--quiet", out.Branch)
+	}
+	return out, err
+}
+
+func (e *runEnv) runRaw(t *testing.T, ctx context.Context, h harness.Harness) (Outcome, error) {
 	t.Helper()
 	plan, err := Planner{Service: e.svc, Config: e.cfg, Root: e.root}.Plan(ctx, e.mID)
 	if err != nil {
@@ -712,8 +723,8 @@ func TestRunUsesRecordedBranch(t *testing.T) {
 	if !errors.Is(err, errs.ErrNeedsHuman) {
 		t.Fatalf("err = %v\n%s", err, e.out.String())
 	}
-	if b := gitCmd(t, e.root, "branch", "--show-current"); b != "feature/custom" || out.Branch != "feature/custom" {
-		t.Errorf("checked out %q, outcome branch %q", b, out.Branch)
+	if out.Branch != "feature/custom" || gitCmd(t, e.root, "branch", "--list", "feature/custom") == "" {
+		t.Errorf("outcome branch %q", out.Branch)
 	}
 	if list := gitCmd(t, e.root, "branch", "--list", "ralph/oidc-login"); list != "" {
 		t.Errorf("template branch was created: %q", list)
@@ -952,8 +963,8 @@ func TestRunNamesBranchAfterCardAndKeepsIt(t *testing.T) {
 	if m := e.milestone(t); m.Branch != "ABC-1234-oidc-login" {
 		t.Fatalf("recorded branch = %q", m.Branch)
 	}
-	if b := gitCmd(t, e.root, "branch", "--show-current"); b != "ABC-1234-oidc-login" {
-		t.Errorf("checked out %q", b)
+	if gitCmd(t, e.root, "branch", "--list", "ABC-1234-oidc-login") == "" {
+		t.Error("the card-named branch should exist")
 	}
 
 	if err := e.svc.RecordCard(ctx, domain.KindMilestone, e.mID, "jira", "ABC-9999", "", ""); err != nil {

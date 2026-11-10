@@ -132,6 +132,10 @@ func (r Runner) Run(ctx context.Context, plan Plan) (Outcome, error) {
 	}
 	defer lock.Release()
 
+	if startRepo, start, ok := readStart(ctx, r.Root); ok {
+		defer func() { restoreStart(ctx, startRepo, start, plan.Branch, f) }()
+	}
+
 	repo, branch, err := r.prepareBranch(ctx, plan, milestoneID, f)
 	if branch != "" {
 		plan.Branch, out.Branch = branch, branch
