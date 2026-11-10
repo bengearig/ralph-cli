@@ -67,10 +67,13 @@ func (a *app) newInitiativeCommand() *cobra.Command {
 				return a.writeJSON(all)
 			}
 			rows := make([][]string, 0, len(all))
+			cards := make([]*service.CardView, 0, len(all))
 			for _, i := range all {
 				rows = append(rows, []string{i.ID, i.Slug, i.Title})
+				cards = append(cards, i.Card)
 			}
-			return a.writeTable([]string{"ID", "SLUG", "TITLE"}, rows)
+			header, rows := a.withCard([]string{"ID", "SLUG", "TITLE"}, rows, cards)
+			return a.writeTable(header, rows)
 		},
 	}
 
@@ -106,7 +109,7 @@ func (a *app) newInitiativeCommand() *cobra.Command {
 			if err := a.printf("%s  %s\nslug: %s\ntasks: %s\n", v.ID, v.Title, v.Slug, service.FormatCounts(st.Initiatives[0].TaskCounts)); err != nil {
 				return err
 			}
-			if err := a.printf("%s", archivedLine(v.ArchivedAt, false, "")); err != nil {
+			if err := a.printf("%s%s", cardLine(v.Card), archivedLine(v.ArchivedAt, false, "")); err != nil {
 				return err
 			}
 			if err := a.section("Brief", v.Brief); err != nil {
@@ -161,10 +164,13 @@ func (a *app) printMilestoneTable(ms []service.MilestoneView) error {
 		return err
 	}
 	rows := make([][]string, 0, len(ms))
+	cards := make([]*service.CardView, 0, len(ms))
 	for _, m := range ms {
 		rows = append(rows, []string{m.ID, m.Status, m.Title, service.FormatCounts(m.TaskCounts)})
+		cards = append(cards, m.Card)
 	}
-	return a.writeTable([]string{"MILESTONE", "STATUS", "TITLE", "TASKS"}, rows)
+	header, rows := a.withCard([]string{"MILESTONE", "STATUS", "TITLE", "TASKS"}, rows, cards)
+	return a.writeTable(header, rows)
 }
 
 func (a *app) newInitiativeArchiveCommand(archive bool) *cobra.Command {

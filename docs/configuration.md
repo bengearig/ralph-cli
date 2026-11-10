@@ -147,10 +147,9 @@ commands, so their overrides take effect once ralph launches those sessions itse
 
 ### `task_manager`
 
-The task manager is an external tracker that ralph can keep one card per initiative, milestone, and task in. The
-provider-neutral interface, the card records, and the Jira provider exist, but ralph's commands do not call the
-provider yet, so no card is created on its own. The default, `none`, leaves every task manager untouched. See
-[Jira](jira.md) for setup, what a card looks like, and a manual check.
+The task manager is an external tracker that ralph can keep one card per initiative, milestone, and task in. Ralph
+creates a card when one of those is created; see [Jira](jira.md#when-cards-are-created). The default, `none`, leaves
+every task manager untouched. See [Jira](jira.md) for setup, what a card looks like, and a manual check.
 
 | Key | Default | Meaning |
 |---|---|---|

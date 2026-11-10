@@ -115,9 +115,9 @@ func (t *tools) register(s *mcp.Server) {
 		Description: "Record a newly received set of instructions as an initiative. Put the instructions verbatim in brief. " +
 			"The result's confirm_outline says whether Receive must ask the user before creating the outline."}, t.initiativeCreate)
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_list", Annotations: readOnly("List initiatives"),
-		Description: "List initiatives. Archived ones are hidden unless include_archived is set."}, t.initiativeList)
+		Description: "List initiatives, each with its card when a task manager is configured. Archived ones are hidden unless include_archived is set."}, t.initiativeList)
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_get", Annotations: readOnly("Get initiative"),
-		Description: "Get an initiative with its brief."}, t.initiativeGet)
+		Description: "Get an initiative with its brief and, when a task manager is configured, its card (key, URL, and pending when it is behind)."}, t.initiativeGet)
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_update", Annotations: write("Update initiative"),
 		Description: "Edit an initiative's title or brief. Omitted fields are unchanged."}, t.initiativeUpdate)
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_delete", Annotations: destructive("Delete initiative"),
@@ -136,7 +136,7 @@ func (t *tools) register(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{Name: "milestone_list", Annotations: readOnly("List milestones"),
 		Description: "List milestones with derived status and task counts, optionally for one initiative. Milestones of archived initiatives are hidden unless include_archived is set."}, t.milestoneList)
 	mcp.AddTool(s, &mcp.Tool{Name: "milestone_get", Annotations: readOnly("Get milestone"),
-		Description: "Get a milestone with its tasks in loop order."}, t.milestoneGet)
+		Description: "Get a milestone with its tasks in loop order and, when a task manager is configured, its card."}, t.milestoneGet)
 	mcp.AddTool(s, &mcp.Tool{Name: "milestone_update", Annotations: write("Update milestone"),
 		Description: "Edit a milestone's title, description, or position. Omitted fields are unchanged."}, t.milestoneUpdate)
 	mcp.AddTool(s, &mcp.Tool{Name: "milestone_drift", Annotations: readOnly("Check milestone drift"),
@@ -153,7 +153,7 @@ func (t *tools) register(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{Name: "task_list", Annotations: readOnly("List tasks"),
 		Description: "List tasks in loop order, filtered by milestone, initiative, or statuses. Tasks of archived initiatives are hidden unless include_archived is set."}, t.taskList)
 	mcp.AddTool(s, &mcp.Tool{Name: "task_get", Annotations: readOnly("Get task"),
-		Description: "Get a task with its notes and the statuses it may move to."}, t.taskGet)
+		Description: "Get a task with its notes, the statuses it may move to, and, when a task manager is configured, its card."}, t.taskGet)
 	mcp.AddTool(s, &mcp.Tool{Name: "task_update", Annotations: write("Update task"),
 		Description: "Edit a task's title, description, acceptance criteria, or position. Omitted fields are unchanged. DONE and CANCELLED tasks cannot be edited."}, t.taskUpdate)
 	mcp.AddTool(s, &mcp.Tool{Name: "task_set_status", Annotations: write("Set task status"),

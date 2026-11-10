@@ -246,9 +246,13 @@ func (s *Service) Status(ctx context.Context, initiativeID int64, opts ListOptio
 			return StatusView{}, err
 		}
 	}
+	cards, err := s.loadCards(ctx)
+	if err != nil {
+		return StatusView{}, err
+	}
 	out := StatusView{Initiatives: make([]InitiativeStatus, 0, len(inits))}
 	for _, i := range inits {
-		ms, err := s.ListMilestones(ctx, i.ID, opts)
+		ms, err := s.listMilestones(ctx, i.ID, opts, cards)
 		if err != nil {
 			return StatusView{}, err
 		}
@@ -268,6 +272,7 @@ func (s *Service) Status(ctx context.Context, initiativeID int64, opts ListOptio
 			TaskCounts: counts,
 			Milestones: ms,
 			Documents:  len(docs),
+			Card:       cards.view(ctx, domain.KindInitiative, i.ID, cardID{}),
 		})
 	}
 	return out, nil

@@ -49,6 +49,16 @@ Commit hashes recorded by the loop are shown shortened in text output and in ful
 | `ralph initiative archive <id>` / `unarchive <id>`, `ralph doc archive <id>` / `unarchive <id>` | Hide an item and make it read-only, or undo that. See [Archiving](#archiving). |
 | `ralph status [--initiative <id>]` | Progress summary: milestones with derived status and task counts. |
 
+### Cards
+
+When a task manager provider is configured, creating an initiative, milestone, or task also creates its card (see
+[Jira](jira.md#when-cards-are-created)), and a failure is a warning on standard error that never changes the exit
+status. The `show` commands for initiatives, milestones, and tasks print a line such as
+`card: PROJ-12 https://acme.atlassian.net/browse/PROJ-12`, with ` (pending create)` or ` (pending update)` after it
+when the card is behind, and the last error on the next line. The `list` commands and the milestone table in
+`initiative show` gain a `CARD` column. `--json` output carries a `card` object, absent when the resource has no card.
+Without a provider none of this appears.
+
 ### Deleting
 
 Deletes are permanent. To drop planned work, prefer `ralph task status <id> CANCELLED`, which keeps the task and its

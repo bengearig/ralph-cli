@@ -21,6 +21,8 @@ type CardView struct {
 	LastError   string `json:"last_error,omitempty"`
 	AttemptedAt string `json:"attempted_at"`
 	SyncedAt    string `json:"synced_at,omitempty"`
+	// Pending is "create" or "update" while the card is behind the resource, derived rather than stored.
+	Pending string `json:"pending,omitempty"`
 }
 
 func cardView(c domain.Card) CardView {
@@ -224,4 +226,68 @@ func (s *Service) failCard(ctx context.Context, kind domain.Kind, id int64, caus
 		return fmt.Errorf("%w (recording the failure also failed: %v)", cause, err)
 	}
 	return cause
+}
+
+// CardsEnabled reports whether a task manager provider is configured.
+func (s *Service) CardsEnabled() bool { return s.taskManager != nil }
+
+type cardID struct {
+	kind domain.Kind
+	id   int64
+}
+
+// cardIndex holds one provider's card rows, loaded with a single query.
+type cardIndex struct {
+	s     *Service
+	cards map[cardID]domain.Card
+}
+
+// loadCards returns nil when no provider is configured.
+func (s *Service) loadCards(ctx context.Context) (*cardIndex, error) {
+	if s.taskManager == nil {
+		return nil, nil
+	}
+	rows, err := s.store.ListCards(ctx, s.taskManager.Name())
+	if err != nil {
+		return nil, err
+	}
+	ix := &cardIndex{s: s, cards: make(map[cardID]domain.Card, len(rows))}
+	for _, c := range rows {
+		ix.cards[cardID{c.Kind, c.EntityID}] = c
+	}
+	return ix, nil
+}
+
+// view returns the resource's card with its derived pending state, or nil when
+// there is no index or no row. parent is the resource whose card is the parent
+// of this one (zero for an initiative). It never fails: a request that cannot
+// be built leaves pending unknown.
+func (ix *cardIndex) view(ctx context.Context, kind domain.Kind, id int64, parent cardID) *CardView {
+	if ix == nil {
+		return nil
+	}
+	c, ok := ix.cards[cardID{kind, id}]
+	if !ok {
+		return nil
+	}
+	v := cardView(c)
+	switch {
+	case c.Key == "":
+		v.Pending = "create"
+	case c.ContentHash != "":
+		parentKey := ""
+		if parent.kind != "" {
+			parentKey = ix.cards[parent].Key
+			if parentKey == "" {
+				return &v
+			}
+		}
+		req, err := buildCardRequest(ctx, ix.s.store, kind, id, parentKey)
+		if err == nil && req.Hash() != c.ContentHash {
+			v.Pending = "update"
+		}
+	default:
+		v.Pending = "update"
+	}
+	return &v
 }

@@ -264,7 +264,13 @@ func (s *Service) GetInitiative(ctx context.Context, id int64) (InitiativeView, 
 	if err != nil {
 		return InitiativeView{}, err
 	}
-	return initiativeView(i), nil
+	cards, err := s.loadCards(ctx)
+	if err != nil {
+		return InitiativeView{}, err
+	}
+	v := initiativeView(i)
+	v.Card = cards.view(ctx, domain.KindInitiative, i.ID, cardID{})
+	return v, nil
 }
 
 // ListOptions widens list and query operations. Archived items are hidden
@@ -278,9 +284,15 @@ func (s *Service) ListInitiatives(ctx context.Context, opts ListOptions) ([]Init
 	if err != nil {
 		return nil, err
 	}
+	cards, err := s.loadCards(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]InitiativeView, 0, len(all))
 	for _, i := range all {
-		out = append(out, initiativeView(i))
+		v := initiativeView(i)
+		v.Card = cards.view(ctx, domain.KindInitiative, i.ID, cardID{})
+		out = append(out, v)
 	}
 	return out, nil
 }
@@ -369,10 +381,24 @@ func (s *Service) GetMilestone(ctx context.Context, id int64) (MilestoneView, er
 	if err != nil {
 		return MilestoneView{}, err
 	}
-	return milestoneView(m, tasks, archived), nil
+	cards, err := s.loadCards(ctx)
+	if err != nil {
+		return MilestoneView{}, err
+	}
+	v := milestoneView(m, tasks, archived)
+	v.Card = cards.view(ctx, domain.KindMilestone, m.ID, cardID{domain.KindInitiative, m.InitiativeID})
+	return v, nil
 }
 
 func (s *Service) ListMilestones(ctx context.Context, initiativeID int64, opts ListOptions) ([]MilestoneView, error) {
+	cards, err := s.loadCards(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.listMilestones(ctx, initiativeID, opts, cards)
+}
+
+func (s *Service) listMilestones(ctx context.Context, initiativeID int64, opts ListOptions, cards *cardIndex) ([]MilestoneView, error) {
 	if initiativeID != 0 {
 		if _, err := s.store.GetInitiative(ctx, initiativeID); err != nil {
 			return nil, err
@@ -396,7 +422,9 @@ func (s *Service) ListMilestones(ctx context.Context, initiativeID int64, opts L
 	}
 	out := make([]MilestoneView, 0, len(ms))
 	for _, m := range ms {
-		out = append(out, milestoneView(m, byMilestone[m.ID], archived[m.InitiativeID]))
+		v := milestoneView(m, byMilestone[m.ID], archived[m.InitiativeID])
+		v.Card = cards.view(ctx, domain.KindMilestone, m.ID, cardID{domain.KindInitiative, m.InitiativeID})
+		out = append(out, v)
 	}
 	return out, nil
 }
@@ -578,7 +606,13 @@ func (s *Service) GetTask(ctx context.Context, id int64) (TaskView, error) {
 	if err != nil {
 		return TaskView{}, err
 	}
-	return taskView(t, notes, archived), nil
+	cards, err := s.loadCards(ctx)
+	if err != nil {
+		return TaskView{}, err
+	}
+	v := taskView(t, notes, archived)
+	v.Card = cards.view(ctx, domain.KindTask, t.ID, cardID{domain.KindMilestone, t.MilestoneID})
+	return v, nil
 }
 
 func (s *Service) ListTasks(ctx context.Context, f TaskFilter) ([]TaskView, error) {
@@ -610,9 +644,15 @@ func (s *Service) ListTasks(ctx context.Context, f TaskFilter) ([]TaskView, erro
 	for _, m := range ms {
 		archivedMilestone[m.ID] = archivedInit[m.InitiativeID]
 	}
+	cards, err := s.loadCards(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]TaskView, 0, len(tasks))
 	for _, t := range tasks {
-		out = append(out, taskView(t, nil, archivedMilestone[t.MilestoneID]))
+		v := taskView(t, nil, archivedMilestone[t.MilestoneID])
+		v.Card = cards.view(ctx, domain.KindTask, t.ID, cardID{domain.KindMilestone, t.MilestoneID})
+		out = append(out, v)
 	}
 	return out, nil
 }

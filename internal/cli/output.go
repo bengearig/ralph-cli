@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/bengearig/ralph/internal/service"
 )
 
 func (a *app) writeJSON(v any) error {
@@ -44,4 +46,54 @@ func oneLine(s string) string {
 		return string(r[:maxWidth-1]) + "…"
 	}
 	return s
+}
+
+func (a *app) cardsEnabled() bool { return a.svc != nil && a.svc.CardsEnabled() }
+
+func pendingSuffix(c *service.CardView) string {
+	if c.Pending == "" {
+		return ""
+	}
+	return " (pending " + c.Pending + ")"
+}
+
+// cardLine renders a resource's card for a show command; it is empty without one.
+func cardLine(c *service.CardView) string {
+	if c == nil {
+		return ""
+	}
+	line := "card:"
+	if c.Key != "" {
+		line += " " + c.Key
+		if c.URL != "" {
+			line += " " + c.URL
+		}
+	}
+	line += pendingSuffix(c) + "\n"
+	if c.LastError != "" {
+		line += "card error: " + c.LastError + "\n"
+	}
+	return line
+}
+
+// cardCell renders a resource's card for a table column.
+func cardCell(c *service.CardView) string {
+	if c == nil {
+		return ""
+	}
+	if c.Key == "" {
+		return strings.TrimSpace(pendingSuffix(c))
+	}
+	return c.Key + pendingSuffix(c)
+}
+
+// withCard adds the CARD column to a table when a provider is configured.
+func (a *app) withCard(header []string, rows [][]string, cards []*service.CardView) ([]string, [][]string) {
+	if !a.cardsEnabled() {
+		return header, rows
+	}
+	for i := range rows {
+		rows[i] = append(rows[i], cardCell(cards[i]))
+	}
+	return append(header, "CARD"), rows
 }

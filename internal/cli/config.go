@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	"github.com/bengearig/ralph/internal/config"
+	"github.com/bengearig/ralph/internal/service"
 )
 
 func (a *app) newConfigCommand() *cobra.Command {
@@ -64,8 +67,12 @@ func (a *app) newConfigCommand() *cobra.Command {
 			Short: "Load and validate the configuration",
 			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				if _, err := a.loadConfig(); err != nil {
+				l, err := a.loadConfig()
+				if err != nil {
 					return err
+				}
+				if _, err := service.NewTaskManager(l.Config); err != nil {
+					fmt.Fprintf(a.streams.Err, "task manager disabled: %v\n", err)
 				}
 				return a.printf("configuration is valid\n")
 			},

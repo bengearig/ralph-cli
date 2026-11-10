@@ -266,17 +266,20 @@ func (a *app) printTaskTable(tasks []service.TaskView) error {
 		return a.printf("\nno tasks\n")
 	}
 	rows := make([][]string, 0, len(tasks))
+	cards := make([]*service.CardView, 0, len(tasks))
 	for _, t := range tasks {
 		fails := ""
 		if t.FailureCount > 0 {
 			fails = strconv.Itoa(t.FailureCount)
 		}
 		rows = append(rows, []string{t.ID, t.MilestoneID, strconv.Itoa(t.Position), t.Status, fails, t.Title})
+		cards = append(cards, t.Card)
 	}
+	header, rows := a.withCard([]string{"ID", "MILESTONE", "POS", "STATUS", "FAILS", "TITLE"}, rows, cards)
 	if err := a.printf("\n"); err != nil {
 		return err
 	}
-	return a.writeTable([]string{"ID", "MILESTONE", "POS", "STATUS", "FAILS", "TITLE"}, rows)
+	return a.writeTable(header, rows)
 }
 
 // taskInitiative names a task's initiative, looked up only when it is archived.
@@ -300,7 +303,7 @@ func (a *app) printTask(v service.TaskView, initiative string) error {
 		v.ID, v.Title, v.MilestoneID, v.Status, orNone(strings.Join(v.AllowedNext, ", ")), v.Position, v.FailureCount); err != nil {
 		return err
 	}
-	if err := a.printf("%s", archivedLine("", v.Archived, initiative)); err != nil {
+	if err := a.printf("%s%s", cardLine(v.Card), archivedLine("", v.Archived, initiative)); err != nil {
 		return err
 	}
 	if v.Commit != "" {

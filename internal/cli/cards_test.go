@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/bengearig/ralph/internal/config"
+	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/service"
 )
 
@@ -113,5 +114,89 @@ func TestCardWarningReachesStderr(t *testing.T) {
 	}
 	if v.CardWarning == "" || !strings.Contains(errOut, "warning: ") {
 		t.Errorf("card_warning = %q, stderr = %q", v.CardWarning, errOut)
+	}
+}
+
+func recordJiraCard(t *testing.T, h *testEnv, kind domain.Kind, id int64, key, url string) {
+	t.Helper()
+	cfg, err := config.Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Embeddings.Provider = config.EmbeddingsNone
+	svc, closeFn, err := service.OpenWithTaskManager(context.Background(), cfg, h.dir, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeFn()
+	if err := svc.RecordCard(context.Background(), kind, id, "jira", key, url, "stale"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestShowCommandsPrintCards(t *testing.T) {
+	h := jiraEnv(t, "secret")
+	h.ok("initiative", "create", "--title", "SSO")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Callback")
+	h.ok("task", "create", "--milestone", "M-1", "--title", "Route")
+
+	out := h.ok("task", "show", "T-1")
+	if !strings.Contains(out, "card: (pending create)\n") || !strings.Contains(out, "card error: ") {
+		t.Errorf("pending create show = %q", out)
+	}
+	out = h.ok("task", "list")
+	if !strings.Contains(out, "CARD") || !strings.Contains(out, "(pending create)") {
+		t.Errorf("task list = %q", out)
+	}
+
+	recordJiraCard(t, h, domain.KindInitiative, 1, "RAL-1", "https://x.atlassian.net/browse/RAL-1")
+	recordJiraCard(t, h, domain.KindMilestone, 1, "RAL-2", "https://x.atlassian.net/browse/RAL-2")
+	recordJiraCard(t, h, domain.KindTask, 1, "RAL-12", "https://x.atlassian.net/browse/RAL-12")
+	for _, c := range [][]string{{"task", "show", "T-1"}, {"milestone", "show", "M-1"}, {"initiative", "show", "I-1"}} {
+		if out := h.ok(c...); !strings.Contains(out, "card: RAL-") || !strings.Contains(out, " https://x.atlassian.net/browse/RAL-") || !strings.Contains(out, "(pending update)") {
+			t.Errorf("%v = %q", c, out)
+		}
+	}
+	for _, c := range [][]string{{"task", "list"}, {"milestone", "list"}, {"initiative", "list"}} {
+		if out := h.ok(c...); !strings.Contains(out, "CARD") || !strings.Contains(out, "RAL-") {
+			t.Errorf("%v = %q", c, out)
+		}
+	}
+	var v struct {
+		Card *service.CardView `json:"card"`
+	}
+	h.json(&v, "--json", "task", "show", "T-1")
+	if v.Card == nil || v.Card.Key != "RAL-12" || v.Card.URL == "" || v.Card.Pending != "update" {
+		t.Errorf("json card = %+v", v.Card)
+	}
+}
+
+func TestNoCardColumnWithoutProvider(t *testing.T) {
+	h := newTestEnv(t, true)
+	h.ok("initiative", "create", "--title", "SSO")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Callback")
+	h.ok("task", "create", "--milestone", "M-1", "--title", "Route")
+	for _, c := range [][]string{{"task", "list"}, {"milestone", "list"}, {"initiative", "list"}, {"task", "show", "T-1"}} {
+		if out := h.ok(c...); strings.Contains(out, "CARD") || strings.Contains(out, "card") {
+			t.Errorf("%v = %q", c, out)
+		}
+	}
+	if out := h.ok("--json", "task", "show", "T-1"); strings.Contains(out, `"card"`) {
+		t.Errorf("json = %q", out)
+	}
+}
+
+func TestConfigValidateReportsDisabledTaskManager(t *testing.T) {
+	h := jiraEnv(t, "")
+	out, errOut, err := h.run("", "config", "validate")
+	if err != nil || !strings.Contains(out, "configuration is valid") {
+		t.Fatalf("out = %q, err = %v", out, err)
+	}
+	if !strings.Contains(errOut, "task manager disabled:") || !strings.Contains(errOut, "RALPH_JIRA_TOKEN") {
+		t.Errorf("stderr = %q", errOut)
+	}
+	h = jiraEnv(t, "secret")
+	if _, errOut, err := h.run("", "config", "validate"); err != nil || strings.Contains(errOut, "disabled") {
+		t.Errorf("err = %v, stderr = %q", err, errOut)
 	}
 }

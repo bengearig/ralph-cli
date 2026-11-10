@@ -81,10 +81,13 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 				return a.writeJSON(ms)
 			}
 			rows := make([][]string, 0, len(ms))
+			cards := make([]*service.CardView, 0, len(ms))
 			for _, m := range ms {
 				rows = append(rows, []string{m.ID, m.InitiativeID, strconv.Itoa(m.Position), m.Status, m.Title, service.FormatCounts(m.TaskCounts)})
+				cards = append(cards, m.Card)
 			}
-			return a.writeTable([]string{"ID", "INITIATIVE", "POS", "STATUS", "TITLE", "TASKS"}, rows)
+			header, rows := a.withCard([]string{"ID", "INITIATIVE", "POS", "STATUS", "TITLE", "TASKS"}, rows, cards)
+			return a.writeTable(header, rows)
 		},
 	}
 	list.Flags().StringVar(&listInitiative, "initiative", "", "only this initiative")
@@ -120,7 +123,7 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 			if err := a.printf("%s  %s\ninitiative: %s\nslug: %s\nstatus: %s\n", m.ID, m.Title, m.InitiativeID, m.Slug, m.Status); err != nil {
 				return err
 			}
-			if err := a.printf("%s", archivedLine("", m.Archived, m.InitiativeID)); err != nil {
+			if err := a.printf("%s%s", cardLine(m.Card), archivedLine("", m.Archived, m.InitiativeID)); err != nil {
 				return err
 			}
 			if m.Branch != "" {

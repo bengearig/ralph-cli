@@ -54,5 +54,5 @@ what an update may change.
 - Edits made to a card's summary or description in Jira are lost the next time ralph pushes that card, and the footer
   says so. Labels added by people survive.
 - A project must have issue types matching the configured names, or Jira rejects the request and the error says so.
-- The provider can create and update cards when called. The ralph commands do not call it yet; that is delivered
-  separately.
+- The provider can create and update cards. Ralph's commands call it to create cards ([ADR 22](0022-create-cards-when-resources-are-created.md));
+  pushing later edits is delivered separately.

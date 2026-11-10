@@ -7,10 +7,9 @@ authentication, using an account email and an API token. Jira Server and Data Ce
 Each call to Jira is a single attempt. The provider never retries; a failure is returned to the caller with a hint
 about what to check (see [Errors](#errors)).
 
-> **Status.** The provider can create and update cards when it is called, but ralph's commands do not call it yet.
-> Creating a resource in ralph does not create a card, and nothing syncs cards or pushes status changes to Jira.
-> Wiring the provider into the commands is delivered separately. Until then, the [manual check](#manual-check-against-a-real-project)
-> is the way to exercise it against a real project.
+> **Status.** Ralph creates a card when an initiative, milestone, or task is created. Pushing later edits and status
+> changes to Jira, and syncing cards that were missed, are not available yet: an edit made in ralph after a card
+> exists is not sent, and the card shows as pending an update until that is delivered.
 
 See [Configuration](configuration.md#task_manager) for the settings, and
 [ADR 21](adr/0021-jira-cloud-as-the-first-task-manager-provider.md) for the decisions behind the provider.
@@ -53,6 +52,39 @@ See [Configuration](configuration.md#task_manager) for the settings, and
 The settings and their defaults are listed under [`task_manager`](configuration.md#task_manager) in the configuration
 reference.
 
+## When cards are created
+
+Creating an initiative, milestone, or task, by any command or MCP tool, creates its card after the resource is saved.
+
+- **Parents first.** A child card needs its parent's key, so a missing parent card is created before it: a new
+  milestone under an initiative that predates Jira creates the initiative's card too, and a new task creates any
+  missing milestone and initiative cards. If a parent's card cannot be created, the child's is not attempted, and its
+  recorded error names the parent.
+- **A failure never blocks ralph.** The resource is saved either way. A Jira failure is printed as a warning (on
+  standard error for the CLI, as `card_warning` in the result for `--json` and MCP) and the command still succeeds.
+  The card then shows as pending creation, with the last error, until a later attempt succeeds.
+- **No duplicates across processes.** Before calling Jira, a process claims the card in ralph's store. If another
+  process, such as the loop's MCP server beside a person's CLI, holds a recent claim, this one skips creation instead
+  of creating a second card. A claim that is never completed, for example because its process was killed, is taken over
+  once it is stale.
+- **A misconfigured provider disables cards, not ralph.** If the provider cannot be built or its configuration is
+  invalid, such as a missing environment variable, ralph prints `task manager disabled: <reason>` once on standard
+  error and carries on as if no provider were configured. `ralph config validate` prints the same line. The MCP server
+  reports it once at start.
+- **Inside a transaction.** Work done in a single transaction, such as a bulk import, does not create cards.
+
+## Seeing cards
+
+`ralph initiative show`, `milestone show`, and `task show` print a `card:` line with the key and URL, followed by
+`(pending create)` or `(pending update)` when the card is behind, and the last error on the next line when there is
+one. List commands gain a `CARD` column when a provider is configured, and `--json` and the MCP tools carry a `card`
+object. With no provider configured, nothing about cards is shown. A resource that has never had a card attempt has no
+card line.
+
+Whether a card is pending is worked out when it is shown, not stored: a card with no key needs creating, and a card
+whose stored content hash differs from what ralph would send now needs updating. See
+[Card records](data-model.md#card-records).
+
 ## Card types and why
 
 Ralph fixes the hierarchy: an initiative's card is the top level, a milestone's card is its child, and a task's card
@@ -90,11 +122,11 @@ refuses a request that has no parent card key.
   and images therefore appear as their source text rather than as Jira tables or markup. Links with a scheme other
   than `http`, `https`, or `mailto` appear as their label without the link.
 - **Footer.** Every description ends with a rule and a line saying that ralph manages the card and that the summary
-  and description are overwritten when ralph pushes changes.
+  and description are overwritten when ralph updates the card.
 - **Very long bodies.** A body past 30,000 characters is cut, and a note saying it was truncated is added before the
   footer. The full text stays in ralph.
 
-When ralph pushes changes to an existing card it sends only the summary and description, overwriting whatever is there,
+When ralph updates an existing card it sends only the summary and description, overwriting whatever is there,
 so edit those in ralph rather than in Jira. It does not touch anything else, including labels: labels that people add
 to a card are kept, as are its status, assignee, and every other field.
 

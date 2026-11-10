@@ -10,15 +10,16 @@ import (
 // IDs use display form (T-12) so agents and humans quote the same strings.
 
 type InitiativeView struct {
-	ID           string `json:"id"`
-	Slug         string `json:"slug"`
-	Title        string `json:"title"`
-	Brief        string `json:"brief"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
-	ArchivedAt   string `json:"archived_at,omitempty"`
-	IndexWarning string `json:"index_warning,omitempty"`
-	CardWarning  string `json:"card_warning,omitempty"`
+	ID           string    `json:"id"`
+	Slug         string    `json:"slug"`
+	Title        string    `json:"title"`
+	Brief        string    `json:"brief"`
+	CreatedAt    string    `json:"created_at"`
+	UpdatedAt    string    `json:"updated_at"`
+	ArchivedAt   string    `json:"archived_at,omitempty"`
+	IndexWarning string    `json:"index_warning,omitempty"`
+	CardWarning  string    `json:"card_warning,omitempty"`
+	Card         *CardView `json:"card,omitempty"`
 }
 
 type MilestoneView struct {
@@ -38,6 +39,7 @@ type MilestoneView struct {
 	Archived     bool           `json:"archived,omitempty"`
 	IndexWarning string         `json:"index_warning,omitempty"`
 	CardWarning  string         `json:"card_warning,omitempty"`
+	Card         *CardView      `json:"card,omitempty"`
 }
 
 type TaskView struct {
@@ -58,6 +60,7 @@ type TaskView struct {
 	Archived           bool       `json:"archived,omitempty"`
 	IndexWarning       string     `json:"index_warning,omitempty"`
 	CardWarning        string     `json:"card_warning,omitempty"`
+	Card               *CardView  `json:"card,omitempty"`
 }
 
 type NoteView struct {
@@ -106,6 +109,7 @@ type InitiativeStatus struct {
 	TaskCounts map[string]int  `json:"task_counts"`
 	Milestones []MilestoneView `json:"milestones"`
 	Documents  int             `json:"documents"`
+	Card       *CardView       `json:"card,omitempty"`
 }
 
 func ts(t time.Time) string { return t.UTC().Format(time.RFC3339) }

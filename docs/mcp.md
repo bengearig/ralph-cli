@@ -36,7 +36,7 @@ The authoritative list, with schemas, is whatever `tools/list` returns. The regi
 |---|---|
 | `initiative_create` | Record received instructions; the brief is stored verbatim. The result also carries `confirm_outline`, the effective `receive.confirm_outline` read when the server starts: whether Receive must ask the user before creating the outline. |
 | `initiative_list` | All initiatives. |
-| `initiative_get` | One initiative with its brief. |
+| `initiative_get` | One initiative with its brief, and its `card` when a task manager is configured. |
 | `initiative_update` | Edit title or brief; omitted fields are unchanged. |
 | `initiative_archive` / `initiative_unarchive` | Hide an initiative and everything in it and make it read-only, or undo that. Parameter `id`. Refused while a loop holds one of its milestones. |
 | `initiative_delete` | Destructive. Parameters `id` and optional `force`. Cascades to milestones, tasks, notes, and documents; refused without `force` when the initiative has milestones or documents. |
@@ -59,7 +59,7 @@ The authoritative list, with schemas, is whatever `tools/list` returns. The regi
 |---|---|
 | `task_create` | Propose a task; it always starts `PROPOSED`. |
 | `task_list` | Tasks in loop order, filtered by milestone, initiative, or statuses. |
-| `task_get` | A task with notes and `allowed_next` statuses, and its `commit` when the loop committed it. |
+| `task_get` | A task with notes and `allowed_next` statuses, its `commit` when the loop committed it, and its `card` when a task manager is configured. |
 | `task_update` | Edit text or position. Terminal tasks cannot be edited. |
 | `task_set_status` | Move a task; enforces the guards and the Stall Statute, and records the reason as a note. |
 | `task_add_note` | Append a `NOTE`, `ITERATION`, or `KICKBACK` note. |
