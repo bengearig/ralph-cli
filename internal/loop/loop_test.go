@@ -136,7 +136,7 @@ func TestBranchName(t *testing.T) {
 		"feature/{{.Initiative.Slug}}/{{.Milestone.ID}}": "feature/sso/M-2",
 	}
 	for tmpl, want := range good {
-		if got, err := BranchName(tmpl, i, m); err != nil || got != want {
+		if got, err := BranchName(tmpl, i, m, BranchKeys{}); err != nil || got != want {
 			t.Errorf("BranchName(%q) = %q, %v", tmpl, got, err)
 		}
 	}
@@ -152,7 +152,7 @@ func TestBranchName(t *testing.T) {
 		"{{",
 		"  ",
 	} {
-		if got, err := BranchName(tmpl, i, m); err == nil {
+		if got, err := BranchName(tmpl, i, m, BranchKeys{}); err == nil {
 			t.Errorf("BranchName(%q) = %q, want error", tmpl, got)
 		}
 	}
@@ -214,5 +214,61 @@ func TestPlanRefusesArchivedInitiative(t *testing.T) {
 	}
 	if _, err := p.Plan(ctx, mID); err != nil {
 		t.Fatalf("Plan after unarchive: %v", err)
+	}
+}
+
+func TestBranchNameCardKeys(t *testing.T) {
+	i, m := Ref{ID: "I-1", Slug: "sso"}, Ref{ID: "M-2", Slug: "oidc-login", Title: "OIDC Login"}
+	keys := BranchKeys{Initiative: "ABC-1", Milestone: "ABC-1234"}
+	for tmpl, want := range map[string]string{
+		"{{.Milestone.CardKeyPrefix}}{{.Milestone.Slug}}":                    "ABC-1234-oidc-login",
+		"{{.Milestone.CardKey}}/{{.Milestone.Slug}}":                         "ABC-1234/oidc-login",
+		"{{.Initiative.CardKey}}":                                            "ABC-1",
+		"{{.Initiative.CardKeyPrefix}}{{.Milestone.ID}}-{{.Milestone.Slug}}": "ABC-1-M-2-oidc-login",
+		"x/{{.Milestone.Slug}}-{{.Milestone.ID}}":                            "x/oidc-login-M-2",
+	} {
+		if got, err := BranchName(tmpl, i, m, keys); err != nil || got != want {
+			t.Errorf("BranchName(%q) = %q, %v; want %q", tmpl, got, err, want)
+		}
+	}
+	if got, err := BranchName("{{.Milestone.CardKey}}/{{.Milestone.Title}}", i, Ref{ID: "M-2", Slug: "s", Title: "Login"}, keys); err != nil || got != "ABC-1234/Login" {
+		t.Errorf("title = %q, %v", got, err)
+	}
+
+	empty := BranchKeys{}
+	if got, err := BranchName("{{.Milestone.CardKeyPrefix}}x", i, m, empty); err != nil || got != "x" {
+		t.Errorf("empty prefix = %q, %v", got, err)
+	}
+	if got, err := BranchName("{{.Milestone.CardKey}}", i, m, empty); err == nil {
+		t.Errorf("empty key = %q, want validation error", got)
+	}
+	if got, err := BranchName("{{.Milestone.CardKey}}-x", i, m, empty); err == nil {
+		t.Errorf("empty key with suffix = %q, want validation error", got)
+	}
+	if got, err := BranchName("ralph/{{.Milestone.Slug}}", i, m, empty); err != nil || got != "ralph/oidc-login" {
+		t.Errorf("default = %q, %v", got, err)
+	}
+}
+
+func TestMilestoneBranchRecordedWins(t *testing.T) {
+	i, m := Ref{ID: "I-1", Slug: "sso"}, Ref{ID: "M-2", Slug: "oidc-login"}
+	got, err := MilestoneBranch("{{.Milestone.CardKeyPrefix}}{{.Milestone.Slug}}", i, m, BranchKeys{Milestone: "ABC-1"}, "kept/branch")
+	if err != nil || got != "kept/branch" {
+		t.Errorf("recorded = %q, %v", got, err)
+	}
+	got, err = MilestoneBranch("{{.Milestone.CardKeyPrefix}}{{.Milestone.Slug}}", i, m, BranchKeys{Milestone: "ABC-1"}, "")
+	if err != nil || got != "ABC-1-oidc-login" {
+		t.Errorf("derived = %q, %v", got, err)
+	}
+}
+
+func TestCommitTemplateRejectsCardKey(t *testing.T) {
+	tmpl, err := parseCommitTemplate("{{.Milestone.CardKey}}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = commitMessage(tmpl, commitData{Milestone: Ref{ID: "M-1"}})
+	if err == nil || !strings.Contains(err.Error(), "CardKey") {
+		t.Errorf("err = %v, want unknown field", err)
 	}
 }

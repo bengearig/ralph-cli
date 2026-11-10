@@ -73,7 +73,7 @@ reports the drift instead of refusing.`,
 				return err
 			}
 			branch, err := loop.MilestoneBranch(l.Config.Loop.BranchTemplate,
-				loop.Ref{ID: i.ID, Slug: i.Slug, Title: i.Title}, loop.Ref{ID: m.ID, Slug: m.Slug, Title: m.Title}, m.Branch)
+				loop.Ref{ID: i.ID, Slug: i.Slug, Title: i.Title}, loop.Ref{ID: m.ID, Slug: m.Slug, Title: m.Title}, loop.BranchKeys{}, m.Branch)
 			if err != nil {
 				return err
 			}

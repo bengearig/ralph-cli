@@ -32,6 +32,18 @@ type Ref struct {
 	Title string `json:"title"`
 }
 
+// BranchRef is a Ref with the entity's card key, for the branch template.
+type BranchRef struct {
+	Ref
+	CardKey       string
+	CardKeyPrefix string
+}
+
+// BranchKeys holds the raw card keys the branch template can use; empty means no card.
+type BranchKeys struct {
+	Initiative, Milestone string
+}
+
 // Plan is everything a loop run would do, resolved from config and the store.
 type Plan struct {
 	Project        string             `json:"project"`
@@ -98,7 +110,7 @@ func (p Planner) Plan(ctx context.Context, milestoneID int64) (Plan, error) {
 		CommitPerTask:  p.Config.Loop.CommitPerTask,
 		CommitTrailer:  p.Config.Loop.CommitTrailer,
 	}
-	if plan.Branch, err = MilestoneBranch(p.Config.Loop.BranchTemplate, plan.Initiative, plan.Milestone, m.Branch); err != nil {
+	if plan.Branch, err = MilestoneBranch(p.Config.Loop.BranchTemplate, plan.Initiative, plan.Milestone, BranchKeys{}, m.Branch); err != nil {
 		return Plan{}, err
 	}
 
@@ -199,22 +211,22 @@ func RenderPrompt(tmpl string, data PromptData) (string, error) {
 
 // MilestoneBranch returns the milestone's recorded branch, or the one the
 // branch template derives when none is recorded.
-func MilestoneBranch(tmpl string, initiative, milestone Ref, recorded string) (string, error) {
+func MilestoneBranch(tmpl string, initiative, milestone Ref, keys BranchKeys, recorded string) (string, error) {
 	if recorded != "" {
 		return recorded, nil
 	}
-	return BranchName(tmpl, initiative, milestone)
+	return BranchName(tmpl, initiative, milestone, keys)
 }
 
 // BranchName renders the branch template and checks the result is a usable
 // git branch name.
-func BranchName(tmpl string, initiative, milestone Ref) (string, error) {
+func BranchName(tmpl string, initiative, milestone Ref, keys BranchKeys) (string, error) {
 	t, err := template.New("branch").Option("missingkey=error").Parse(tmpl)
 	if err != nil {
 		return "", fmt.Errorf("loop.branch_template: %w", err)
 	}
 	var b strings.Builder
-	if err := t.Execute(&b, struct{ Initiative, Milestone Ref }{initiative, milestone}); err != nil {
+	if err := t.Execute(&b, struct{ Initiative, Milestone BranchRef }{branchRef(initiative, keys.Initiative), branchRef(milestone, keys.Milestone)}); err != nil {
 		return "", fmt.Errorf("loop.branch_template: %w", err)
 	}
 	name := strings.TrimSpace(b.String())
@@ -222,6 +234,14 @@ func BranchName(tmpl string, initiative, milestone Ref) (string, error) {
 		return "", fmt.Errorf("loop.branch_template produced %q: %w", name, err)
 	}
 	return name, nil
+}
+
+func branchRef(r Ref, key string) BranchRef {
+	b := BranchRef{Ref: r, CardKey: key}
+	if key != "" {
+		b.CardKeyPrefix = key + "-"
+	}
+	return b
 }
 
 // validateBranch applies the git check-ref-format rules that templates can

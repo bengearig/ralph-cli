@@ -79,7 +79,10 @@ loop:
   # Stall Statute: consecutive failed iterations on one task before it is
   # marked BLOCKED and the loop stops to ask for help.
   stall_threshold: 3
-  # Go text/template; fields: .Initiative and .Milestone (each with .ID, .Slug, .Title).
+  # Go text/template; fields: .Initiative and .Milestone, each with .ID, .Slug,
+  # .Title, .CardKey, and .CardKeyPrefix. .CardKey is the key of the entity's card
+  # in the task manager and .CardKeyPrefix is that key followed by "-"; both are
+  # empty without a card.
   branch_template: "ralph/{{.Milestone.Slug}}"
   # Commit after each completed task.
   commit_per_task: true
