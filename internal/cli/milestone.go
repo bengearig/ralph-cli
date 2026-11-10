@@ -373,8 +373,12 @@ func (a *app) printDriftReport(r drift.Report) error {
 			tip = fmt.Sprintf("(branch does not exist locally; origin/%s does)", r.Branch)
 		}
 	}
-	if err := a.printf("%s\nstate:    %s\nbranch:   %s (base %s)\nrecorded: %s\ntip:      %s\n",
-		r.Summary(), r.State, r.Branch, r.BaseRef, recorded, tip); err != nil {
+	mergedBy := ""
+	if r.State == drift.StateMerged {
+		mergedBy = fmt.Sprintf("merged by: %s\n", r.MergedBy)
+	}
+	if err := a.printf("%s\nstate:    %s\n%sbranch:   %s (base %s)\nrecorded: %s\ntip:      %s\n",
+		r.Summary(), r.State, mergedBy, r.Branch, r.BaseRef, recorded, tip); err != nil {
 		return err
 	}
 	if r.ProposedBase != "" && r.ProposedBase != r.Recorded.BaseCommit {

@@ -32,6 +32,12 @@ const (
 	StateDiverged      State = "diverged"
 )
 
+// MergedBy is how a merged milestone was found in the base branch.
+const (
+	MergedByAncestry = "ancestry"
+	MergedByTasks    = "tasks"
+)
+
 // Match is the matcher that found a DONE task's work on the branch.
 type Match string
 
@@ -93,6 +99,8 @@ type Report struct {
 	// BranchExists reports whether the local branch exists.
 	BranchExists bool  `json:"branch_exists"`
 	State        State `json:"state"`
+	// MergedBy is, for merged, ancestry or tasks.
+	MergedBy string `json:"merged_by,omitempty"`
 	// RemoteBranchExists reports, for branch_missing, whether
 	// origin/<branch> exists.
 	RemoteBranchExists bool `json:"remote_branch_exists"`
@@ -124,6 +132,9 @@ func (r Report) Summary() string {
 		return fmt.Sprintf("%s has no recorded head for branch %s (tip %s)", r.Milestone, r.Branch, short(r.Tip))
 	case StateMerged:
 		s := fmt.Sprintf("%s branch %s is already merged into %s", r.Milestone, r.Branch, shortRef(r.BaseRef))
+		if r.MergedBy == MergedByTasks {
+			s += " (squash or rebase merge)"
+		}
 		if !r.BranchExists {
 			s += " (branch deleted)"
 		}
@@ -217,9 +228,18 @@ func check(ctx context.Context, in Input, branch string) (Report, error) {
 		}
 		if wasMerged {
 			r.State = StateMerged
+			r.MergedBy = MergedByAncestry
 			if err := findTasks(ctx, in, &r, r.Recorded.HeadCommit, tasks); err != nil {
 				return Report{}, err
 			}
+			return r, nil
+		}
+		found, ok, err := mergedByTasks(ctx, in.Repo, r.Recorded.HeadCommit, r.Recorded.BaseCommit, r.BaseRef, tasks)
+		if err != nil {
+			return Report{}, err
+		}
+		if ok {
+			r.State, r.MergedBy, r.Tasks = StateMerged, MergedByTasks, found
 			return r, nil
 		}
 		r.State = StateBranchMissing
@@ -236,6 +256,18 @@ func check(ctx context.Context, in Input, branch string) (Report, error) {
 	}
 	if r.State, err = state(ctx, in.Repo, &r); err != nil {
 		return Report{}, err
+	}
+	if r.State == StateMerged {
+		r.MergedBy = MergedByAncestry
+	} else if r.State != StateUnrecorded {
+		found, ok, err := mergedByTasks(ctx, in.Repo, r.Tip, r.Recorded.BaseCommit, r.BaseRef, tasks)
+		if err != nil {
+			return Report{}, err
+		}
+		if ok {
+			r.State, r.MergedBy, r.Tasks = StateMerged, MergedByTasks, found
+			return r, nil
+		}
 	}
 	switch r.State {
 	case StateAhead:
@@ -304,6 +336,34 @@ func merged(ctx context.Context, repo git.Repo, head, base, baseRef string) (boo
 		return false, nil
 	}
 	return isAncestor(ctx, repo, head, baseRef)
+}
+
+// mergedByTasks runs the squash/rebase check over lower..baseRef, where lower
+// is head if its object exists, else base if it does; with neither it is not
+// merged.
+func mergedByTasks(ctx context.Context, repo git.Repo, head, base, baseRef string, tasks []service.TaskView) ([]TaskFinding, bool, error) {
+	lower := ""
+	for _, c := range []string{head, base} {
+		if c == "" {
+			continue
+		}
+		ok, err := repo.CommitExists(ctx, c)
+		if err != nil {
+			return nil, false, err
+		}
+		if ok {
+			lower = c
+			break
+		}
+	}
+	if lower == "" || len(tasks) == 0 {
+		return nil, false, nil
+	}
+	found, all, err := tasksInBase(ctx, repo, lower, baseRef, tasks)
+	if err != nil || !all {
+		return nil, false, err
+	}
+	return found, true, nil
 }
 
 func state(ctx context.Context, repo git.Repo, r *Report) (State, error) {

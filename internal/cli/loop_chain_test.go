@@ -144,10 +144,12 @@ func TestLoopChainMergeRefusal(t *testing.T) {
 		h, git := chainFixture(t)
 		c := &chainHarness{h: h}
 		useHook(t, hookHarness{inner: c, hook: func() {
+			work := git("branch", "--show-current")
 			git("switch", "--quiet", "main")
 			_ = os.WriteFile(filepath.Join(h.dir, "extra.txt"), []byte("x\n"), 0o644)
 			git("add", "extra.txt")
 			git("commit", "--quiet", "-m", "extra")
+			git("switch", "--quiet", work)
 		}})
 		out, _, err := h.run("", "loop", "--initiative", "I-1", "--merge")
 		if !errors.Is(err, errs.ErrNeedsHuman) || !strings.Contains(out, "stopped at M-2:") {
@@ -214,10 +216,12 @@ func TestLoopChainForceDoesNotOverrideMergeRefusal(t *testing.T) {
 	h.ok("milestone", "update", "M-2", "--depends-on", "M-3")
 	c := &chainHarness{h: h}
 	useHook(t, hookHarness{inner: c, hook: func() {
+		work := git("branch", "--show-current")
 		git("switch", "--quiet", "main")
 		_ = os.WriteFile(filepath.Join(h.dir, "extra.txt"), []byte("x\n"), 0o644)
 		git("add", "extra.txt")
 		git("commit", "--quiet", "-m", "extra")
+		git("switch", "--quiet", work)
 	}})
 	out, _, err := h.run("", "loop", "--initiative", "I-1", "--merge", "--force")
 	if !errors.Is(err, errs.ErrNeedsHuman) || strings.Join(c.calls, ",") != "T-2" || !strings.Contains(out, "stopped at M-2:") {

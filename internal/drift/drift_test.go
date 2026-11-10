@@ -211,6 +211,13 @@ func (e *env) check(in Input) Report {
 	return r
 }
 
+func wantMergedBy(t *testing.T, r Report, by string) {
+	t.Helper()
+	if r.MergedBy != by {
+		t.Errorf("merged_by = %q, want %q", r.MergedBy, by)
+	}
+}
+
 func wantState(t *testing.T, r Report, s State) {
 	t.Helper()
 	if r.State != s {
@@ -316,6 +323,9 @@ func TestReportJSON(t *testing.T) {
 		if _, ok := task[k]; !ok {
 			t.Errorf("task finding lacks %q: %s", k, data)
 		}
+	}
+	if _, ok := m["merged_by"]; ok {
+		t.Errorf("JSON has merged_by for a non-merged state: %s", data)
 	}
 
 	gitCmd(t, e.root, "switch", "--quiet", "main")
@@ -489,6 +499,7 @@ func TestMerged(t *testing.T) {
 
 	r := e.check(e.input())
 	wantState(t, r, StateMerged)
+	wantMergedBy(t, r, MergedByAncestry)
 	wantTasks(t, r, want{MatchPresent, c1})
 	if !r.BranchExists {
 		t.Error("branch_exists = false for an existing branch")
@@ -540,6 +551,7 @@ func TestMergedBranchDeletedWithOrigin(t *testing.T) {
 
 	r := e.check(e.input())
 	wantState(t, r, StateMerged)
+	wantMergedBy(t, r, MergedByAncestry)
 	if !r.RemoteBranchExists {
 		t.Error("remote_branch_exists = false with origin/" + branch)
 	}
@@ -1175,4 +1187,108 @@ func TestTasksInBasePatchIDsAreLazy(t *testing.T) {
 	if calls != 0 {
 		t.Errorf("PatchID called %d times, want 0 when every task matches by trailer", calls)
 	}
+}
+
+// squashed records the branch at its tip and squash-merges it into main with
+// the given trailers kept, returning the squash commit.
+func (e *env) squashed(trailers ...string) string {
+	e.t.Helper()
+	e.recordHere()
+	gitCmd(e.t, e.root, "switch", "--quiet", "main")
+	gitCmd(e.t, e.root, "merge", "--squash", "--quiet", branch)
+	msg := "Squashed"
+	if len(trailers) > 0 {
+		msg += "\n\n" + strings.Join(trailers, "\n")
+	}
+	gitCmd(e.t, e.root, "commit", "--quiet", "-m", msg)
+	return e.rev("HEAD")
+}
+
+func TestMergedBySquashTrailers(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	e.do(0, true)
+	e.do(1, true)
+	sq := e.squashed("Ralph-Task: "+taskID(e.tasks[0]), "Ralph-Task: "+taskID(e.tasks[1]))
+
+	r := e.check(e.input())
+	wantState(t, r, StateMerged)
+	wantMergedBy(t, r, MergedByTasks)
+	wantTasks(t, r, want{MatchTrailer, sq}, want{MatchTrailer, sq})
+	wantCommits(t, "unattributed", r.UnattributedCommits)
+	if r.ExtraCommits != nil || r.LostCommits != nil || !r.BranchExists {
+		t.Errorf("extra %v, lost %v, branch_exists %v", r.ExtraCommits, r.LostCommits, r.BranchExists)
+	}
+	if s := r.Summary(); !strings.Contains(s, "already merged into main (squash or rebase merge)") || strings.Contains(s, "branch deleted") {
+		t.Errorf("summary = %q", s)
+	}
+
+	gitCmd(t, e.root, "branch", "--quiet", "-D", branch)
+	r = e.check(e.input())
+	wantState(t, r, StateMerged)
+	wantMergedBy(t, r, MergedByTasks)
+	wantTasks(t, r, want{MatchTrailer, sq}, want{MatchTrailer, sq})
+	if r.BranchExists {
+		t.Error("branch_exists = true after deleting the branch")
+	}
+	if s := r.Summary(); !strings.Contains(s, "(squash or rebase merge)") || !strings.Contains(s, "(branch deleted)") {
+		t.Errorf("summary = %q", s)
+	}
+}
+
+func TestMergedByRebasePatchID(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	c1, c2 := e.do(0, false), e.do(1, false)
+	e.recordHere()
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	e.commit("other.txt", "x\n", "unrelated")
+	gitCmd(t, e.root, "cherry-pick", c1)
+	p1 := e.rev("HEAD")
+	gitCmd(t, e.root, "cherry-pick", c2)
+	p2 := e.rev("HEAD")
+
+	r := e.check(e.input())
+	wantState(t, r, StateMerged)
+	wantMergedBy(t, r, MergedByTasks)
+	wantTasks(t, r, want{MatchPatchID, p1}, want{MatchPatchID, p2})
+}
+
+func TestPartialSquashNotMerged(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	e.do(0, true)
+	e.do(1, true)
+	e.squashed("Ralph-Task: " + taskID(e.tasks[0]))
+
+	r := e.check(e.input())
+	wantState(t, r, StateUnchanged)
+	wantMergedBy(t, r, "")
+
+	gitCmd(t, e.root, "branch", "--quiet", "-D", branch)
+	r = e.check(e.input())
+	wantState(t, r, StateBranchMissing)
+	wantMergedBy(t, r, "")
+}
+
+func TestSubjectOnlyOnMainNotMerged(t *testing.T) {
+	e := newEnv(t, "login")
+	e.do(0, true)
+	tv := e.doneViews()[0]
+	e.recordHere()
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	e.commit("other.txt", "something else\n", subject(tv))
+
+	r := e.check(e.input())
+	wantState(t, r, StateUnchanged)
+	wantMergedBy(t, r, "")
+}
+
+func TestNoDoneTasksNotMergedByTasks(t *testing.T) {
+	e := newEnv(t, "login")
+	e.commit("a.txt", "a\n", "work")
+	e.recordHere()
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	e.commit("b.txt", "b\n", "Ralph-Task: "+taskID(e.tasks[0]))
+
+	r := e.check(e.input())
+	wantState(t, r, StateUnchanged)
+	wantMergedBy(t, r, "")
 }

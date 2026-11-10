@@ -743,8 +743,55 @@ func TestMilestoneReconcileMergedDeletedBranch(t *testing.T) {
 	for _, want := range []string{
 		"M-1 branch ralph/login is already merged into main (branch deleted)",
 		"state:    merged",
+		"merged by: ancestry",
 		"tip:      (branch does not exist locally)",
 		"T-1   present  " + c1[:12] + "  Route",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestMilestoneReconcileSquashMerged(t *testing.T) {
+	h, git, commit := newGitTestEnv(t)
+	base := git("rev-parse", "HEAD")
+
+	h.ok("initiative", "create", "--title", "SSO")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Login")
+	h.ok("task", "create", "--milestone", "M-1", "--title", "Route", "--description", "d", "--criteria", "c")
+	git("switch", "--quiet", "-c", "ralph/login")
+	h.ok("task", "status", "T-1", "TODO")
+	h.ok("task", "status", "T-1", "IN_PROGRESS")
+	h.ok("task", "status", "T-1", "DONE", "--reason", "done")
+	c1 := commit("T-1.txt", "T-1: work\n\nRalph-Task: T-1")
+
+	cfg, err := config.Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Embeddings.Provider = config.EmbeddingsNone
+	svc, closeFn, err := service.Open(context.Background(), cfg, h.dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeFn()
+	if err := svc.RecordMilestoneGit(context.Background(), 1, domain.MilestoneGit{Branch: "ralph/login", BaseCommit: base, HeadCommit: c1}); err != nil {
+		t.Fatal(err)
+	}
+
+	git("switch", "--quiet", "main")
+	git("merge", "--squash", "--quiet", "ralph/login")
+	git("commit", "--quiet", "-m", "Login\n\nRalph-Task: T-1")
+
+	out, _, err := h.run("", "milestone", "reconcile", "M-1")
+	if !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("err = %v, want ErrNeedsHuman", err)
+	}
+	for _, want := range []string{
+		"M-1 branch ralph/login is already merged into main (squash or rebase merge)",
+		"state:    merged",
+		"merged by: tasks",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("report lacks %q:\n%s", want, out)
