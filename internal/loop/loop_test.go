@@ -242,9 +242,6 @@ func TestBranchNameCardKeys(t *testing.T) {
 	if got, err := BranchName("{{.Milestone.CardKey}}", i, m, empty); err == nil {
 		t.Errorf("empty key = %q, want validation error", got)
 	}
-	if got, err := BranchName("{{.Milestone.CardKey}}-x", i, m, empty); err == nil {
-		t.Errorf("empty key with suffix = %q, want validation error", got)
-	}
 	if got, err := BranchName("ralph/{{.Milestone.Slug}}", i, m, empty); err != nil || got != "ralph/oidc-login" {
 		t.Errorf("default = %q, %v", got, err)
 	}
@@ -270,5 +267,51 @@ func TestCommitTemplateRejectsCardKey(t *testing.T) {
 	_, err = commitMessage(tmpl, commitData{Milestone: Ref{ID: "M-1"}})
 	if err == nil || !strings.Contains(err.Error(), "CardKey") {
 		t.Errorf("err = %v, want unknown field", err)
+	}
+}
+
+func TestBranchNameEmptyKeyCleanup(t *testing.T) {
+	i := Ref{ID: "I-1", Slug: "sso"}
+	m := Ref{ID: "M-2", Slug: "implement-cool-feature"}
+	none := BranchKeys{}
+	both := BranchKeys{Initiative: "ABC-1", Milestone: "ABC-1234"}
+	cases := []struct {
+		name, tmpl string
+		keys       BranchKeys
+		want       string
+		wantErr    string
+	}{
+		{"dash empty", "{{.Milestone.CardKey}}-{{.Milestone.Slug}}", none, "implement-cool-feature", ""},
+		{"dash key", "{{.Milestone.CardKey}}-{{.Milestone.Slug}}", both, "ABC-1234-implement-cool-feature", ""},
+		{"prefix empty", "{{.Milestone.CardKeyPrefix}}{{.Milestone.Slug}}", none, "implement-cool-feature", ""},
+		{"prefix key", "{{.Milestone.CardKeyPrefix}}{{.Milestone.Slug}}", both, "ABC-1234-implement-cool-feature", ""},
+		{"path empty", "feature/{{.Milestone.CardKey}}-x", none, "feature/x", ""},
+		{"path key", "feature/{{.Milestone.CardKey}}-x", BranchKeys{Milestone: "ABC-1"}, "feature/ABC-1-x", ""},
+		{"both prefixes empty", "{{.Initiative.CardKeyPrefix}}{{.Milestone.CardKeyPrefix}}{{.Milestone.Slug}}", none, "implement-cool-feature", ""},
+		{"nested both empty", "{{.Initiative.CardKey}}/{{.Milestone.CardKey}}-{{.Milestone.Slug}}", none, "implement-cool-feature", ""},
+		{"nested initiative empty", "{{.Initiative.CardKey}}/{{.Milestone.CardKey}}-{{.Milestone.Slug}}", BranchKeys{Milestone: "ABC-1234"}, "ABC-1234-implement-cool-feature", ""},
+		{"underscore", "{{.Milestone.CardKey}}_{{.Milestone.Slug}}", none, "implement-cool-feature", ""},
+		{"dot", "{{.Milestone.CardKey}}.{{.Milestone.Slug}}", none, "implement-cool-feature", ""},
+		{"no key fields untouched", "a--b", none, "a--b", ""},
+		{"no key fields untouched x--y", "x--{{.Milestone.ID}}", none, "x--M-2", ""},
+		{"key present slug dashes kept", "{{.Milestone.CardKey}}-{{.Milestone.Slug}}", BranchKeys{Initiative: "ABC-1", Milestone: "ABC-1"}, "ABC-1-implement-cool-feature", ""},
+		{"nothing left", "{{.Milestone.CardKey}}", none, "", "branch name is empty"},
+		{"space still fails", "{{.Milestone.CardKey}} x y", none, "", "invalid character"},
+		{"invalid key space", "{{.Milestone.CardKeyPrefix}}{{.Milestone.Slug}}", BranchKeys{Milestone: "AB C-1"}, "implement-cool-feature", ""},
+		{"invalid key colon", "{{.Milestone.CardKeyPrefix}}{{.Milestone.Slug}}", BranchKeys{Milestone: "AB:1"}, "implement-cool-feature", ""},
+		{"invalid template regardless", "{{.Milestone.CardKey}}{{.Milestone.Slug}}..x", both, "", "must not contain"},
+		{"invalid template empty keys", "{{.Milestone.CardKey}}{{.Milestone.Slug}}..x", none, "", "must not contain"},
+	}
+	for _, c := range cases {
+		got, err := BranchName(c.tmpl, i, m, c.keys)
+		if c.wantErr != "" {
+			if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+				t.Errorf("%s: BranchName = %q, %v; want error containing %q", c.name, got, err, c.wantErr)
+			}
+			continue
+		}
+		if err != nil || got != c.want {
+			t.Errorf("%s: BranchName = %q, %v; want %q", c.name, got, err, c.want)
+		}
 	}
 }

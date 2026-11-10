@@ -219,21 +219,55 @@ func MilestoneBranch(tmpl string, initiative, milestone Ref, keys BranchKeys, re
 }
 
 // BranchName renders the branch template and checks the result is a usable
-// git branch name.
+// git branch name. A template that uses card keys is cleaned up when a key is
+// empty, and falls back to empty keys when the real keys give an invalid name.
 func BranchName(tmpl string, initiative, milestone Ref, keys BranchKeys) (string, error) {
 	t, err := template.New("branch").Option("missingkey=error").Parse(tmpl)
 	if err != nil {
 		return "", fmt.Errorf("loop.branch_template: %w", err)
 	}
+	usesKeys := strings.Contains(tmpl, "CardKey")
+	name, err := renderBranch(t, initiative, milestone, keys, usesKeys)
+	if err != nil {
+		return "", err
+	}
+	verr := validateBranch(name)
+	if verr == nil {
+		return name, nil
+	}
+	if usesKeys && keys != (BranchKeys{}) {
+		if plain, err := renderBranch(t, initiative, milestone, BranchKeys{}, true); err == nil && validateBranch(plain) == nil {
+			return plain, nil
+		}
+	}
+	return "", fmt.Errorf("loop.branch_template produced %q: %w", name, verr)
+}
+
+func renderBranch(t *template.Template, initiative, milestone Ref, keys BranchKeys, usesKeys bool) (string, error) {
 	var b strings.Builder
 	if err := t.Execute(&b, struct{ Initiative, Milestone BranchRef }{branchRef(initiative, keys.Initiative), branchRef(milestone, keys.Milestone)}); err != nil {
 		return "", fmt.Errorf("loop.branch_template: %w", err)
 	}
 	name := strings.TrimSpace(b.String())
-	if err := validateBranch(name); err != nil {
-		return "", fmt.Errorf("loop.branch_template produced %q: %w", name, err)
+	if usesKeys && (keys.Initiative == "" || keys.Milestone == "") {
+		name = cleanBranch(name)
 	}
 	return name, nil
+}
+
+// cleanBranch removes the separators an empty card key leaves behind.
+func cleanBranch(name string) string {
+	var parts []string
+	for _, part := range strings.Split(name, "/") {
+		part = strings.TrimLeft(part, "-_.")
+		for strings.Contains(part, "--") {
+			part = strings.ReplaceAll(part, "--", "-")
+		}
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, "/")
 }
 
 func branchRef(r Ref, key string) BranchRef {
