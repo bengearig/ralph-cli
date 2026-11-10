@@ -284,6 +284,162 @@ It does not switch, and never changes the run's exit code, in these cases:
 
 [`ralph milestone merge`](cli.md#ralph-milestone-merge) is different: it leaves the base branch checked out.
 
+### Looping an initiative
+
+```sh
+ralph loop --initiative I-1 [--merge] [--force]
+ralph loop --initiative I-1 [--merge] --dry-run
+```
+
+`--initiative` takes the place of `--milestone`: exactly one of the two is required. Instead of one named milestone, the
+loop works through the initiative's milestones in order, running each the way `--milestone` does. An archived
+initiative is refused, as it is everywhere else.
+
+**Order.** Milestones are taken in position order. Each is classified, and the first one that is neither merged nor
+cancelled decides what happens next:
+
+| Disposition | Meaning | What the chain does |
+|---|---|---|
+| `merged` | Every task is done and the drift check reports `merged`. | Skipped. |
+| `cancelled` | Every task is cancelled. | Skipped. |
+| `ready` | Has `TODO` or `IN_PROGRESS` tasks and its dependencies are satisfied. | Runs it. |
+| `done_unmerged` | `DONE`, but not yet in the base branch. | Merges it with `--merge`; otherwise stops and names `ralph milestone merge`. |
+| `waiting` | Has loopable tasks, but a dependency is not satisfied (see [Milestone dependencies](#milestone-dependencies)). | Stops with the dependency's message and fix. |
+| `blocked` | Has `BLOCKED` tasks and nothing loopable. | Stops: `has BLOCKED tasks`, `unblock them, then rerun`. |
+| `not_ready` | Has no `TODO` tasks, or has `PROPOSED` ones. | Stops: `has no TODO tasks` or `has PROPOSED tasks`, then `/ralph:articulate <milestone>`. |
+
+An initiative with no milestones, or where every milestone is merged or cancelled, is complete.
+
+**One milestone per invocation.** By default the loop runs the first runnable milestone to its end and stops, so a person
+can review it and merge it before the next one starts. The next invocation finds that milestone `done_unmerged` and stops
+until it is merged (`ralph milestone merge`, or the merge on the hosting service), then carries on with the one after.
+
+**`--merge`.** With `--merge` the loop carries on instead: when a milestone ends `DONE` it merges it into the base branch
+and continues with the next, until the initiative is complete or something stops it. It merges by the rules of
+[`ralph milestone merge`](cli.md#ralph-milestone-merge): fast-forward only, never a merge commit, with every check made
+before git is touched. Two rules are not negotiable:
+
+- A milestone that is not `DONE` is never merged. If a run ends with the milestone still unfinished, the chain stops.
+- A merge that is refused (drift, a dirty working tree, a base branch that cannot be fast-forwarded) stops the chain. The
+  refusal is printed and nothing further is run. `--force` does not override it.
+
+`--merge` is only valid with `--initiative`; with `--milestone` the command fails with `--merge requires --initiative`.
+Merging is opt-in because ralph's principle is that agents propose and people merge; see
+[ADR 29](adr/0029-looping-an-initiative.md).
+
+**`--force`** has the same meaning as for one milestone: unmerged dependencies do not hold a milestone back.
+
+**`--dry-run`** prints the table of milestones and the first decision, and changes nothing. The columns are `ID`,
+`STATUS`, `DISPOSITION`, and `REASON`, and the last line is one of:
+
+| Line | Meaning |
+|---|---|
+| `next: run M-2` | The next step is to loop that milestone. |
+| `next: merge M-2` | With `--merge`, the next step is to merge that milestone. |
+| `next: stop at M-2: <reason>; <fix>` | The chain would stop there. |
+| `next: complete` | Nothing is left to do. |
+
+With `--merge` a dry run also prints `later steps depend on earlier ones succeeding; nothing was changed`, because only
+the first step can be predicted. With `--json` the dry run prints the initiative, the entries, and the next step.
+
+**Messages.** The chain prints one line per decision on stdout (on stderr with `--json`), alongside each milestone's own
+progress feed and summary line:
+
+| Line | When |
+|---|---|
+| `next: M-1` | With `--merge`, before running a milestone. |
+| `merging M-1` | With `--merge`, before merging a milestone. |
+| `M-1 is already merged` | A merge that found nothing to do. |
+| `M-1 is DONE; review it, then merge: ralph milestone merge M-1; run ralph loop --initiative I-1 again for the next one` | Without `--merge`, after a milestone ended `DONE`. |
+| `stopped at M-1: <reason>; <fix>` | The next milestone needs a person, such as `needs a merge; ralph milestone merge M-1`. |
+| `stopped at M-1: the run ended <reason> and the milestone is <STATUS>, not DONE` | With `--merge`, a run that did not finish the milestone. |
+| `stopped at M-1: <error>` | With `--merge`, a merge was refused. |
+| `interrupted` | With `--merge`, Ctrl-C or `SIGTERM`. |
+| `initiative I-1 is complete: every milestone is merged or cancelled` | Nothing is left. |
+
+Because the chain re-reads every milestone's state before each step, it will not repeat itself forever: it gives up with
+`the chain made no progress after <n> steps; check milestone state with ralph loop --initiative <initiative> --dry-run`
+if it takes more steps than the milestones could need.
+
+**Exit codes.**
+
+| Code | When |
+|---|---|
+| `0` | The milestone that was run ended `DONE`, or the initiative is complete (also for a dry run). |
+| `3` | A person is needed: any stop above, a run that ended with `BLOCKED` or `PROPOSED` tasks or at the iteration limit, or a merge refused because a person has to act (an unfinished or drifted milestone, a dirty working tree, a base branch that cannot be fast-forwarded). |
+| `1` | An error, including a merge that failed for another reason, and an interrupted run. |
+
+**Which branch is checked out.** Each run returns to the branch it started from, as described in
+[Returning to the starting branch](#returning-to-the-starting-branch), so without `--merge` the starting branch is
+checked out at the end. A merge leaves the base branch checked out, so after a merge that is where the chain, and
+the next milestone's run, begins and ends.
+
+**An example.** An initiative with two milestones, one task each, started on `main`. Without `--merge`, one milestone
+per invocation, with a merge in between:
+
+```
+$ ralph loop --initiative I-1 --dry-run
+ID   STATUS  DISPOSITION  REASON
+M-1  READY   ready        
+M-2  READY   ready        
+next: run M-1
+$ ralph loop --initiative I-1
+creating ralph/login-page from main
+▶ [1/50] T-1 Work M-1
+✓ T-1 DONE · 0 turns · cost n/a · .ralph/runs/M-1/20261110-152631-001-T-1.jsonl
+  committed 5fee785 "T-1: Work M-1"
+■ M-1 is DONE; next: ralph pr create --milestone M-1
+returned to main
+M-1: completed after 1 iteration(s); 1 done, 1 commit(s), 0 blocked, 0 proposed, cost n/a
+M-1 is DONE; review it, then merge: ralph milestone merge M-1; run ralph loop --initiative I-1 again for the next one
+$ ralph loop --initiative I-1
+stopped at M-1: needs a merge; ralph milestone merge M-1
+$ echo $?
+3
+$ ralph milestone merge M-1
+merged M-1 into main: 50693e467d15..5fee78581c3f
+branch ralph/login-page kept
+$ ralph loop --initiative I-1
+```
+
+The last command runs `M-2` the same way and ends with its `is DONE; review it, then merge` line. After
+`ralph milestone merge M-2`, one more `ralph loop --initiative I-1` prints
+`initiative I-1 is complete: every milestone is merged or cancelled` and exits `0`.
+
+With `--merge` the same initiative runs to the end in one invocation:
+
+```
+$ ralph loop --initiative I-1 --merge --dry-run
+ID   STATUS  DISPOSITION  REASON
+M-1  READY   ready        
+M-2  READY   ready        
+next: run M-1
+later steps depend on earlier ones succeeding; nothing was changed
+$ ralph loop --initiative I-1 --merge
+next: M-1
+creating ralph/login-page from main
+▶ [1/50] T-1 Work M-1
+✓ T-1 DONE · 0 turns · cost n/a · .ralph/runs/M-1/20261110-152631-001-T-1.jsonl
+  committed 5fee785 "T-1: Work M-1"
+■ M-1 is DONE; next: ralph pr create --milestone M-1
+returned to main
+M-1: completed after 1 iteration(s); 1 done, 1 commit(s), 0 blocked, 0 proposed, cost n/a
+merging M-1
+next: M-2
+creating ralph/session-cookies from main
+▶ [1/50] T-2 Work M-2
+✓ T-2 DONE · 0 turns · cost n/a · .ralph/runs/M-2/20261110-152632-001-T-2.jsonl
+  committed 7ecd235 "T-2: Work M-2"
+■ M-2 is DONE; next: ralph pr create --milestone M-2
+returned to main
+M-2: completed after 1 iteration(s); 1 done, 1 commit(s), 0 blocked, 0 proposed, cost n/a
+merging M-2
+initiative I-1 is complete: every milestone is merged or cancelled
+```
+
+The sessions above are the output of the commands run with a stand-in harness; the feed lines go to stderr and the
+rest to stdout, so a terminal shows them interleaved as they happen.
+
 ### Requirements
 
 - **Approve the MCP server once.** Headless sessions use the project's `.mcp.json`. Claude Code requires you to

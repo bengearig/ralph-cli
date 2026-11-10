@@ -240,6 +240,12 @@ func (s *Service) CheckMilestoneWritable(ctx context.Context, id int64) error {
 	return requireWritable(ctx, s.store, domain.KindInitiative, m.InitiativeID)
 }
 
+// CheckInitiativeWritable returns an error wrapping ErrArchived when the
+// initiative is archived, and not found when it does not exist.
+func (s *Service) CheckInitiativeWritable(ctx context.Context, id int64) error {
+	return requireWritable(ctx, s.store, domain.KindInitiative, id)
+}
+
 // ---- initiatives ----
 
 type InitiativeInput struct {

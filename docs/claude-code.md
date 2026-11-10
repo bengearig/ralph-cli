@@ -52,8 +52,8 @@ instructions if the server is not approved.
    task's description and acceptance criteria, and promotes it to `TODO` as soon as they are settled. It may add,
    split, reorder, or cancel tasks within a milestone; changes to milestones go back to Receive.
 3. **Check.** Run `/ralph:status`, or `ralph status` in a terminal.
-4. **Loop.** Run `ralph loop --milestone M-1` in a terminal. Preview it first with `--dry-run --show-prompt`; see
-   [the loop](loop.md).
+4. **Loop.** Run `ralph loop --milestone M-1` in a terminal, or `ralph loop --initiative I-1` to work through an
+   initiative's milestones. Preview it first with `--dry-run --show-prompt`; see [the loop](loop.md).
 5. **Reconcile, if needed.** Run `/ralph:reconcile M-1` when `ralph pr create` or `ralph loop` refuses the milestone
    because its branch has drifted, or after you rebase, squash, reset, or rename the branch yourself. The agent
    checks the drift with read-only tools and explains, per task, where the recorded work is now. If anything needs

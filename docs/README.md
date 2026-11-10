@@ -29,5 +29,6 @@ provider, [ADR 22](adr/0022-create-cards-when-resources-are-created.md) records 
 [ADR 24](adr/0024-sync-cards-one-way-with-explicit-backfill.md) records how cards are kept in step, and
 [ADR 26](adr/0026-card-keys-in-commit-messages.md) records card keys in commit messages, and
 [ADR 27](adr/0027-merge-milestones-locally-with-fast-forward-only.md) records how milestones are merged locally, and
-[ADR 28](adr/0028-milestone-dependencies.md) records milestone dependencies. Add a new record
+[ADR 28](adr/0028-milestone-dependencies.md) records milestone dependencies, and
+[ADR 29](adr/0029-looping-an-initiative.md) records looping an initiative. Add a new record
 rather than editing an accepted one; mark the old record superseded.

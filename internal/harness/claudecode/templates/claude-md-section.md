@@ -24,4 +24,5 @@ request → **H**uman review. The plan lives in ralph's store, reached through t
   `/ralph:reconcile` or `ralph milestone reconcile`.
 
 Slash commands: `/ralph:receive`, `/ralph:articulate`, `/ralph:status`, `/ralph:search`, `/ralph:reconcile`. The loop
-runs outside this session via `ralph loop --milestone <ID>`.
+runs outside this session via `ralph loop --milestone <ID>` or `ralph loop --initiative <ID>`; a person merges a
+finished milestone with `ralph milestone merge`.
