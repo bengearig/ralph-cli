@@ -104,6 +104,12 @@ skipped with a reason, and skipped files do not change the exit status. Each que
 `changed` (its content differs from the queued record), `unchanged` (already imported, same content), or
 `already queued`. `--json` prints `{queued, skipped, warnings}`.
 
+`--as-new` skips the queue and creates one document per file, titled by the first `#` heading outside code fences
+(else the filename without its extension), with the file content as the body, and marks the file's record done.
+`--kind` (default `reference`) and `--initiative` set the kind and scope; `--again` creates a new document even for a
+file already imported. A file already imported unchanged is skipped; one that changed since is refused, pointing at
+`/ralph:import` or `--again`. Refused or failed files exit with status 3. `--json` prints `{imported, skipped, warnings}`.
+
 ## Agent integration
 
 | Command | Purpose |

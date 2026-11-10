@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -210,4 +211,149 @@ func validImportRelation(r domain.ImportRelation) bool {
 		}
 	}
 	return false
+}
+
+// Outcomes of an --as-new import.
+const (
+	AsNewCreated = "created"
+	AsNewSkipped = "skipped"
+	AsNewRefused = "refused"
+	AsNewFailed  = "failed"
+)
+
+// AsNewChangedHint explains a refusal for a file that changed since its import.
+const AsNewChangedHint = "changed since its last import; use /ralph:import to integrate it, or --again to create a new document"
+
+// AsNewReasonImported is the reason for skipping an unchanged, already imported file.
+const AsNewReasonImported = "already imported"
+
+// AsNewOptions scope and shape the documents ImportAsNew creates.
+type AsNewOptions struct {
+	Kind domain.DocKind
+	// InitiativeID zero means project-wide documents.
+	InitiativeID int64
+	// Again creates a new document even for files that were already imported.
+	Again bool
+}
+
+// AsNewOutcome says what ImportAsNew did for one path.
+type AsNewOutcome struct {
+	Path     string `json:"path"`
+	Outcome  string `json:"outcome"`
+	Document string `json:"document,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+// ImportAsNew imports each file as one new document and records it done. Each
+// file is its own transaction; a per-file error is reported as a failed outcome.
+func (s *Service) ImportAsNew(ctx context.Context, files []ImportFile, opts AsNewOptions) ([]AsNewOutcome, error) {
+	if _, err := domain.ParseDocKind(string(opts.Kind)); err != nil {
+		return nil, err
+	}
+	for _, f := range files {
+		if err := ValidateImportPath(f.Path); err != nil {
+			return nil, err
+		}
+	}
+	if opts.InitiativeID != 0 {
+		if err := requireWritable(ctx, s.store, domain.KindInitiative, opts.InitiativeID); err != nil {
+			return nil, fmt.Errorf("--as-new initiative %s: %w", domain.FormatID(domain.KindInitiative, opts.InitiativeID), err)
+		}
+	}
+	out := make([]AsNewOutcome, 0, len(files))
+	for _, f := range files {
+		var o AsNewOutcome
+		err := s.InTx(ctx, func(tx *Service) error {
+			var err error
+			o, err = tx.importAsNew(ctx, f, opts)
+			return err
+		})
+		if err != nil {
+			o = AsNewOutcome{Path: f.Path, Outcome: AsNewFailed, Reason: err.Error()}
+		}
+		out = append(out, o)
+	}
+	return out, nil
+}
+
+func (s *Service) importAsNew(ctx context.Context, f ImportFile, opts AsNewOptions) (AsNewOutcome, error) {
+	hash := hashContent(f.Content)
+	im, err := s.store.GetImportByPath(ctx, f.Path)
+	exists := err == nil
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return AsNewOutcome{}, err
+	}
+	if exists && im.Status == domain.ImportDone && !opts.Again {
+		if im.ContentHash == hash {
+			return AsNewOutcome{Path: f.Path, Outcome: AsNewSkipped, Reason: AsNewReasonImported}, nil
+		}
+		return AsNewOutcome{Path: f.Path, Outcome: AsNewRefused, Reason: AsNewChangedHint}, nil
+	}
+	doc, err := s.CreateDocument(ctx, DocumentInput{
+		InitiativeID: opts.InitiativeID,
+		Kind:         opts.Kind,
+		Title:        importTitle(f),
+		Body:         f.Content,
+	})
+	if err != nil {
+		return AsNewOutcome{}, err
+	}
+	docID, err := domain.ParseID(domain.KindDocument, doc.ID)
+	if err != nil {
+		return AsNewOutcome{}, err
+	}
+	now := time.Now().UTC()
+	im.Path, im.Content, im.ContentHash, im.Size = f.Path, f.Content, hash, int64(len(f.Content))
+	im.Status, im.Note = domain.ImportDone, ""
+	im.LastDoneHash, im.ProcessedAt = hash, now
+	if exists {
+		err = s.store.UpdateImport(ctx, &im)
+	} else {
+		im.QueuedAt = now
+		err = s.store.CreateImport(ctx, &im)
+	}
+	if err != nil {
+		return AsNewOutcome{}, err
+	}
+	if err := s.store.AddImportLink(ctx, im.ID, docID, domain.ImportCreated); err != nil {
+		return AsNewOutcome{}, err
+	}
+	return AsNewOutcome{Path: f.Path, Outcome: AsNewCreated, Document: doc.ID}, nil
+}
+
+var headingRE = regexp.MustCompile(`^#\s+(.+)`)
+
+// importTitle is the first level-one heading outside fenced code blocks, else
+// the filename without its extension.
+func importTitle(f ImportFile) string {
+	var fence string
+	for _, line := range strings.Split(f.Content, "\n") {
+		line = strings.TrimRight(line, "\r")
+		trimmed := strings.TrimLeft(line, " ")
+		if len(line)-len(trimmed) <= 3 {
+			for _, marker := range []string{"```", "~~~"} {
+				if strings.HasPrefix(trimmed, marker) {
+					switch fence {
+					case "":
+						fence = marker
+					case marker:
+						fence = ""
+					}
+				}
+			}
+			if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+				continue
+			}
+		}
+		if fence != "" {
+			continue
+		}
+		if m := headingRE.FindStringSubmatch(line); m != nil {
+			if t := strings.TrimSpace(m[1]); t != "" {
+				return t
+			}
+		}
+	}
+	base := path.Base(f.Path)
+	return strings.TrimSuffix(base, path.Ext(base))
 }

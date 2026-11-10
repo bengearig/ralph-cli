@@ -1252,3 +1252,65 @@ func TestImportNeedsInput(t *testing.T) {
 		t.Error("expected an error with no --dir or --file")
 	}
 }
+
+func TestImportAsNew(t *testing.T) {
+	h := importFixture(t)
+	out := h.ok("import", "--as-new", "--file", "docs/a.md", "--file", "docs/b.md")
+	if !strings.Contains(out, "created (2):\n  docs/a.md -> D-1\n  docs/b.md -> D-2\n") {
+		t.Errorf("out:\n%s", out)
+	}
+	var doc struct{ Title, Kind string }
+	h.json(&doc, "doc", "show", "D-1")
+	if doc.Title != "A" || doc.Kind != "reference" {
+		t.Errorf("doc = %+v", doc)
+	}
+
+	out = h.ok("import", "--as-new", "--file", "docs/a.md", "--dir", "docs")
+	if !strings.Contains(out, "skipped (2):\n  docs/a.md: already imported\n") || !strings.Contains(out, "not imported (1):\n  docs/blob.bin: not text") {
+		t.Errorf("rerun:\n%s", out)
+	}
+
+	if err := os.WriteFile(filepath.Join(h.dir, "docs", "a.md"), []byte("# A2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := h.run("", "import", "--as-new", "--file", "docs/a.md")
+	if !errors.Is(err, errs.ErrNeedsHuman) || !strings.Contains(stdout, "refused (1):\n  docs/a.md: changed since its last import") {
+		t.Errorf("refused: err=%v\n%s", err, stdout)
+	}
+
+	var res struct {
+		Imported []service.AsNewOutcome `json:"imported"`
+	}
+	h.json(&res, "import", "--as-new", "--again", "--kind", "design", "--file", "docs/a.md")
+	if len(res.Imported) != 1 || res.Imported[0].Outcome != "created" || res.Imported[0].Document != "D-3" {
+		t.Errorf("again = %+v", res.Imported)
+	}
+}
+
+func TestImportAsNewOptions(t *testing.T) {
+	h := importFixture(t)
+	h.ok("initiative", "create", "--title", "Docs")
+	h.ok("import", "--as-new", "--kind", "design", "--initiative", "I-1", "--file", "docs/a.md")
+	var doc struct {
+		Kind         string
+		InitiativeID string `json:"initiative_id"`
+	}
+	h.json(&doc, "doc", "show", "D-1")
+	if doc.Kind != "design" || doc.InitiativeID != "I-1" {
+		t.Errorf("doc = %+v", doc)
+	}
+	for _, args := range [][]string{
+		{"--kind", "bogus"}, {"--initiative", "I-9"}, {"--initiative", "nope"},
+	} {
+		all := append([]string{"import", "--as-new", "--file", "docs/b.md"}, args...)
+		if _, _, err := h.run("", all...); err == nil {
+			t.Errorf("%v accepted", args)
+		}
+	}
+	if h.exists("doc", "show", "D-2") {
+		t.Error("a document was created despite invalid options")
+	}
+	if _, _, err := h.run("", "import", "--file", "docs/b.md", "--again"); err == nil {
+		t.Error("--again without --as-new accepted")
+	}
+}

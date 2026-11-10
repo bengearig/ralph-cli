@@ -879,3 +879,96 @@ func TestImportViews(t *testing.T) {
 		t.Fatalf("json has content: %s", raw)
 	}
 }
+
+func TestImportAsNew(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	ini, err := e.svc.CreateInitiative(ctx, InitiativeInput{Title: "Docs", Brief: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	iid, _ := domain.ParseID(domain.KindInitiative, ini.ID)
+	md := "intro\n```\n# not a title\n```\n# Heading\nbody\n"
+	files := []ImportFile{{Path: "docs/a.md", Content: md}, {Path: "docs/notes.txt", Content: "plain text"}, {Path: "cfg/app.json", Content: `{"a":1}`}}
+	out, err := e.svc.ImportAsNew(ctx, files, AsNewOptions{Kind: domain.DocDesign, InitiativeID: iid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, o := range out {
+		if o.Outcome != AsNewCreated || o.Document == "" {
+			t.Fatalf("outcome %d = %+v", i, o)
+		}
+	}
+	for i, want := range []string{"Heading", "notes", "app"} {
+		d, err := e.svc.GetDocument(ctx, int64(i+1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Title != want || d.Kind != "design" || d.InitiativeID != ini.ID || d.Body != strings.TrimSpace(files[i].Content) {
+			t.Errorf("doc %d = %+v", i, d)
+		}
+	}
+	v := importStatus(t, e, "docs/a.md")
+	if v.Status != "done" || len(v.Links) != 1 || v.Links[0].Relation != "created" {
+		t.Fatalf("record = %+v", v)
+	}
+
+	out, _ = e.svc.ImportAsNew(ctx, files[:1], AsNewOptions{Kind: domain.DocDesign, InitiativeID: iid})
+	if out[0].Outcome != AsNewSkipped || out[0].Reason != "already imported" {
+		t.Fatalf("rerun = %+v", out[0])
+	}
+	changed := []ImportFile{{Path: "docs/a.md", Content: md + "more\n"}}
+	out, _ = e.svc.ImportAsNew(ctx, changed, AsNewOptions{Kind: domain.DocDesign, InitiativeID: iid})
+	if out[0].Outcome != AsNewRefused || out[0].Reason != AsNewChangedHint {
+		t.Fatalf("changed = %+v", out[0])
+	}
+	out, _ = e.svc.ImportAsNew(ctx, changed, AsNewOptions{Kind: domain.DocDesign, InitiativeID: iid, Again: true})
+	if out[0].Outcome != AsNewCreated {
+		t.Fatalf("again = %+v", out[0])
+	}
+	v = importStatus(t, e, "docs/a.md")
+	if v.Status != "done" || len(v.Links) != 2 {
+		t.Fatalf("record after again = %+v", v)
+	}
+	if docs, _ := e.svc.ListDocuments(ctx, DocumentFilter{}); len(docs) != 4 {
+		t.Fatalf("documents = %d", len(docs))
+	}
+}
+
+func TestImportAsNewUpFrontErrors(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	f := []ImportFile{{Path: "a.md", Content: "# A"}}
+	if _, err := e.svc.ImportAsNew(ctx, f, AsNewOptions{Kind: "bogus"}); !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("kind err = %v", err)
+	}
+	if _, err := e.svc.ImportAsNew(ctx, f, AsNewOptions{Kind: domain.DocReference, InitiativeID: 99}); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("initiative err = %v", err)
+	}
+	ini, _ := e.svc.CreateInitiative(ctx, InitiativeInput{Title: "X", Brief: "b"})
+	if _, err := e.svc.ArchiveInitiative(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.ImportAsNew(ctx, f, AsNewOptions{Kind: domain.DocReference, InitiativeID: 1}); err == nil {
+		t.Errorf("archived initiative %s accepted", ini.ID)
+	}
+	if list, _ := e.svc.ListImports(ctx, nil); len(list) != 0 {
+		t.Errorf("records = %+v", list)
+	}
+}
+
+func TestImportAsNewIsolatesFailures(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	files := []ImportFile{{Path: "a.md", Content: "# A"}, {Path: "docs/.md", Content: "no title"}, {Path: "c.md", Content: "# C"}}
+	out, err := e.svc.ImportAsNew(ctx, files, AsNewOptions{Kind: domain.DocReference})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out[0].Outcome != AsNewCreated || out[1].Outcome != AsNewFailed || out[1].Reason == "" || out[2].Outcome != AsNewCreated {
+		t.Fatalf("out = %+v", out)
+	}
+	if list, _ := e.svc.ListImports(ctx, nil); len(list) != 2 {
+		t.Fatalf("records = %+v", list)
+	}
+}
