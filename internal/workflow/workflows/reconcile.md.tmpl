@@ -56,14 +56,11 @@ Milestone: {{args}}
      Include the equivalent command, for example
      `ralph milestone reconcile <ID> --branch <name> --reopen T-3,T-4 --reason "<reason>" --accept`.
    - Call `ExitPlanMode` to request approval. If the user rejects the plan with feedback, revise the actions and
-     present the plan again.{{else}}6. Get the user's approval in plan mode:
-   - If the session is not already in plan mode, enter it with `EnterPlanMode`. If the user declines to enter plan
-     mode, apply nothing: show the proposed actions and print the equivalent CLI command for the user to run.
-   - Write the proposed actions as the plan: the branch, the tasks to reopen with the reason, and whether to accept.
-     Include the equivalent command, for example
-     `ralph milestone reconcile <ID> --branch <name> --reopen T-3,T-4 --reason "<reason>" --accept`.
-   - Call `ExitPlanMode` to request approval. If the user rejects the plan with feedback, revise the actions and
-     present the plan again.{{end}}
+     present the plan again.{{else}}6. Get the user's approval of the proposed actions: the branch, the tasks to reopen with the reason, and whether to
+   accept, together with the equivalent command, for example
+   `ralph milestone reconcile <ID> --branch <name> --reopen T-3,T-4 --reason "<reason>" --accept`.
+   {{template "approval" "the proposed actions"}} If the user declines, apply nothing: print the equivalent CLI command
+   for the user to run.{{end}}
 7. After the plan is approved, call `milestone_reconcile` with exactly the approved actions (`branch`, `reopen`,
    `reason`, `accept`), and nothing else. If it returns an error, nothing was changed: explain the error, revise the
    proposal, and get approval again as in step 6. Otherwise summarize the `after` report: its state and each task's

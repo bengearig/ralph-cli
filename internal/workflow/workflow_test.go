@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"flag"
 	"os"
 	"path/filepath"
 	"slices"
@@ -28,6 +29,7 @@ func TestRenderCommandMatchesGoldens(t *testing.T) {
 		}
 	}
 	goldens, _ := filepath.Glob("testdata/*.md")
+	goldens = slices.DeleteFunc(goldens, func(f string) bool { return strings.HasSuffix(f, ".neutral.md") })
 	if len(goldens) != len(ws) {
 		t.Errorf("%d goldens for %d workflows", len(goldens), len(ws))
 	}
@@ -101,7 +103,7 @@ func TestNeutralRendering(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", w.Name, err)
 		}
-		for _, bad := range []string{"$ARGUMENTS", "/ralph:"} {
+		for _, bad := range []string{"EnterPlanMode", "ExitPlanMode", "$ARGUMENTS", "/ralph:", "slash command"} {
 			if strings.Contains(out, bad) {
 				t.Errorf("%s: neutral rendering contains %q", w.Name, bad)
 			}
@@ -128,5 +130,44 @@ func TestRenderErrors(t *testing.T) {
 	}
 	if _, err := RenderCommand("nope"); err == nil {
 		t.Error("unknown command: want error")
+	}
+}
+
+var update = flag.Bool("update", false, "rewrite testdata/*.neutral.md snapshots")
+
+func TestNeutralApprovalWording(t *testing.T) {
+	for _, name := range []string{"receive", "reconcile"} {
+		out, err := Render(name, Data{Target: Neutral})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"plan or approval mode", "structured question tool", "explicitly confirm", "apply nothing"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s: neutral rendering lacks %q", name, want)
+			}
+		}
+	}
+}
+
+func TestNeutralSnapshots(t *testing.T) {
+	for _, w := range List() {
+		got, err := Render(w.Name, Data{Target: Neutral})
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join("testdata", w.Name+".neutral.md")
+		if *update {
+			if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		want, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("%s: %v (run go test ./internal/workflow -update)", w.Name, err)
+		}
+		if got != string(want) {
+			t.Errorf("%s: neutral rendering differs from %s (run go test ./internal/workflow -update)", w.Name, path)
+		}
 	}
 }

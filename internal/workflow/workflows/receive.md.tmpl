@@ -19,7 +19,7 @@ Do the following, using the `ralph` MCP tools:
 
 1. If the arguments above are empty, ask the user to paste or dictate the instructions, and wait. If they are only an
    initiative ID (such as `I-1`), follow **Revising an initiative** below instead. Otherwise they are new instructions.
-   If they are new instructions and the session is already in plan mode, follow **Starting in plan mode** below.
+   If they are new instructions and {{if claudeCode}}the session is already in plan mode{{else}}the harness has a plan mode and it is already active{{end}}, follow **Starting in plan mode** below.
 2. Call `search` with the gist of the instructions to find related initiatives, documents, and tasks. Mention anything
    relevant.
 3. Call `initiative_create` with a short title and the instructions **verbatim** as the `brief`. Do not paraphrase the
@@ -46,9 +46,9 @@ Do the following, using the `ralph` MCP tools:
      `task_create` for each task with its title and summary as the description. Do not write acceptance criteria. The
      tasks stay `PROPOSED` until Articulate. Then show the user the outline with the new IDs (milestones with their
      one-line descriptions, tasks under each) and invite changes. Do not end by asking for agreement.
-   - **Approval needed:** follow **Approving through plan mode** below. Once the plan is approved, create the outline
+   - **Approval needed:** follow {{if claudeCode}}**Approving through plan mode**{{else}}**Approving the outline**{{end}} below. Once the plan is approved, create the outline
      and show it with its IDs as above.
-   - If the user asks for changes to the outline just created, revise it in place in this session: `milestone_update`
+   - If the user asks for changes to the outline just created, revise it in place{{if claudeCode}} in this session{{end}}: `milestone_update`
      and `task_update` for edits, `milestone_create` and `task_create` for additions, and `task_set_status`
      `CANCELLED` with a reason for tasks no longer wanted. Record any new decisions as documents, as in step 6.
 9. Finish with `status`, summarize what was received and planned, and suggest {{if claudeCode}}`/ralph:articulate <initiative ID>`{{else}}{{cmd "articulate"}} for <initiative ID>{{end}}
@@ -80,29 +80,25 @@ approved.
 4. Once the plan is approved, call `initiative_create`, then `doc_create` for each document, then create the outline
    as in step 8 and show it with its IDs. Approval has already been given, so `confirm_outline` in the
    `initiative_create` result changes nothing.
-5. Finish as in step 9 above.{{else}}## Approving through plan mode
+5. Finish as in step 9 above.{{else}}## Approving the outline
 
-Whenever approval is needed, present the outline in the harness's plan mode, and create or apply it only once the plan
-is approved. In Claude Code:
+Whenever approval is needed, create or apply the outline only once it is approved.
 
-1. If the session is not already in plan mode, enter it with `EnterPlanMode`. If the user declines to enter plan mode,
-   create nothing: show the outline in a message and say it will be created once they confirm.
-2. Write the outline as the plan: milestones in order with their one-line descriptions, and tasks under each.
-3. Call `ExitPlanMode` to request approval. If the user rejects the plan with feedback, revise the outline and present
-   it again.
-4. Create or apply the outline only after the plan is approved.
+{{template "approval" "the outline"}} If the user declines, create nothing.
+
+Write the outline as the plan or message: milestones in order with their one-line descriptions, and tasks under each.
 
 ## Starting in plan mode
 
-Use this when the session is already in plan mode as Receive starts. Write tools are unavailable until the plan is
-approved.
+Skip this section unless the harness has a plan mode and it is already active as Receive starts. Write tools are
+unavailable in plan mode until the plan is approved.
 
 1. Do the read-only work of steps 1, 2, 4, and 5 above: search, read the code, and ask the high-level questions. Do
    not call `initiative_create` or `doc_create` yet.
 2. Write the plan: the initiative title, the instructions **verbatim** as the brief, the `brief`, `decision`, and any
    `architecture` documents to record (as in step 6), and the outline (as in step 7).
-3. Call `ExitPlanMode` to request approval. If the user rejects the plan with feedback, revise it and present it
-   again.
+3. Request approval through the plan mode's approval step. If the user rejects the plan with feedback, revise it and
+   present it again.
 4. Once the plan is approved, call `initiative_create`, then `doc_create` for each document, then create the outline
    as in step 8 and show it with its IDs. Approval has already been given, so `confirm_outline` in the
    `initiative_create` result changes nothing.
@@ -116,8 +112,9 @@ Use this when the arguments are an initiative ID, typically after a kickback fro
    the initiative. Read the `KICKBACK` notes (`task_get`) to learn what prompted the revision.
 2. Discuss the high-level change with the user, as in step 5 above. Record it as `brief` or `decision` documents; the
    initiative's brief stays verbatim.
-3. Revisions always need approval. Present the revised outline in plan mode, as in **Approving through plan mode**
-   above, and once the plan is approved, apply it:
+3. Revisions always need approval. {{if claudeCode}}Present the revised outline in plan mode, as in **Approving through plan mode**
+   above, and once the plan is approved{{else}}Get the revised outline approved, as in **Approving the outline** above, and
+   once it is approved{{end}}, apply it:
    - new milestones with `milestone_create`, changed ones with `milestone_update`, setting `depends_on` for any
      milestone that needs another milestone's code merged first (the list replaces the existing one);
    - new unplanned tasks with `task_create`;

@@ -251,6 +251,7 @@ func TestInstalledCommandsMatchGoldens(t *testing.T) {
 	if err != nil || len(goldens) == 0 {
 		t.Fatalf("goldens: %v, %v", goldens, err)
 	}
+	goldens = slices.DeleteFunc(goldens, func(g string) bool { return strings.HasSuffix(g, ".neutral.md") })
 	for _, g := range goldens {
 		want, err := os.ReadFile(g)
 		if err != nil {
