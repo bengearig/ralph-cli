@@ -87,6 +87,38 @@ func (r Repo) CurrentBranch(ctx context.Context) (string, error) {
 	return out, nil
 }
 
+// HeadState returns the checked-out branch, empty when HEAD is detached, and
+// the full commit HEAD points to.
+func (r Repo) HeadState(ctx context.Context) (branch, commit string, err error) {
+	if branch, err = r.CurrentBranch(ctx); err != nil {
+		return "", "", err
+	}
+	if commit, err = r.RevParse(ctx, "HEAD"); err != nil {
+		return "", "", err
+	}
+	return branch, commit, nil
+}
+
+// MergeFFOnly fast-forwards the checked-out branch to ref, failing without
+// changes when that would need a merge commit.
+func (r Repo) MergeFFOnly(ctx context.Context, ref string) error {
+	_, err := r.run(ctx, "merge", "--ff-only", "--quiet", ref)
+	return err
+}
+
+// ResetHard moves the checked-out branch, the index, and the work tree to ref.
+func (r Repo) ResetHard(ctx context.Context, ref string) error {
+	_, err := r.run(ctx, "reset", "--hard", "--quiet", ref)
+	return err
+}
+
+// DeleteBranch deletes a local branch with the safe delete, which refuses a
+// branch that is not fully merged.
+func (r Repo) DeleteBranch(ctx context.Context, name string) error {
+	_, err := r.run(ctx, "branch", "-d", "--", name)
+	return err
+}
+
 // RefExists reports whether ref resolves to a commit.
 func (r Repo) RefExists(ctx context.Context, ref string) (bool, error) {
 	_, err := r.run(ctx, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
@@ -238,6 +270,12 @@ func (r Repo) Dirty(ctx context.Context) ([]string, error) {
 // Switch checks out an existing branch.
 func (r Repo) Switch(ctx context.Context, branch string) error {
 	_, err := r.run(ctx, "switch", branch)
+	return err
+}
+
+// SwitchDetached checks out commit with a detached HEAD.
+func (r Repo) SwitchDetached(ctx context.Context, commit string) error {
+	_, err := r.run(ctx, "switch", "--detach", commit)
 	return err
 }
 

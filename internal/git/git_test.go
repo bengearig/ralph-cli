@@ -458,3 +458,120 @@ func TestPatchID(t *testing.T) {
 		t.Error("PatchID of an unknown ref should fail")
 	}
 }
+
+func addCommit(t *testing.T, r Repo, name string) {
+	t.Helper()
+	write(t, r.Dir, name, name+"\n")
+	mustRun(t, r, "add", name)
+	mustRun(t, r, "commit", "--quiet", "-m", "add "+name)
+}
+
+func TestHeadState(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	head := mustRun(t, r, "rev-parse", "HEAD")
+	if b, c, err := r.HeadState(ctx); err != nil || b != "main" || c != head {
+		t.Fatalf("HeadState = %q, %q, %v", b, c, err)
+	}
+	mustRun(t, r, "switch", "--quiet", "--detach")
+	if b, c, err := r.HeadState(ctx); err != nil || b != "" || c != head {
+		t.Fatalf("detached HeadState = %q, %q, %v", b, c, err)
+	}
+	mustRun(t, r, "switch", "--quiet", "main")
+	addCommit(t, r, "next.txt")
+	if err := r.SwitchDetached(ctx, head); err != nil {
+		t.Fatal(err)
+	}
+	if b, c, _ := r.HeadState(ctx); b != "" || c != head {
+		t.Errorf("after SwitchDetached = %q, %q", b, c)
+	}
+}
+
+func TestMergeFFOnly(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	if err := r.CreateBranch(ctx, "feature", "main"); err != nil {
+		t.Fatal(err)
+	}
+	addCommit(t, r, "a.txt")
+	tip := mustRun(t, r, "rev-parse", "feature")
+	if err := r.Switch(ctx, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.MergeFFOnly(ctx, "feature"); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRun(t, r, "rev-parse", "main"); got != tip {
+		t.Errorf("main = %s, want %s", got, tip)
+	}
+	if merges := mustRun(t, r, "rev-list", "--merges", "main"); merges != "" {
+		t.Errorf("merge commits: %s", merges)
+	}
+}
+
+func TestMergeFFOnlyDiverged(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	if err := r.CreateBranch(ctx, "feature", "main"); err != nil {
+		t.Fatal(err)
+	}
+	addCommit(t, r, "a.txt")
+	if err := r.Switch(ctx, "main"); err != nil {
+		t.Fatal(err)
+	}
+	addCommit(t, r, "b.txt")
+	before := mustRun(t, r, "rev-parse", "HEAD")
+	err := r.MergeFFOnly(ctx, "feature")
+	if err == nil || !strings.Contains(err.Error(), "fast-forward") {
+		t.Fatalf("err = %v, want a fast-forward refusal", err)
+	}
+	if after := mustRun(t, r, "rev-parse", "HEAD"); after != before {
+		t.Errorf("HEAD moved from %s to %s", before, after)
+	}
+	if st := mustRun(t, r, "status", "--porcelain"); st != "" {
+		t.Errorf("working tree changed: %s", st)
+	}
+}
+
+func TestDeleteBranch(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	if err := r.CreateBranch(ctx, "merged", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.CreateBranch(ctx, "unmerged", "main"); err != nil {
+		t.Fatal(err)
+	}
+	addCommit(t, r, "a.txt")
+	if err := r.Switch(ctx, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.DeleteBranch(ctx, "merged"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := r.BranchExists(ctx, "merged"); ok {
+		t.Error("merged branch should be gone")
+	}
+	err := r.DeleteBranch(ctx, "unmerged")
+	if err == nil || !strings.Contains(err.Error(), "not fully merged") {
+		t.Fatalf("err = %v, want a not fully merged refusal", err)
+	}
+	if ok, _ := r.BranchExists(ctx, "unmerged"); !ok {
+		t.Error("unmerged branch should remain")
+	}
+}
+
+func TestResetHard(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	head := mustRun(t, r, "rev-parse", "HEAD")
+	write(t, r.Dir, "README.md", "changed\n")
+	write(t, r.Dir, "staged.txt", "x\n")
+	mustRun(t, r, "add", "staged.txt")
+	if err := r.ResetHard(ctx, head); err != nil {
+		t.Fatal(err)
+	}
+	if st := mustRun(t, r, "status", "--porcelain"); st != "" {
+		t.Errorf("working tree not clean: %s", st)
+	}
+}
