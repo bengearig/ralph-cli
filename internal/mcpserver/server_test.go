@@ -18,6 +18,7 @@ import (
 	"github.com/bengearig/ralph/internal/service"
 	"github.com/bengearig/ralph/internal/store/sqlite"
 	tmfake "github.com/bengearig/ralph/internal/taskmanager/fake"
+	"github.com/bengearig/ralph/internal/workflow"
 )
 
 func connect(t *testing.T) *mcp.ClientSession {
@@ -643,4 +644,73 @@ func mustTaskID(t *testing.T, s string) int64 {
 		t.Fatal(err)
 	}
 	return id
+}
+
+func TestWorkflowsAreServedAsPrompts(t *testing.T) {
+	cs := connect(t)
+	ctx := context.Background()
+	res, err := cs.ListPrompts(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := workflow.List()
+	if len(res.Prompts) != len(want) {
+		t.Fatalf("got %d prompts, want %d", len(res.Prompts), len(want))
+	}
+	for _, w := range want {
+		i := slices.IndexFunc(res.Prompts, func(p *mcp.Prompt) bool { return p.Name == w.Name })
+		if i < 0 {
+			t.Fatalf("missing prompt %s", w.Name)
+		}
+		p := res.Prompts[i]
+		if p.Description != w.Description {
+			t.Errorf("%s description = %q, want %q", w.Name, p.Description, w.Description)
+		}
+		if len(p.Arguments) != 1 || p.Arguments[0].Name != w.Argument || p.Arguments[0].Required || p.Arguments[0].Description != w.ArgumentDescription {
+			t.Errorf("%s arguments = %+v", w.Name, p.Arguments)
+		}
+	}
+	if init := cs.InitializeResult(); init == nil || !strings.Contains(init.Instructions, "MCP prompts") {
+		t.Error("server instructions do not mention the prompts")
+	}
+}
+
+func TestGetPromptRendersNeutralWorkflow(t *testing.T) {
+	cs := connect(t)
+	ctx := context.Background()
+	text := func(res *mcp.GetPromptResult) string {
+		t.Helper()
+		if len(res.Messages) != 1 || res.Messages[0].Role != "user" {
+			t.Fatalf("messages = %+v", res.Messages)
+		}
+		c, ok := res.Messages[0].Content.(*mcp.TextContent)
+		if !ok {
+			t.Fatalf("content = %T", res.Messages[0].Content)
+		}
+		return c.Text
+	}
+
+	res, err := cs.GetPrompt(ctx, &mcp.GetPromptParams{Name: "receive", Arguments: map[string]string{"instructions": "x", "bogus": "y"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := workflow.Render("receive", workflow.Data{Target: workflow.Neutral, Args: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := text(res); got != want || !strings.Contains(got, "x") {
+		t.Errorf("rendered prompt differs from workflow.Render")
+	}
+
+	res, err = cs.GetPrompt(ctx, &mcp.GetPromptParams{Name: "receive"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text(res), "(none given)") {
+		t.Error("prompt without arguments lacks (none given)")
+	}
+
+	if _, err := cs.GetPrompt(ctx, &mcp.GetPromptParams{Name: "nope"}); err == nil {
+		t.Error("unknown prompt should error")
+	}
 }

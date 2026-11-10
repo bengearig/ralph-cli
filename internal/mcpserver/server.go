@@ -16,6 +16,7 @@ import (
 	"github.com/bengearig/ralph/internal/looplock"
 	"github.com/bengearig/ralph/internal/service"
 	"github.com/bengearig/ralph/internal/store"
+	"github.com/bengearig/ralph/internal/workflow"
 )
 
 // Name is the server name; Claude Code exposes its tools as mcp__ralph__*.
@@ -35,7 +36,8 @@ Receive instructions → Articulate a solution → Loop over tasks → Pull requ
   instead of guessing. IDs look like I-1, M-2, T-3, D-4.
 - Search before writing new documents or tasks, to build on what already exists.
 - Deleting is for mistakes such as duplicates and needs the user's agreement; CANCELLED is the normal way to drop work.
-- Archived initiatives and documents are hidden and read-only; list them with include_archived.`
+- Archived initiatives and documents are hidden and read-only; list them with include_archived.
+- ralph's workflows (Receive, Articulate, Reconcile, Status, Search) are available as MCP prompts of the same names; run one when the user asks for that phase.`
 
 // Options configures tool behavior that comes from ralph's config.
 type Options struct {
@@ -59,7 +61,28 @@ func New(svc *service.Service, version string, log *slog.Logger, opts Options) *
 	})
 	t := &tools{svc: svc, tmErr: opts.TaskManagerError, confirmOutline: opts.ConfirmOutline, newDriftInput: opts.DriftInput, projectRoot: opts.ProjectRoot, importMaxBytes: opts.ImportMaxFileBytes}
 	t.register(s)
+	registerPrompts(s)
 	return s
+}
+
+func registerPrompts(s *mcp.Server) {
+	for _, w := range workflow.List() {
+		s.AddPrompt(&mcp.Prompt{
+			Name:        w.Name,
+			Title:       "RALPH " + strings.ToUpper(w.Name[:1]) + w.Name[1:],
+			Description: w.Description,
+			Arguments:   []*mcp.PromptArgument{{Name: w.Argument, Description: w.ArgumentDescription, Required: false}},
+		}, func(_ context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+			text, err := workflow.Render(w.Name, workflow.Data{Target: workflow.Neutral, Args: req.Params.Arguments[w.Argument]})
+			if err != nil {
+				return nil, err
+			}
+			return &mcp.GetPromptResult{
+				Description: w.Description,
+				Messages:    []*mcp.PromptMessage{{Role: "user", Content: &mcp.TextContent{Text: text}}},
+			}, nil
+		})
+	}
 }
 
 type tools struct {
