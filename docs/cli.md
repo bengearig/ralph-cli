@@ -45,7 +45,32 @@ Commit hashes recorded by the loop are shown shortened in text output and in ful
 | `ralph task next --milestone <id>` | Show the task the loop would pick next. |
 | `ralph doc create --kind <k> --title <t> [--initiative <id>] [--body \| --file] [--slug]` | Create a document. Without `--initiative` it is project-wide. |
 | `ralph doc list [--initiative <id> \| --project] [--kind <k>]` / `show <id>` / `update <id> ...` | Browse and edit documents. |
+| `ralph initiative delete <id>`, `milestone delete <id>`, `task delete <id>` `[--force] [--yes]`, `ralph doc delete <id>`, `ralph note delete <id>` `[--yes]` | Delete permanently. See [Deleting](#deleting). |
 | `ralph status [--initiative <id>]` | Progress summary: milestones with derived status and task counts. |
+
+### Deleting
+
+Deletes are permanent. To drop planned work, prefer `ralph task status <id> CANCELLED`, which keeps the task and its
+reason; delete is for items created by mistake. See [Deleting](data-model.md#deleting) for what each delete removes.
+
+| Command | Refused without `--force` when |
+|---|---|
+| `ralph initiative delete <id>` | the initiative has milestones or documents; `--force` deletes them too. |
+| `ralph milestone delete <id>` | the milestone has tasks; `--force` deletes them and their notes too. |
+| `ralph task delete <id>` | the task is `IN_PROGRESS` or `DONE`; `--force` deletes it anyway, with its notes. |
+| `ralph doc delete <id>` | never refused; it has no `--force`. |
+| `ralph note delete <id>` | never refused; it has no `--force`. Takes a note ID (`N-n`) as shown by `ralph task show`. |
+
+- `--force` is offered only by the commands in the table that can be refused. A refusal says what blocks the delete
+  and suggests `--force`.
+- `--yes` (`-y`) skips the confirmation. Otherwise the command first checks that the delete is allowed, then asks
+  `Delete <id> with <counts>? This cannot be undone. [y/N]` on stderr, and only `y` or `yes` proceeds. Anything else
+  prints `cancelled` and deletes nothing.
+- When stdin is not a terminal, the command refuses to delete without `--yes` instead of guessing.
+- While a loop is running on an affected milestone, the delete is refused even with `--force`; stop the loop first.
+- Text output is `deleted <id>`, followed by the counts of anything else removed. With `--json` the output is
+  `{"id", "kind", "deleted"}`, where `deleted` maps each kind removed (`initiatives`, `milestones`, `tasks`, `notes`,
+  `documents`) to its row count. This is the shape the MCP delete tools return.
 
 ## Search
 

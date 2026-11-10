@@ -11,6 +11,9 @@ flowchart TD
     LOOP["loop<br/>(plan / run)"] --> SVC
     LOOP --> H
     LOOP --> GIT["git"]
+    LOOP --> LL["looplock<br/>(project lock)"]
+    SVC --> LL
+    MCP --> LL
     CLI --> LOOP
     CLI --> DRIFT["drift<br/>(drift check, reconcile)"]
     LOOP --> DRIFT
@@ -40,7 +43,7 @@ flowchart TD
 | `internal/project` | Finds the project root (the nearest `.ralph/`) and the git work-tree root. |
 | `internal/domain` | Entities, display IDs, slugs, document kinds, and the task state machine with its guards. No I/O. |
 | `internal/store` | The persistence interface and its sentinel errors (`ErrNotFound`, `ErrConflict`). |
-| `internal/store/sqlite` | SQLite implementation on `modernc.org/sqlite`: embedded migrations, entity tables, chunk storage, and FTS5. |
+| `internal/store/sqlite` | SQLite implementation on `modernc.org/sqlite`: embedded migrations, entity tables, chunk storage, and FTS5. The migration runner has a rebuild mode, marked by `-- ralph:rebuild`, that backs up the database, rebuilds tables with foreign keys off, and verifies integrity and row counts before committing. |
 | `internal/embed` | The embedder interface and `ErrUnavailable`. `embed/ollama` is the real client; `embed/fake` is a deterministic test double. |
 | `internal/search` | Markdown-aware chunking, incremental (re)embedding, backfill, and ranking with keyword fallback. |
 | `internal/service` | Use cases shared by the CLI and MCP: validation, slug allocation, status transitions, the Stall Statute, indexing on write, and JSON views. |
@@ -48,6 +51,7 @@ flowchart TD
 | `internal/harness` | The harness interface, installer interface, and registry. `harness/claudecode` runs headless `claude` sessions, parsing their stream-json output, and installs the Claude Code wiring. |
 | `internal/loop` | Plans a milestone's loop (branch, ordered tasks, command, prompt) and runs it: project lock, branch preparation, one harness session per task, commits with the `Ralph-Task` trailer, recording the branch, base, head, and task commits, stashing unfinished work, and stop conditions. When it resumes on a recorded branch, it checks for drift first. It also provides the `ResolveRepo`, `DriftInput`, and `CommitSubject` helpers that `ralph milestone reconcile` and `ralph pr create` share. |
 | `internal/drift` | The read-only drift check (`Check`, `Report`) that compares a milestone's recorded git state with its branch, and the reconcile actions (`Apply`). See [Drift and reconcile](loop.md#drift-and-reconcile). |
+| `internal/looplock` | The project-wide loop lock on `.ralph/loop.lock`: `Acquire` and `Release` for the loop, and `Probe` to see whether and by whom it is held. Imported by `loop`, which takes the lock, and by `service`, whose deletes refuse to touch a milestone a running loop is working on. `mcpserver` imports it only to recognise `ErrLoopRunning`. |
 | `internal/git` | The git commands the loop needs, run through the `git` CLI, always excluding `.ralph/`. |
 | `internal/pr` | The pull-request provider interface, registry, and milestone request builder. `pr/bitbucketcloud` validates its configuration; creation is stubbed. |
 | `internal/errs` | Sentinel errors shared across packages. |

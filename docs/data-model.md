@@ -65,9 +65,9 @@ and acceptance criteria and promotes them to `TODO`.
 `DONE` and `CANCELLED` tasks cannot be edited. A task past `PROPOSED` must keep a non-empty description and
 acceptance criteria.
 
-### Task note
+### Task note (`N-n`)
 
-Kinds are `NOTE`, `ITERATION`, and `KICKBACK`. A status change made with a reason records a note automatically. The
+Notes have display IDs so they can be deleted individually; `task show` and `task_get` list them. Kinds are `NOTE`, `ITERATION`, and `KICKBACK`. A status change made with a reason records a note automatically. The
 note kind follows from the transition: kickbacks (to `BLOCKED`, or back to `PROPOSED` from later states) are
 `KICKBACK`; moves out of `IN_PROGRESS` are `ITERATION`; everything else is `NOTE`.
 
@@ -140,9 +140,41 @@ the branch, for example by a reset. It requires the task to be `DONE` and a non-
 
 ## Display IDs and slugs
 
-Rows use integer primary keys. Users and agents see display IDs (`T-12`). Inputs accept the display form or a bare
+Rows use integer primary keys. Users and agents see display IDs (`T-12`), with prefixes `I`, `M`, `T`, `D`, and `N`
+(task notes). Inputs accept the display form or a bare
 number, and a prefix for the wrong kind is rejected. Slugs are lowercase ASCII with single dashes. When no slug is
 given, one is derived from the title, with `-2`, `-3`, and so on appended on collision.
+
+IDs are never reused. The tables behind `I-n`, `M-n`, `T-n`, `D-n`, and `N-n` use `AUTOINCREMENT` (migration
+`0003`), so deleting the newest row and creating another gives a higher number, and a reference such as `T-9` in a
+note, commit, or pull request never silently points at a different task. Deletes leave gaps in the sequences. IDs
+are still per database, so not stable across clones. See
+[ADR 0018](adr/0018-permanent-ids-and-guarded-deletes.md).
+
+## Deleting
+
+Cancelling is the default way to drop planned work: `CANCELLED` keeps the task, its notes, and the reason. Deleting
+is permanent and is for items created by mistake, such as duplicates or items created in the wrong place. Agents ask
+the user before deleting and never pass `force` without explicit approval. See
+[CLI](cli.md#deleting) and [MCP server](mcp.md#deleting).
+
+| Delete | Without `force` | With `force` |
+|---|---|---|
+| Initiative | Refused if it has milestones or documents. | Cascades to its milestones, their tasks and notes, and its documents. |
+| Milestone | Refused if it has tasks. | Cascades to its tasks and their notes. |
+| Task | Refused if it is `IN_PROGRESS` or `DONE`. | Deleted with its notes. |
+| Document | Allowed. | Not applicable. |
+| Note | Allowed. | Not applicable. |
+
+- **Guards live in the service**, so the CLI and MCP behave identically. A refusal names what blocks the delete and
+  wraps `service.ErrNeedsForce`; the adapters turn it into a `--force` or `force: true` hint.
+- **Cascades and chunks.** Cascades use the `ON DELETE CASCADE` foreign keys, and the `*_ad` triggers remove the
+  deleted entities' chunks and their search index entries. Each delete runs in one transaction and reports how many
+  rows of each kind it removed.
+- **Loop-lock guard.** While a loop holds `.ralph/loop.lock`, a delete that affects the loop's milestone (the
+  milestone, a task or note in it, or its initiative) is refused even with `force`. The error names the holder's PID
+  and milestone. Stop the loop first.
+- **No git side effects.** A milestone's recorded branch is never touched.
 
 ## Search index
 
@@ -162,5 +194,5 @@ Chunking rules:
   text is sent to the embedder.
 - A chunk is **stale** when it has no embedding for the configured model. `ralph index` embeds stale chunks;
   `ralph index --rebuild` rechunks everything first.
-- Deleting an entity, including through a foreign-key cascade, removes its chunks through triggers. The CLI exposes
-  no delete commands yet; `CANCELLED` is the supported way to drop a task.
+- Deleting an entity, including through a foreign-key cascade, removes its chunks through triggers. See
+  [Deleting](#deleting). Cancelling is the default way to drop a task.

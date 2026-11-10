@@ -28,7 +28,7 @@ Work with the user, using the `ralph` MCP tools:
    - as soon as both are settled, promote the task with `task_set_status` to `TODO`, giving a short reason. Do not
      ask for separate permission to promote.
 4. Within a milestone, and with the user's agreement, you may add tasks (`task_create`), split or merge them, reorder
-   them (`position`), or cancel them (`task_set_status` `CANCELLED` with a reason). Each task must be small enough to
+   them (`position`), or cancel them (`task_set_status` `CANCELLED` with a reason). Cancel by default: delete a task (`task_delete`) only if it was created by mistake, and only after asking the user. Each task must be small enough to
    finish in one loop iteration and must never depend on a later one.
 5. If a milestone needs to change (added, removed, re-scoped, or reordered), or the instructions themselves turn out
    to be unclear, stop. Add a `KICKBACK` note (`task_add_note`) to the affected task when there is one, explain the
