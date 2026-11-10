@@ -93,22 +93,72 @@ for the rules.
 
 ## Import
 
+Import brings existing text files into ralph's documents. See [Imports](data-model.md#imports) for the records
+behind it and [ADR 0020](adr/0020-import-documentation-into-ralph.md) for the design.
+
 | Command | Purpose |
 |---|---|
-| `ralph import [--dir <path>]... [--file <path>]...` | Queue text files for import. At least one `--dir` or `--file` is required. |
+| `ralph import [--dir <path>]... [--file <path>]...` | Queue text files for import. At least one `--dir` or `--file` is required; both repeat. |
+| `ralph import ... --as-new [--kind <k>] [--initiative <id>] [--again]` | The fast path: create one document per file and mark its record done, with no integration. |
 
-In a git work tree a directory contributes its tracked and untracked files, minus ignored ones; elsewhere it is
-walked, with a warning that ignore rules were not applied. `.git` and `.ralph` are never included. Files that are
-larger than [`import.max_file_bytes`](configuration.md#import), not UTF-8 text, symlinks, or outside the project are
-skipped with a reason, and skipped files do not change the exit status. Each queued file is reported as `new`,
-`changed` (its content differs from the queued record), `unchanged` (already imported, same content), or
-`already queued`. `--json` prints `{queued, skipped, warnings}`.
+`--kind`, `--initiative` and `--again` are refused without `--as-new`.
 
-`--as-new` skips the queue and creates one document per file, titled by the first `#` heading outside code fences
-(else the filename without its extension), with the file content as the body, and marks the file's record done.
-`--kind` (default `reference`) and `--initiative` set the kind and scope; `--again` creates a new document even for a
-file already imported. A file already imported unchanged is skipped; one that changed since is refused, pointing at
-`/ralph:import` or `--again`. Refused or failed files exit with status 3. `--json` prints `{imported, skipped, warnings}`.
+### Choosing files
+
+In a git work tree a directory contributes its tracked and untracked files, minus ignored ones. Elsewhere it is
+walked, with a warning that ignore rules were not applied. `.git` and `.ralph` are never included. Paths are
+recorded relative to the project root.
+
+Files that cannot be imported are listed with a reason and get no record. The reasons are:
+
+- too large (over [`import.max_file_bytes`](configuration.md#import));
+- not text: it contains a NUL byte or is not valid UTF-8;
+- a symlink, or not a regular file;
+- outside the project, or a ralph or git internal file;
+- not found, or unreadable.
+
+Empty files that are valid text are imported. Skipped files never change the exit status.
+
+### Queueing
+
+Without `--as-new`, each file is reported in one group:
+
+| Group | Meaning |
+|---|---|
+| `new` | No record existed; one is queued as `pending`. |
+| `changed` | The content differs from the record's snapshot; the record is requeued as `pending`. |
+| `unchanged` | The record is `done` or `skipped` and the content is the same. Nothing happens. |
+| `already queued` | The record is `pending` or `deferred` with the same content. Nothing happens. |
+
+A `skipped` heading follows, with each file's reason. When records are pending, the output ends by pointing at
+`/ralph:import` in Claude Code, or the `ralph` MCP import prompt in other harnesses, which integrate the queue.
+See [Change detection](data-model.md#change-detection) for the rules.
+
+### `--as-new`
+
+Each file becomes one document: titled by its first `#` heading outside code fences (else the filename without its
+extension), with the file content verbatim as the body. `--kind` defaults to `reference`; without `--initiative`
+the document is project-wide. The file's record is marked `done` with a `created` link. Files are reported as:
+
+| Group | Meaning |
+|---|---|
+| `created` | A document was created; its ID is shown. |
+| `skipped` | The record is `done` and the content is unchanged (`already imported`). |
+| `refused` | The record is `done` but the content changed. The message points at `/ralph:import` to integrate it, or `--again`. |
+| `failed` | The file could not be imported; the reason is shown. |
+
+`--again` creates a fresh document for every file, even one already imported, and updates its record.
+
+### Output and exit codes
+
+| Exit code | When |
+|---|---|
+| `0` | The run completed. Skipped files do not matter. |
+| `3` | With `--as-new`, a file was refused or failed. |
+| `1` | An error, including bad flags or no `--dir` or `--file`. |
+
+`--json` prints `{queued, skipped, warnings}`, or `{imported, skipped, warnings}` with `--as-new`. These match the
+`import_queue` MCP tool's result.
 
 ## Agent integration
 

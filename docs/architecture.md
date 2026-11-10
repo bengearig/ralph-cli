@@ -15,6 +15,11 @@ flowchart TD
     SVC --> LL
     MCP --> LL
     CLI --> LOOP
+    CLI --> IMP["importer<br/>(collect files)"]
+    MCP --> IMP
+    IMP --> SVC
+    IMP --> GIT
+    IMP --> PRJ["project"]
     CLI --> DRIFT["drift<br/>(drift check, reconcile)"]
     LOOP --> DRIFT
     DRIFT --> SVC
@@ -52,6 +57,7 @@ flowchart TD
 | `internal/loop` | Plans a milestone's loop (branch, ordered tasks, command, prompt) and runs it: project lock, branch preparation, one harness session per task, commits with the `Ralph-Task` trailer, recording the branch, base, head, and task commits, stashing unfinished work, and stop conditions. When it resumes on a recorded branch, it checks for drift first. It also provides the `ResolveRepo`, `DriftInput`, and `CommitSubject` helpers that `ralph milestone reconcile` and `ralph pr create` share. |
 | `internal/drift` | The read-only drift check (`Check`, `Report`) that compares a milestone's recorded git state with its branch, and the reconcile actions (`Apply`). See [Drift and reconcile](loop.md#drift-and-reconcile). |
 | `internal/looplock` | The project-wide loop lock on `.ralph/loop.lock`: `Acquire` and `Release` for the loop, and `Probe` to see whether and by whom it is held. Imported by `loop`, which takes the lock, and by `service`, whose deletes refuse to touch a milestone a running loop is working on. `mcpserver` imports it only to recognise `ErrLoopRunning`. |
+| `internal/importer` | Collects the files to import from directories and files: resolves them inside the project root, applies git ignore rules (or walks the tree outside git), and skips files that are too large, not text, symlinks, or outside the project, with reasons. Imports `git`, `project`, and `service`, whose `ImportFile` it produces; imported by `cli` and `mcpserver`. Queueing and resolving live in `service`. |
 | `internal/git` | The git commands the loop needs, run through the `git` CLI, always excluding `.ralph/`. |
 | `internal/pr` | The pull-request provider interface, registry, and milestone request builder. `pr/bitbucketcloud` validates its configuration; creation is stubbed. |
 | `internal/errs` | Sentinel errors shared across packages. |

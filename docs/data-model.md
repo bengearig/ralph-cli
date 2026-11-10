@@ -213,6 +213,44 @@ reports `archived`, and milestones and tasks report `archived`.
 
 See [ADR 0019](adr/0019-archive-initiatives-and-documents.md).
 
+## Imports
+
+An **import record** tracks one file brought into ralph's documents. It is addressed by its project-relative,
+slash-separated `path`, which is unique; the integer ID stays internal. The record holds a snapshot of the file's
+content as it was queued, with its hash and size, so integration works from what was queued even if the file has
+since changed. Any valid UTF-8 text is accepted, up to `import.max_file_bytes`. Records are not
+[searchable](#search-index): their content is never chunked or embedded, and the documents that integrate them are.
+
+| Status | Meaning |
+|---|---|
+| `pending` | Queued, waiting to be integrated. |
+| `done` | Integrated. The record remembers the content hash it was done at. |
+| `skipped` | Deliberately not integrated; a note gives the reason. |
+| `deferred` | Partly integrated, with open questions listed in the note. |
+
+Resolving moves a `pending` or `deferred` record to `done`, `skipped`, or `deferred`. `skipped` and `deferred`
+require a note. A `done` or `skipped` record becomes `pending` again only when its file changes and is queued again.
+
+### Change detection
+
+Queueing compares the file's content hash with the record's:
+
+| Existing record | Same content? | Outcome | Effect |
+|---|---|---|---|
+| none | n/a | `new` | A `pending` record is created. |
+| `done` or `skipped` | yes | `unchanged` | None. |
+| `pending` or `deferred` | yes | `queued` | None. |
+| any | no | `changed` | The snapshot is replaced, the record becomes `pending`, and its note and processed time are cleared. Links are kept. |
+
+### Links
+
+A record links to the documents it produced, each with a relation: `created`, `updated`, or `decision`. Links are
+added when the record is resolved, are idempotent, and require the document to exist. They accumulate across
+re-imports. Deleting a document, directly or through its initiative, removes its links through a foreign-key
+cascade and leaves the import record, which keeps its status.
+
+See [ADR 0020](adr/0020-import-documentation-into-ralph.md).
+
 ## Search index
 
 | Table | Purpose |

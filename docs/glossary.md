@@ -33,6 +33,10 @@ its model identity (the model plus any document prefix), and vectors with differ
 
 **Harness.** The agent runtime that ralph drives, such as Claude Code. It is configured per step.
 
+**Import.** Bringing an existing text file into ralph's documents. The file is queued as an import record with a
+snapshot of its content, integrated into documents by an agent (or imported verbatim with `--as-new`), and then
+resolved. After an import, ralph's documents are the source of truth, not the file. See [Imports](data-model.md#imports).
+
 **Initiative.** One received set of instructions and everything articulated from it.
 
 **Iteration.** One fresh, headless harness session working on one task during the loop.
