@@ -472,14 +472,42 @@ The states are checked in this order, and the first that applies wins:
 |---|---|---|---|
 | `branch_missing` | The branch doesn't exist locally and its recorded head is not merged. The report says whether `origin/<branch>` does. | refuse | refuse |
 | `unrecorded` | The milestone has no recorded head. [Backfill](#backfill) applies. | record on first use and proceed | refuse |
-| `merged` | The milestone's head (the tip, or the recorded head when the branch was deleted) is not the recorded base (or the proposed base, when unrecorded) and is contained in the base ref. A branch with no commits of its own is therefore not `merged`. | refuse | refuse |
+| `merged` | The milestone is in the base ref in one of two ways. **By ancestry:** its head (the tip, or the recorded head when the branch was deleted) is not the recorded base (or the proposed base, when unrecorded) and is contained in the base ref; a branch with no commits of its own is therefore not `merged`. **By tasks:** it has `DONE` tasks and the work of every one is found in base-branch commits the milestone doesn't share, by `Ralph-Task` trailer or patch-id, never by subject (see [Merged by tasks](#merged-by-tasks)). The report's `merged_by` says which. | refuse | refuse |
 | `unchanged` | The tip is the recorded head. | proceed | proceed |
 | `ahead` | The recorded head is an ancestor of the tip: commits were added on top. The report lists them. | warn, record the tip as head, proceed | refuse |
 | `behind` | The tip is an ancestor of the recorded head: recorded commits are no longer on the branch. The report lists them. | refuse | refuse |
 | `diverged` | Anything else: a rebase, amend, squash, or reset onto other work. A recorded head that no longer exists as an object also counts. | refuse | refuse |
 
-For a deleted branch, `merged` is checked before `branch_missing`: deleting a branch after merging it still reports
-`merged`, with `branch_exists` false and the summary ending ` (branch deleted)`.
+For a branch that exists, the table's order is refined: `unrecorded` first, then `merged` by ancestry, then `merged` by
+tasks, then the comparison with the recorded head. A squash-merged milestone is thus reported `merged` even though its
+branch is untouched and `unchanged` would otherwise apply.
+
+For a deleted branch, `merged` by ancestry and then `merged` by tasks are checked before `branch_missing`: deleting a
+branch after merging it still reports `merged`, with `branch_exists` false and the summary ending
+` (branch deleted)`. An empty recorded head, or one that no longer exists as an object, can't be merged by ancestry,
+but may still be merged by tasks when the recorded base exists to bound the search.
+
+### Merged by tasks
+
+A squash or rebase merge leaves no ancestor relationship, so the check looks for the tasks' work in the base ref
+instead. It searches the base-branch commits the milestone doesn't share: those after the milestone head (when its
+commit object exists), otherwise after the recorded base. With neither, there is no such check.
+
+Every `DONE` task needs evidence, and there must be at least one:
+
+1. `trailer`: a commit in that range carries `Ralph-Task: <task ID>`. The newest wins.
+2. `patch_id`: the task's recorded commit exists, and a commit in that range has the same `git patch-id --stable`.
+
+Subjects are never evidence here, because they can repeat and cherry-picks can share them. One task without evidence,
+or none with a recorded commit or trailer (as with `loop.commit_per_task: false`), means the milestone is not merged
+by tasks. A false `merged` would make the loop and `ralph pr create` refuse a live milestone, so the check prefers
+missing a real merge to inventing one. For a milestone merged by tasks, each task finding's commit is the base-branch
+commit holding its work, and there are no unattributed commits.
+
+Trailers matter most here. A squash on the host usually merges several tasks into one commit, whose patch-id equals
+none of theirs. Only its message can tell which tasks it holds, so with [`loop.commit_trailer`](configuration.md#loop)
+off, a multi-task squash can't be recognised as merged. A single-task milestone, or a rebase merge that keeps each
+commit's patch, can still be found by patch-id.
 
 A refusal exits with code `3`, names the state, and says `run: ralph milestone reconcile <M-n>`.
 `ralph pr create --dry-run` never refuses: it prints a `drift:` line, and the task table when the branch has drifted.
@@ -595,6 +623,32 @@ T-3   trailer  5930c245c41a  Add tests
 `ralph milestone reconcile M-1 --accept` records that commit for each task. Had the squash dropped the trailers, the
 patch-ids and subjects would no longer match either, and the tasks would be `missing`; `--accept` would then keep them
 `DONE` without a commit, each with a note.
+
+#### A squash merge on the host
+
+The pull request for `M-1` was squash-merged on the hosting service, and the local branch `ralph/login` was left
+as it was. The squash commit on `main` keeps the trailers in its message. The branch is still at its recorded head, but
+its work is in `main`, so the report says:
+
+```console
+$ ralph milestone reconcile M-1
+M-1 branch ralph/login is already merged into main (squash or rebase merge)
+state:    merged
+merged by: tasks
+branch:   ralph/login (base refs/heads/main)
+recorded: ralph/login (base 5e34ed7a68cf, head 1e6ea2f14ffc)
+tip:      1e6ea2f14ffc
+
+TASK  MATCH    COMMIT        TITLE
+T-1   trailer  7c1d0e93ab52  Add form
+T-2   trailer  7c1d0e93ab52  Add route
+T-3   trailer  7c1d0e93ab52  Add tests
+```
+
+The commit column is the squash commit on `main`. There is nothing to do: the loop and `ralph pr create` refuse
+because the work is already merged, and `--accept` is refused too. The local branch can be deleted. Had the squash dropped
+the trailers, the three tasks would share no patch-id with the squash commit and the milestone would not be
+recognised as merged.
 
 #### A reset that drops a task
 

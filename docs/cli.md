@@ -267,6 +267,7 @@ changes nothing.
 The text output starts with the report:
 
 - the state's one-line summary and the state;
+- for `merged`, a `merged by:` line saying `ancestry` or `tasks` (see [Merged by tasks](loop.md#merged-by-tasks));
 - the branch and the base ref;
 - the recorded branch, base and head, and the branch tip, as 12-character hashes;
 - the proposed base, when `--accept` would record a different one;
@@ -278,7 +279,7 @@ When flags were given, an `applied:` list of what changed follows, then the repo
 result still needs a person, the error message ends with what to run next. `--json` prints
 `{"before": <report>, "after": <report or null>}`, with full hashes; `after` is `null` without flags. The report's
 fields are those of the drift check: `milestone`, `branch`, `base_ref`, `recorded`, `tip`, `state`,
-`branch_exists`, `remote_branch_exists`, `extra_commits`, `lost_commits`, `tasks`, `unattributed_commits`, and `proposed_base`.
+`branch_exists`, `remote_branch_exists`, `merged_by`, `extra_commits`, `lost_commits`, `tasks`, `unattributed_commits`, and `proposed_base`. `merged_by` is present only for `merged`: `ancestry` or `tasks`.
 
 | Exit code | When |
 |---|---|
@@ -379,8 +380,8 @@ git branch -d ralph/login   # optional
 Merging by hand still works, and the drift check then reports the milestone as `merged`. The command adds the checks
 above, so that a milestone that is unfinished, drifted, or not fast-forwardable is stopped before git is touched.
 
-A milestone whose branch has been deleted is reported by the drift check as `branch_missing`, not `merged`, so
-`--delete-branch` leaves a milestone in that state; see [ADR 27](adr/0027-merge-milestones-locally-with-fast-forward-only.md).
+A milestone whose branch has been deleted after its merge is still reported by the drift check as `merged`, with
+`branch_exists` false; see [ADR 27](adr/0027-merge-milestones-locally-with-fast-forward-only.md).
 
 ## Example session
 

@@ -21,7 +21,16 @@ The merged test only ran against an existing branch tip, so a deleted branch had
   empty recorded head, or a head that no longer exists as an object, still gives `branch_missing`.
 - The report gains a `branch_exists` field, always present, true when the local branch exists. A deleted merged branch
   reports `merged` with `branch_exists` false, and its summary ends ` (branch deleted)`.
-- A later milestone will extend this decision with squash and rebase evidence, using the same shared test.
+- The same test also recognises a squash or rebase merge, as `merged` by tasks, after the ancestry check. It searches
+  the base-branch commits after the milestone head (when that object exists), otherwise after the recorded base. The
+  evidence is a `Ralph-Task: <task ID>` trailer or the same `git patch-id --stable` as the task's recorded commit,
+  never a subject. The milestone needs at least one `DONE` task and every `DONE` task must have evidence.
+- The report gains `merged_by`, present only for `merged`: `ancestry` or `tasks`. For `tasks`, each task finding points
+  at the base-branch commit holding its work, and the summary says it was a squash or rebase merge.
+
+A false `merged` makes `ralph loop` and `ralph pr create` refuse a live milestone, so subject matches don't count
+(subjects repeat, and cherry-picks can share them) and a partial match is not enough. The test would rather miss a real
+squash merge than report one that didn't happen.
 
 ## Consequences
 
@@ -29,3 +38,7 @@ The merged test only ran against an existing branch tip, so a deleted branch had
   messages for a deleted merged branch now say the branch is already merged instead of that it is missing.
 - `branch_missing` keeps its meaning for branches deleted without being merged.
 - Consumers of the JSON report can tell a deleted branch from an existing one without inferring it from `state`.
+- A milestone merged by squash with `loop.commit_trailer` off, or with no recorded task commits, may not be recognised
+  as merged.
+- Policy is unchanged for `merged` by tasks: the loop, `pr create` and `reconcile --accept` refuse, so further work on
+  such a milestone belongs in a new one.
