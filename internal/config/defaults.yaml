@@ -140,11 +140,21 @@ task_manager:
     # Labels added to every card when it is created; ralph adds none of its
     # own. Labels cannot contain whitespace.
     labels: []
-    # Maps a ralph status (task or milestone) to the name of the Jira status
-    # its card moves to. A blank value means do not move the card; a status
-    # that is not listed leaves the card alone. CANCELLED and deleted
-    # resources use canceled_status, not this map. Entries in other config
-    # files merge with these.
+    # Original estimate given to a card that has none before ralph moves it,
+    # for workflows that require one (for example "5m" or "1h 30m"). Empty
+    # leaves cards without an estimate. A card's kind is found from its issue
+    # type. An estimate already on the card is never replaced.
+    original_estimate:
+      initiative: ""
+      milestone: ""
+      task: ""
+    # Maps a ralph status (task or milestone) to the Jira status its card
+    # moves to: one name, or a list of names to pass through in order for
+    # workflows that do not allow the jump (for example [To Do, In Progress,
+    # Done]). A blank value means do not move the card; a status that is not
+    # listed leaves the card alone. CANCELLED and deleted resources use
+    # canceled_status, not this map. Entries in other config files merge with
+    # these.
     status_map:
       TODO: To Do
       IN_PROGRESS: In Progress

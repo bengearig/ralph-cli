@@ -112,7 +112,9 @@ A card follows the status of its resource, so a board in Jira shows where the wo
         DONE: Done
   ```
 
-  Any status that is not listed leaves the card where it is. Entries you set merge with the defaults. Add one to move
+  A value is one status name, or a list of names to pass through in order (see
+  [Workflows that gate transitions](#workflows-that-gate-transitions)). Any status that is not listed leaves the card
+  where it is. Entries you set merge with the defaults. Add one to move
   more statuses, for example `BLOCKED: Blocked`, and blank one to stop a default from moving cards, for example
   `DONE: ""`. A project whose workflow uses other names sets them here. `CANCELLED` is not allowed in the map; see
   below.
@@ -126,6 +128,51 @@ A card follows the status of its resource, so a board in Jira shows where the wo
   exist would only produce failures. Set it to a status your workflow has, such as `Cancelled`.
 - **A new card.** A card is created, and then moved to its resource's status. If the move fails, the card still
   exists, shows as pending an update, and the move is retried by the next edit or sync.
+
+### Workflows that gate transitions
+
+Jira workflows differ from project to project, and the defaults assume the simplest kind: a card can jump straight to
+any mapped status. Many workflows do not allow that. A card may start in a holding status such as `To Be Sized`, and
+only move on to `To Do`, then `In Progress`, then `Done`, one step at a time. A direct move to `Done` then fails with
+`no transition to status "Done"` and the statuses reachable from where the card is.
+
+Nothing here is on by default; a project whose workflow needs it sets it in its own config.
+
+- **A path instead of a name.** A `status_map` value can be a list of Jira statuses to pass through in order:
+
+  ```yaml
+  task_manager:
+    jira:
+      status_map:
+        TODO: [To Do]
+        IN_PROGRESS: [To Do, In Progress]
+        DONE: [To Do, In Progress, Done]
+  ```
+
+  Ralph reads the card's current status. If it is in the list, ralph carries on from the step after it, so a card
+  that is part way along resumes; otherwise it starts at the first step. Each step must be a transition the workflow
+  offers from the previous one. A step that is not stops the move there, leaves the card at the last status it
+  reached, and names the statuses reachable from it. The next sync picks up from that point. Ralph cannot read the
+  workflow definition, which takes Jira administrator rights, so the path is yours to get right.
+- **Required fields.** A transition can require a field, such as an original estimate, that ralph does not have.
+  `task_manager.jira.original_estimate` gives ralph a placeholder to use:
+
+  ```yaml
+  task_manager:
+    jira:
+      original_estimate:
+        initiative: 1m
+        milestone: 1m
+        task: 5m
+  ```
+
+  Before ralph moves a card it reads the card's estimate, and sets the configured value for the card's kind, found
+  from its issue type, only when the card has none. An estimate that is already there is never replaced, and nothing
+  is set when the card does not need to move. Leave the settings empty, the default, when the workflow does not
+  need an estimate. Any other field a transition requires, which ralph cannot supply, comes back as Jira's error and
+  the card stays where it is. Blank the `status_map` entry for that status if ralph should not attempt the move.
+- **Seeing the workflow.** `GET /rest/api/3/issue/<KEY>/transitions` lists the moves available to a card from its
+  current status, and `GET /rest/api/3/project/<KEY>/statuses` lists a project's statuses.
 
 ## Deleting
 

@@ -172,7 +172,8 @@ every task manager untouched. See [Jira](jira.md) for setup, what a card looks l
 | `task_manager.jira.issue_types.task` | `Sub-task` | Jira issue type for a task's card, a child of its milestone's card. |
 | `task_manager.jira.canceled_status` | `""` | Name of the status a card moves to when its resource is cancelled or deleted. Empty leaves the card alone. |
 | `task_manager.jira.labels` | `[]` | Labels added to every card when it is created; ralph adds none of its own. Each must be non-empty and contain no whitespace. A list set in a later layer replaces an earlier one. |
-| `task_manager.jira.status_map` | `TODO: To Do`, `IN_PROGRESS: In Progress`, `DONE: Done` | Maps a ralph status (task or milestone) to the name of the Jira status its card moves to. A blank value or a missing status leaves the card alone. `CANCELLED` is not allowed here; use `canceled_status`. Entries merge with the defaults, and a blank value removes a default. |
+| `task_manager.jira.original_estimate.initiative`, `.milestone`, `.task` | `""` | Original estimate, as a Jira duration such as `5m` or `1h 30m`, set on a card of that kind before ralph moves it, only when the card has none. For workflows that require an estimate to leave a status. Empty sets nothing. See [Workflows that gate transitions](jira.md#workflows-that-gate-transitions). |
+| `task_manager.jira.status_map` | `TODO: To Do`, `IN_PROGRESS: In Progress`, `DONE: Done` | Maps a ralph status (task or milestone) to the Jira status its card moves to: one name, or a list of names to pass through in order when the workflow does not allow the jump. A blank value or a missing status leaves the card alone. `CANCELLED` is not allowed here; use `canceled_status`. Entries merge with the defaults, and a blank value removes a default. |
 
 The `task_manager.jira` block is validated only when the provider is `jira`, as `pr.bitbucket_cloud` is.
 

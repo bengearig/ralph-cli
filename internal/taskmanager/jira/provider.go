@@ -186,23 +186,46 @@ func (p *Provider) Update(ctx context.Context, key string, req taskmanager.CardR
 	return c.UpdateIssue(ctx, key, fields)
 }
 
-// SetStatus moves the card to the Jira status mapped to the ralph status; a
-// blank or missing mapping does nothing.
+// SetStatus moves the card through the Jira statuses mapped to the ralph
+// status; a blank or missing mapping does nothing.
 func (p *Provider) SetStatus(ctx context.Context, key, status string) error {
-	var target string
+	var raw []string
 	if status == string(domain.StatusCancelled) {
-		target = p.cfg.CanceledStatus
+		raw = []string{p.cfg.CanceledStatus}
 	} else {
-		target = p.cfg.StatusMap[status]
+		raw = p.cfg.StatusMap[status]
 	}
-	if strings.TrimSpace(target) == "" {
+	var path []string
+	for _, name := range raw {
+		if name = strings.TrimSpace(name); name != "" {
+			path = append(path, name)
+		}
+	}
+	if len(path) == 0 {
 		return nil
 	}
 	c, err := p.getClient()
 	if err != nil {
 		return err
 	}
-	return c.TransitionIssue(ctx, key, strings.TrimSpace(target))
+	var prepare func(context.Context) error
+	if e := p.cfg.OriginalEstimate; e != (config.JiraEstimates{}) {
+		prepare = func(ctx context.Context) error { return c.EnsureOriginalEstimate(ctx, key, p.estimateFor) }
+	}
+	return c.MoveIssue(ctx, key, path, prepare)
+}
+
+func (p *Provider) estimateFor(issueType string) string {
+	t, e := p.cfg.IssueTypes, p.cfg.OriginalEstimate
+	switch {
+	case strings.EqualFold(issueType, t.Task):
+		return e.Task
+	case strings.EqualFold(issueType, t.Milestone):
+		return e.Milestone
+	case strings.EqualFold(issueType, t.Initiative):
+		return e.Initiative
+	}
+	return ""
 }
 
 func (p *Provider) getClient() (*Client, error) {

@@ -179,14 +179,11 @@ func (c *Client) ProjectIssueTypes(ctx context.Context, projectKey string) ([]Is
 	return out, nil
 }
 
-// TransitionIssue moves a card to the status named statusName, choosing the
-// workflow transition that leads to it. It does nothing when the card is
-// already there.
-func (c *Client) TransitionIssue(ctx context.Context, key, statusName string) error {
+func (c *Client) issueStatus(ctx context.Context, key string) (string, error) {
 	path := issuePath + "/" + url.PathEscape(key)
 	data, err := c.do(ctx, http.MethodGet, path+"?fields=status", nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	var issue struct {
 		Fields struct {
@@ -196,14 +193,102 @@ func (c *Client) TransitionIssue(ctx context.Context, key, statusName string) er
 		} `json:"fields"`
 	}
 	if err := json.Unmarshal(data, &issue); err != nil {
-		return fmt.Errorf("jira: GET %s: response is not valid JSON: %w", path, err)
+		return "", fmt.Errorf("jira: GET %s: response is not valid JSON: %w", path, err)
 	}
-	if strings.EqualFold(issue.Fields.Status.Name, statusName) {
+	return issue.Fields.Status.Name, nil
+}
+
+// MoveIssue moves a card through the statuses of path in order. It starts after
+// the card's current status when that is in path, so a card part way along
+// resumes. It stops at the first step that fails, leaving the card where it got
+// to. prepare, when set, runs once before the first step, and only when there is one.
+func (c *Client) MoveIssue(ctx context.Context, key string, path []string, prepare func(context.Context) error) error {
+	current, err := c.issueStatus(ctx, key)
+	if err != nil {
+		return err
+	}
+	steps := path
+	for i, name := range path {
+		if strings.EqualFold(name, current) {
+			steps = path[i+1:]
+			break
+		}
+	}
+	if len(steps) == 0 {
 		return nil
 	}
+	if prepare != nil {
+		if err := prepare(ctx); err != nil {
+			return err
+		}
+	}
+	for _, name := range steps {
+		if err := c.transition(ctx, key, current, name); err != nil {
+			if len(path) > 1 {
+				err = fmt.Errorf("%w (moving through %s)", err, strings.Join(path, " > "))
+			}
+			return err
+		}
+		current = name
+	}
+	return nil
+}
 
-	tpath := path + "/transitions"
-	data, err = c.do(ctx, http.MethodGet, tpath, nil)
+// EnsureOriginalEstimate sets the card's original estimate to what pick returns for its
+// issue type, unless it already has one or pick returns "". Jira workflows can require it.
+func (c *Client) EnsureOriginalEstimate(ctx context.Context, key string, pick func(issueType string) string) error {
+	path := issuePath + "/" + url.PathEscape(key)
+	data, err := c.do(ctx, http.MethodGet, path+"?fields=issuetype,timetracking", nil)
+	if err != nil {
+		return err
+	}
+	var issue struct {
+		Fields struct {
+			IssueType struct {
+				Name string `json:"name"`
+			} `json:"issuetype"`
+			TimeTracking struct {
+				OriginalEstimate        string `json:"originalEstimate"`
+				OriginalEstimateSeconds int64  `json:"originalEstimateSeconds"`
+			} `json:"timetracking"`
+		} `json:"fields"`
+	}
+	if err := json.Unmarshal(data, &issue); err != nil {
+		return fmt.Errorf("jira: GET %s: response is not valid JSON: %w", path, err)
+	}
+	tt := issue.Fields.TimeTracking
+	if tt.OriginalEstimate != "" || tt.OriginalEstimateSeconds > 0 {
+		return nil
+	}
+	estimate := pick(issue.Fields.IssueType.Name)
+	if estimate == "" {
+		return nil
+	}
+	body, err := json.Marshal(map[string]any{"fields": map[string]any{"timetracking": map[string]string{"originalEstimate": estimate}}})
+	if err != nil {
+		return fmt.Errorf("jira: encode estimate request: %w", err)
+	}
+	_, err = c.do(ctx, http.MethodPut, path, body)
+	return err
+}
+
+// TransitionIssue moves a card to the status named statusName, choosing the
+// workflow transition that leads to it. It does nothing when the card is
+// already there.
+func (c *Client) TransitionIssue(ctx context.Context, key, statusName string) error {
+	current, err := c.issueStatus(ctx, key)
+	if err != nil {
+		return err
+	}
+	return c.transition(ctx, key, current, statusName)
+}
+
+func (c *Client) transition(ctx context.Context, key, current, statusName string) error {
+	if strings.EqualFold(current, statusName) {
+		return nil
+	}
+	tpath := issuePath + "/" + url.PathEscape(key) + "/transitions"
+	data, err := c.do(ctx, http.MethodGet, tpath, nil)
 	if err != nil {
 		return err
 	}

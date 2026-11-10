@@ -110,3 +110,11 @@ task_manager:
     labels:
       - ralph
       - workflow-2.0
+    original_estimate:
+      initiative: 1m
+      milestone: 1m
+      task: 5m
+    status_map:
+      TODO: [To Do]
+      IN_PROGRESS: [To Do, In Progress]
+      DONE: [To Do, In Progress, Done]

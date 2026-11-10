@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"text/template"
@@ -28,6 +29,8 @@ const (
 	TaskManagerNone = "none"
 	TaskManagerJira = "jira"
 )
+
+var jiraDurationRE = regexp.MustCompile(`^[0-9]+[wdhm]( [0-9]+[wdhm])*$`)
 
 var (
 	knownHarnesses    = []string{HarnessClaudeCode}
@@ -167,14 +170,22 @@ type TaskManagerConfig struct {
 }
 
 type JiraConfig struct {
-	BaseURL        string            `koanf:"base_url"`
-	ProjectKey     string            `koanf:"project_key"`
-	EmailEnv       string            `koanf:"email_env"`
-	TokenEnv       string            `koanf:"token_env"`
-	IssueTypes     JiraIssueTypes    `koanf:"issue_types"`
-	CanceledStatus string            `koanf:"canceled_status"`
-	StatusMap      map[string]string `koanf:"status_map"`
-	Labels         []string          `koanf:"labels"`
+	BaseURL          string              `koanf:"base_url"`
+	ProjectKey       string              `koanf:"project_key"`
+	EmailEnv         string              `koanf:"email_env"`
+	TokenEnv         string              `koanf:"token_env"`
+	IssueTypes       JiraIssueTypes      `koanf:"issue_types"`
+	CanceledStatus   string              `koanf:"canceled_status"`
+	StatusMap        map[string][]string `koanf:"status_map"`
+	Labels           []string            `koanf:"labels"`
+	OriginalEstimate JiraEstimates       `koanf:"original_estimate"`
+}
+
+// JiraEstimates are the original estimates given to cards that have none before they move; empty means none.
+type JiraEstimates struct {
+	Initiative string `koanf:"initiative"`
+	Milestone  string `koanf:"milestone"`
+	Task       string `koanf:"task"`
 }
 
 type JiraIssueTypes struct {
@@ -363,6 +374,15 @@ func (c *Config) Validate() error {
 				bad("task_manager.jira."+f.key, "must not be empty")
 			}
 		}
+		for _, f := range []struct{ key, val string }{
+			{"initiative", j.OriginalEstimate.Initiative},
+			{"milestone", j.OriginalEstimate.Milestone},
+			{"task", j.OriginalEstimate.Task},
+		} {
+			if f.val != "" && !jiraDurationRE.MatchString(f.val) {
+				bad("task_manager.jira.original_estimate."+f.key, "%q is not a Jira duration such as 5m, 2h, or 1d 4h", f.val)
+			}
+		}
 		for _, l := range j.Labels {
 			if strings.TrimSpace(l) == "" || strings.ContainsAny(l, " \t\r\n") {
 				bad("task_manager.jira.labels", "%q must not be empty or contain whitespace", l)
@@ -379,6 +399,8 @@ func (c *Config) Validate() error {
 				bad("task_manager.jira.status_map", "key %q is not allowed; use task_manager.jira.canceled_status", k)
 			case !knownMappedStatus(k):
 				bad("task_manager.jira.status_map", "unknown status %q (expected one of %s)", k, strings.Join(mappableStatuses(), ", "))
+			case len(j.StatusMap[k]) > 1 && slices.ContainsFunc(j.StatusMap[k], func(s string) bool { return strings.TrimSpace(s) == "" }):
+				bad("task_manager.jira.status_map", "%s has a blank status in its path", k)
 			}
 		}
 	}

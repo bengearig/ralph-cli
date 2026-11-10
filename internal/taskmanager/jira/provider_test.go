@@ -478,16 +478,16 @@ func TestSetStatus(t *testing.T) {
 	}{
 		{"mapped", func(c *config.JiraConfig) {}, "IN_PROGRESS", 3},
 		{"unmapped", func(c *config.JiraConfig) {}, "BLOCKED", 0},
-		{"blank mapping", func(c *config.JiraConfig) { c.StatusMap["IN_PROGRESS"] = " " }, "IN_PROGRESS", 0},
+		{"blank mapping", func(c *config.JiraConfig) { c.StatusMap["IN_PROGRESS"] = []string{" "} }, "IN_PROGRESS", 0},
 		{"cancelled uses canceled_status", func(c *config.JiraConfig) { c.CanceledStatus = "Cancelled" }, "CANCELLED", 3},
 		{"cancelled blank", func(c *config.JiraConfig) {}, "CANCELLED", 0},
-		{"cancelled ignores map", func(c *config.JiraConfig) { c.StatusMap["CANCELLED"] = "Cancelled" }, "CANCELLED", 0},
+		{"cancelled ignores map", func(c *config.JiraConfig) { c.StatusMap["CANCELLED"] = []string{"Cancelled"} }, "CANCELLED", 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newStatusJira(t)
 			cfg := testCfg(f.URL)
-			cfg.StatusMap = map[string]string{"TODO": "To Do", "IN_PROGRESS": "In Progress", "DONE": "Done"}
+			cfg.StatusMap = map[string][]string{"TODO": {"To Do"}, "IN_PROGRESS": {"In Progress"}, "DONE": {"Done"}}
 			tc.mutate(&cfg)
 			p := NewProvider(cfg, 0, env(goodEnv), nil)
 			if err := p.SetStatus(ctx, "PROJ-1", tc.status); err != nil {
@@ -503,12 +503,58 @@ func TestSetStatus(t *testing.T) {
 func TestSetStatusTransitionsToMappedName(t *testing.T) {
 	f := newStatusJira(t)
 	cfg := testCfg(f.URL)
-	cfg.StatusMap = map[string]string{"IN_PROGRESS": "In Progress"}
+	cfg.StatusMap = map[string][]string{"IN_PROGRESS": {"In Progress"}}
 	if err := NewProvider(cfg, 0, env(goodEnv), nil).SetStatus(context.Background(), "PROJ-1", "IN_PROGRESS"); err != nil {
 		t.Fatal(err)
 	}
 	got := f.requests()
 	if len(got) != 3 || got[2] != "POST /rest/api/3/issue/PROJ-1/transitions" {
 		t.Errorf("requests = %v", got)
+	}
+}
+
+func TestSetStatusFillsEstimateBeforeMoving(t *testing.T) {
+	var mu sync.Mutex
+	var reqs []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		reqs = append(reqs, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/transitions"):
+			_, _ = w.Write([]byte(`{"transitions":[{"id":"21","to":{"name":"To Do"}}]}`))
+		case r.Method == "GET" && r.URL.RawQuery == "fields=status":
+			_, _ = w.Write([]byte(`{"fields":{"status":{"name":"To Be Sized"}}}`))
+		case r.Method == "GET":
+			_, _ = w.Write([]byte(`{"fields":{"issuetype":{"name":"Sub-task"},"timetracking":{}}}`))
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer srv.Close()
+	cfg := testCfg(srv.URL)
+	cfg.StatusMap = map[string][]string{"TODO": {"To Do"}}
+	cfg.OriginalEstimate = config.JiraEstimates{Task: "5m", Milestone: "1m"}
+	if err := NewProvider(cfg, 0, env(goodEnv), nil).SetStatus(context.Background(), "PROJ-1", "TODO"); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"GET /rest/api/3/issue/PROJ-1", "GET /rest/api/3/issue/PROJ-1", "PUT /rest/api/3/issue/PROJ-1", "GET /rest/api/3/issue/PROJ-1/transitions", "POST /rest/api/3/issue/PROJ-1/transitions"}
+	if strings.Join(reqs, "|") != strings.Join(want, "|") {
+		t.Errorf("requests = %v", reqs)
+	}
+
+	reqs = nil
+	cfg.OriginalEstimate = config.JiraEstimates{}
+	mu.Unlock()
+	if err := NewProvider(cfg, 0, env(goodEnv), nil).SetStatus(context.Background(), "PROJ-1", "TODO"); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	for _, r := range reqs {
+		if strings.HasPrefix(r, "PUT") {
+			t.Errorf("estimate sent with none configured: %v", reqs)
+		}
 	}
 }

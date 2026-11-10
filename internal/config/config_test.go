@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -53,7 +54,7 @@ func TestDefaults(t *testing.T) {
 	if tm.Provider != TaskManagerNone || tm.Timeout != 10*time.Second {
 		t.Errorf("task_manager defaults = %+v", tm)
 	}
-	if j := tm.Jira; j.EmailEnv != "RALPH_JIRA_EMAIL" || j.TokenEnv != "RALPH_JIRA_TOKEN" || j.CanceledStatus != "" || len(j.Labels) != 0 ||
+	if j := tm.Jira; j.EmailEnv != "RALPH_JIRA_EMAIL" || j.TokenEnv != "RALPH_JIRA_TOKEN" || j.CanceledStatus != "" || len(j.Labels) != 0 || j.OriginalEstimate != (JiraEstimates{}) ||
 		j.IssueTypes != (JiraIssueTypes{Initiative: "Epic", Milestone: "Task", Task: "Sub-task"}) {
 		t.Errorf("jira defaults = %+v", j)
 	}
@@ -95,23 +96,39 @@ func TestValidateTaskManager(t *testing.T) {
 		{"complete jira", complete, nil},
 		{"status_map extra entry", func(c *Config) {
 			complete(c)
-			c.TaskManager.Jira.StatusMap["BLOCKED"] = "Blocked"
+			c.TaskManager.Jira.StatusMap["BLOCKED"] = []string{"Blocked"}
 		}, nil},
 		{"status_map blank value", func(c *Config) {
 			complete(c)
-			c.TaskManager.Jira.StatusMap["DONE"] = ""
+			c.TaskManager.Jira.StatusMap["DONE"] = []string{""}
 		}, nil},
+		{"status_map path", func(c *Config) {
+			complete(c)
+			c.TaskManager.Jira.StatusMap["DONE"] = []string{"To Do", "In Progress", "Done"}
+		}, nil},
+		{"original_estimate", func(c *Config) {
+			complete(c)
+			c.TaskManager.Jira.OriginalEstimate = JiraEstimates{Task: "5m", Milestone: "1h 30m", Initiative: "2d"}
+		}, nil},
+		{"original_estimate invalid", func(c *Config) {
+			complete(c)
+			c.TaskManager.Jira.OriginalEstimate = JiraEstimates{Task: "five minutes", Milestone: "1.5h"}
+		}, []string{"task_manager.jira.original_estimate.task:", "task_manager.jira.original_estimate.milestone:"}},
+		{"status_map blank step in path", func(c *Config) {
+			complete(c)
+			c.TaskManager.Jira.StatusMap["DONE"] = []string{"To Do", " ", "Done"}
+		}, []string{"task_manager.jira.status_map:", "DONE has a blank status"}},
 		{"status_map milestone status", func(c *Config) {
 			complete(c)
-			c.TaskManager.Jira.StatusMap["ARTICULATING"] = "Backlog"
+			c.TaskManager.Jira.StatusMap["ARTICULATING"] = []string{"Backlog"}
 		}, nil},
 		{"status_map unknown key", func(c *Config) {
 			complete(c)
-			c.TaskManager.Jira.StatusMap["WAITING"] = "Waiting"
+			c.TaskManager.Jira.StatusMap["WAITING"] = []string{"Waiting"}
 		}, []string{"task_manager.jira.status_map:", "WAITING"}},
 		{"status_map cancelled key", func(c *Config) {
 			complete(c)
-			c.TaskManager.Jira.StatusMap["CANCELLED"] = "Cancelled"
+			c.TaskManager.Jira.StatusMap["CANCELLED"] = []string{"Cancelled"}
 		}, []string{"task_manager.jira.status_map:", "canceled_status"}},
 		{"labels", func(c *Config) {
 			complete(c)
@@ -126,7 +143,7 @@ func TestValidateTaskManager(t *testing.T) {
 			c.TaskManager.Jira.Labels = []string{" "}
 		}, []string{"task_manager.jira.labels:"}},
 		{"none ignores invalid status_map", func(c *Config) {
-			c.TaskManager.Jira.StatusMap = map[string]string{"WAITING": "x", "CANCELLED": "y"}
+			c.TaskManager.Jira.StatusMap = map[string][]string{"WAITING": {"x"}, "CANCELLED": {"y"}}
 		}, nil},
 		{"none ignores jira block", func(c *Config) {
 			c.TaskManager.Jira = JiraConfig{BaseURL: "garbage"}
@@ -483,9 +500,15 @@ func TestStatusMapDefaultsAndLayers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{"TODO": "To Do", "IN_PROGRESS": "In Progress", "DONE": "Done"}
-	if got := cfg.TaskManager.Jira.StatusMap; len(got) != len(want) || got["TODO"] != want["TODO"] || got["IN_PROGRESS"] != want["IN_PROGRESS"] || got["DONE"] != want["DONE"] {
+	want := map[string][]string{"TODO": {"To Do"}, "IN_PROGRESS": {"In Progress"}, "DONE": {"Done"}}
+	got := cfg.TaskManager.Jira.StatusMap
+	if len(got) != len(want) {
 		t.Errorf("status_map defaults = %v", got)
+	}
+	for k, v := range want {
+		if !slices.Equal(got[k], v) {
+			t.Errorf("status_map defaults = %v", got)
+		}
 	}
 
 	add := writeFile(t, t.TempDir(), "add.yaml", "task_manager:\n  jira:\n    status_map:\n      BLOCKED: Blocked\n")
@@ -494,7 +517,7 @@ func TestStatusMapDefaultsAndLayers(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := l.Config.TaskManager.Jira.StatusMap
-	if len(m) != 4 || m["BLOCKED"] != "Blocked" || m["TODO"] != "To Do" || m["DONE"] != "Done" {
+	if len(m) != 4 || !slices.Equal(m["BLOCKED"], []string{"Blocked"}) || !slices.Equal(m["TODO"], []string{"To Do"}) || !slices.Equal(m["DONE"], []string{"Done"}) {
 		t.Errorf("entry did not merge with defaults: %v", m)
 	}
 
@@ -504,8 +527,18 @@ func TestStatusMapDefaultsAndLayers(t *testing.T) {
 		t.Fatal(err)
 	}
 	m = l.Config.TaskManager.Jira.StatusMap
-	if v, ok := m["DONE"]; !ok || v != "" || m["TODO"] != "To Do" {
+	if v, ok := m["DONE"]; !ok || len(v) > 1 || (len(v) == 1 && v[0] != "") || !slices.Equal(m["TODO"], []string{"To Do"}) {
 		t.Errorf("blanking a default: %v", m)
+	}
+
+	path := writeFile(t, t.TempDir(), "path.yaml", "task_manager:\n  jira:\n    status_map:\n      DONE: [To Do, In Progress, Done]\n      IN_PROGRESS: [To Do, In Progress]\n")
+	l, err = Load(Sources{ProjectFile: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = l.Config.TaskManager.Jira.StatusMap
+	if !slices.Equal(m["DONE"], []string{"To Do", "In Progress", "Done"}) || !slices.Equal(m["IN_PROGRESS"], []string{"To Do", "In Progress"}) || !slices.Equal(m["TODO"], []string{"To Do"}) {
+		t.Errorf("path did not replace the default: %v", m)
 	}
 }
 

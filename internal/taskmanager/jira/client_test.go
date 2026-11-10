@@ -423,3 +423,157 @@ func TestTransitionIssueAPIErrorNoRetry(t *testing.T) {
 		t.Errorf("err = %v after %d requests", err, n)
 	}
 }
+
+type workflowServer struct {
+	*httptest.Server
+	status string
+	edges  map[string][]string
+	posts  []string
+}
+
+func newWorkflowServer(t *testing.T, start string, edges map[string][]string) *workflowServer {
+	t.Helper()
+	ws := &workflowServer{status: start, edges: edges}
+	ws.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/rest/api/3/issue/PROJ-1":
+			io.WriteString(w, `{"fields":{"status":{"name":"`+ws.status+`"}}}`)
+		case r.Method == "GET" && r.URL.Path == "/rest/api/3/issue/PROJ-1/transitions":
+			var ts []string
+			for _, to := range ws.edges[ws.status] {
+				ts = append(ts, `{"id":"`+to+`","to":{"name":"`+to+`"}}`)
+			}
+			io.WriteString(w, `{"transitions":[`+strings.Join(ts, ",")+`]}`)
+		case r.Method == "POST" && r.URL.Path == "/rest/api/3/issue/PROJ-1/transitions":
+			var body struct {
+				Transition struct{ ID string } `json:"transition"`
+			}
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &body)
+			ws.posts = append(ws.posts, body.Transition.ID)
+			ws.status = body.Transition.ID
+			w.WriteHeader(204)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL)
+			w.WriteHeader(500)
+		}
+	}))
+	t.Cleanup(ws.Close)
+	return ws
+}
+
+var gatedWorkflow = map[string][]string{
+	"To Be Sized": {"To Do", "Canceled"},
+	"To Do":       {"In Progress", "Canceled"},
+	"In Progress": {"Done", "To Do"},
+}
+
+func TestMoveIssueThroughPath(t *testing.T) {
+	path := []string{"To Do", "In Progress", "Done"}
+	for _, tc := range []struct {
+		start string
+		posts []string
+	}{
+		{"To Be Sized", []string{"To Do", "In Progress", "Done"}},
+		{"To Do", []string{"In Progress", "Done"}},
+		{"In Progress", []string{"Done"}},
+		{"Done", nil},
+	} {
+		t.Run(tc.start, func(t *testing.T) {
+			ws := newWorkflowServer(t, tc.start, gatedWorkflow)
+			c := newTestClient(t, ws.URL, time.Second)
+			if err := c.MoveIssue(context.Background(), "PROJ-1", path, nil); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(ws.posts, ",") != strings.Join(tc.posts, ",") || !strings.EqualFold(ws.status, "Done") {
+				t.Errorf("posts %v, status %q", ws.posts, ws.status)
+			}
+		})
+	}
+}
+
+func TestMoveIssueStopsAtFailingStep(t *testing.T) {
+	ws := newWorkflowServer(t, "To Be Sized", map[string][]string{"To Be Sized": {"To Do"}, "To Do": {"Canceled"}})
+	c := newTestClient(t, ws.URL, time.Second)
+	err := c.MoveIssue(context.Background(), "PROJ-1", []string{"To Do", "In Progress", "Done"}, nil)
+	if err == nil || !strings.Contains(err.Error(), `no transition to status "In Progress"`) ||
+		!strings.Contains(err.Error(), "reachable statuses: Canceled") || !strings.Contains(err.Error(), "moving through To Do > In Progress > Done") {
+		t.Fatalf("err = %v", err)
+	}
+	if ws.status != "To Do" {
+		t.Errorf("status = %q, want the card left at To Do", ws.status)
+	}
+}
+
+func TestMoveIssueSingleStepIsTransition(t *testing.T) {
+	ts := newTransitionServer(t, "To Do", sampleTransitions, 0)
+	c := newTestClient(t, ts.URL, time.Second)
+	if err := c.MoveIssue(context.Background(), "PROJ-1", []string{"Done"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(ts.reqs) != 3 || ts.post != `{"transition":{"id":"31"}}` {
+		t.Errorf("requests = %v, post %s", ts.reqs, ts.post)
+	}
+}
+
+func TestMoveIssuePrepareRunsOnlyWhenMoving(t *testing.T) {
+	for _, tc := range []struct {
+		start string
+		runs  int
+	}{{"To Be Sized", 1}, {"Done", 0}} {
+		ws := newWorkflowServer(t, tc.start, gatedWorkflow)
+		c := newTestClient(t, ws.URL, time.Second)
+		runs := 0
+		prepare := func(context.Context) error { runs++; return nil }
+		if err := c.MoveIssue(context.Background(), "PROJ-1", []string{"To Do", "In Progress", "Done"}, prepare); err != nil {
+			t.Fatal(err)
+		}
+		if runs != tc.runs {
+			t.Errorf("from %s: prepare ran %d times, want %d", tc.start, runs, tc.runs)
+		}
+	}
+
+	ws := newWorkflowServer(t, "To Be Sized", gatedWorkflow)
+	c := newTestClient(t, ws.URL, time.Second)
+	boom := errors.New("boom")
+	if err := c.MoveIssue(context.Background(), "PROJ-1", []string{"To Do"}, func(context.Context) error { return boom }); !errors.Is(err, boom) || len(ws.posts) != 0 {
+		t.Errorf("err = %v, posts %v", err, ws.posts)
+	}
+}
+
+func TestEnsureOriginalEstimate(t *testing.T) {
+	pick := func(typ string) string {
+		return map[string]string{"Task": "5m", "Feature": "1m"}[typ]
+	}
+	for _, tc := range []struct {
+		name, issue string
+		put         string
+	}{
+		{"empty task", `{"fields":{"issuetype":{"name":"Task"},"timetracking":{}}}`, `{"fields":{"timetracking":{"originalEstimate":"5m"}}}`},
+		{"empty feature", `{"fields":{"issuetype":{"name":"Feature"}}}`, `{"fields":{"timetracking":{"originalEstimate":"1m"}}}`},
+		{"already set", `{"fields":{"issuetype":{"name":"Task"},"timetracking":{"originalEstimate":"2h","originalEstimateSeconds":7200}}}`, ""},
+		{"seconds only", `{"fields":{"issuetype":{"name":"Task"},"timetracking":{"originalEstimateSeconds":60}}}`, ""},
+		{"no estimate for type", `{"fields":{"issuetype":{"name":"Bug"},"timetracking":{}}}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var put string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPut {
+					b, _ := io.ReadAll(r.Body)
+					put = string(b)
+					w.WriteHeader(204)
+					return
+				}
+				io.WriteString(w, tc.issue)
+			}))
+			defer srv.Close()
+			c := newTestClient(t, srv.URL, time.Second)
+			if err := c.EnsureOriginalEstimate(context.Background(), "PROJ-1", pick); err != nil {
+				t.Fatal(err)
+			}
+			if put != tc.put {
+				t.Errorf("put = %q, want %q", put, tc.put)
+			}
+		})
+	}
+}
