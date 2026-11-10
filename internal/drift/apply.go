@@ -41,6 +41,10 @@ func Apply(ctx context.Context, in Input, a Actions) (before, after Report, err 
 		return before, before, nil
 	}
 
+	if err = in.Service.CheckMilestoneWritable(ctx, in.MilestoneID); err != nil {
+		return before, Report{}, err
+	}
+
 	mid := before
 	if a.Branch != "" {
 		exists, err := in.Repo.BranchExists(ctx, a.Branch)

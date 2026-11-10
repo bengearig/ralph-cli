@@ -850,3 +850,28 @@ func TestApplyBackfill(t *testing.T) {
 	e.wantTask(1, "DONE", c2)
 	wantTasks(t, after, want{MatchPresent, c1}, want{MatchPresent, c2})
 }
+
+func TestApplyRefusedWhenArchived(t *testing.T) {
+	e := newEnv(t, "login")
+	e.do(0, true)
+	e.recordHere()
+	ctx := context.Background()
+	m, err := e.svc.GetMilestone(ctx, e.mID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	iID, _ := domain.ParseID(domain.KindInitiative, m.InitiativeID)
+	if _, err := e.svc.ArchiveInitiative(ctx, iID); err != nil {
+		t.Fatal(err)
+	}
+	before := e.snapshot()
+	for _, a := range []Actions{{Accept: true}, {Branch: branch}, {Reopen: []int64{e.tasks[0]}, Reason: "lost"}} {
+		_, _, err := Apply(ctx, e.input(), a)
+		if !errors.Is(err, service.ErrArchived) {
+			t.Errorf("Apply(%+v): err = %v, want ErrArchived", a, err)
+		}
+	}
+	if after := e.snapshot(); !reflect.DeepEqual(before, after) {
+		t.Errorf("Apply changed records:\nbefore %+v\nafter  %+v", before, after)
+	}
+}

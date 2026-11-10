@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/search"
@@ -148,6 +149,70 @@ func archivedInitiatives(ctx context.Context, st store.Store) (map[int64]bool, e
 	return out, nil
 }
 
+// ErrArchived marks a write refused because the target is effectively
+// archived; unarchive it first.
+var ErrArchived = errors.New("archived")
+
+type archivedError struct{ msg string }
+
+func (e *archivedError) Error() string        { return e.msg }
+func (e *archivedError) Is(target error) bool { return target == ErrArchived }
+
+// requireWritable refuses with ErrArchived when the initiative (KindInitiative)
+// or document (KindDocument) with this ID is effectively archived. A document
+// is archived by its own flag or by its initiative's.
+func requireWritable(ctx context.Context, st store.Store, kind domain.Kind, id int64) error {
+	switch kind {
+	case domain.KindInitiative:
+		i, err := st.GetInitiative(ctx, id)
+		if err != nil {
+			return err
+		}
+		if !i.ArchivedAt.IsZero() {
+			return initiativeArchivedError(id)
+		}
+		return nil
+	case domain.KindDocument:
+		d, err := st.GetDocument(ctx, id)
+		if err != nil {
+			return err
+		}
+		if !d.ArchivedAt.IsZero() {
+			what := domain.FormatID(domain.KindDocument, id)
+			return &archivedError{fmt.Sprintf("%s is archived; unarchive it first (ralph doc unarchive %s)", what, what)}
+		}
+		if d.InitiativeID != nil {
+			return requireWritable(ctx, st, domain.KindInitiative, *d.InitiativeID)
+		}
+		return nil
+	}
+	return fmt.Errorf("%w: %s cannot be archived", domain.ErrInvalid, kind)
+}
+
+func initiativeArchivedError(id int64) error {
+	what := domain.FormatID(domain.KindInitiative, id)
+	return &archivedError{fmt.Sprintf("%s is archived; unarchive it first (ralph initiative unarchive %s)", what, what)}
+}
+
+// requireTaskWritable refuses with ErrArchived when the task's initiative is archived.
+func requireTaskWritable(ctx context.Context, st store.Store, t domain.Task) error {
+	m, err := st.GetMilestone(ctx, t.MilestoneID)
+	if err != nil {
+		return err
+	}
+	return requireWritable(ctx, st, domain.KindInitiative, m.InitiativeID)
+}
+
+// CheckMilestoneWritable returns an error wrapping ErrArchived when the
+// milestone's initiative is archived, so callers can fail before a multi-step write.
+func (s *Service) CheckMilestoneWritable(ctx context.Context, id int64) error {
+	m, err := s.store.GetMilestone(ctx, id)
+	if err != nil {
+		return err
+	}
+	return requireWritable(ctx, s.store, domain.KindInitiative, m.InitiativeID)
+}
+
 // ---- initiatives ----
 
 type InitiativeInput struct {
@@ -203,6 +268,9 @@ func (s *Service) UpdateInitiative(ctx context.Context, id int64, p InitiativePa
 	if err != nil {
 		return InitiativeView{}, err
 	}
+	if err := requireWritable(ctx, s.store, domain.KindInitiative, id); err != nil {
+		return InitiativeView{}, err
+	}
 	if t := trimmed(p.Title); t != nil {
 		if err := domain.RequireText("title", *t); err != nil {
 			return InitiativeView{}, err
@@ -243,8 +311,7 @@ func (s *Service) CreateMilestone(ctx context.Context, in MilestoneInput) (Miles
 	if in.Position < 0 {
 		return MilestoneView{}, fmt.Errorf("%w: position must not be negative", domain.ErrInvalid)
 	}
-	archived, err := initiativeArchived(ctx, s.store, in.InitiativeID)
-	if err != nil {
+	if err := requireWritable(ctx, s.store, domain.KindInitiative, in.InitiativeID); err != nil {
 		return MilestoneView{}, err
 	}
 	m := domain.Milestone{
@@ -253,7 +320,7 @@ func (s *Service) CreateMilestone(ctx context.Context, in MilestoneInput) (Miles
 		Description:  strings.TrimSpace(in.Description),
 		Position:     in.Position,
 	}
-	err = createWithSlug(in.Slug, m.Title, "milestone", func(slug string) error {
+	err := createWithSlug(in.Slug, m.Title, "milestone", func(slug string) error {
 		m.Slug = slug
 		m.Position = in.Position
 		return s.store.CreateMilestone(ctx, &m)
@@ -261,7 +328,7 @@ func (s *Service) CreateMilestone(ctx context.Context, in MilestoneInput) (Miles
 	if err != nil {
 		return MilestoneView{}, err
 	}
-	v := milestoneView(m, nil, archived)
+	v := milestoneView(m, nil, false)
 	v.IndexWarning = s.indexMilestone(ctx, m)
 	return v, nil
 }
@@ -316,6 +383,9 @@ func (s *Service) UpdateMilestone(ctx context.Context, id int64, p MilestonePatc
 	if err != nil {
 		return MilestoneView{}, err
 	}
+	if err := requireWritable(ctx, s.store, domain.KindInitiative, m.InitiativeID); err != nil {
+		return MilestoneView{}, err
+	}
 	if t := trimmed(p.Title); t != nil {
 		if err := domain.RequireText("title", *t); err != nil {
 			return MilestoneView{}, err
@@ -361,7 +431,16 @@ func (s *Service) RecordMilestoneGit(ctx context.Context, milestoneID int64, g d
 	if strings.TrimSpace(g.Branch) == "" && (g.BaseCommit != "" || g.HeadCommit != "") {
 		return fmt.Errorf("%w: recorded commits need a branch", domain.ErrInvalid)
 	}
-	return s.store.SetMilestoneGit(ctx, milestoneID, g)
+	return s.store.InTx(ctx, func(tx store.Store) error {
+		m, err := tx.GetMilestone(ctx, milestoneID)
+		if err != nil {
+			return err
+		}
+		if err := requireWritable(ctx, tx, domain.KindInitiative, m.InitiativeID); err != nil {
+			return err
+		}
+		return tx.SetMilestoneGit(ctx, milestoneID, g)
+	})
 }
 
 // RecordMilestoneHead updates only the recorded head of a milestone's branch.
@@ -372,6 +451,9 @@ func (s *Service) RecordMilestoneHead(ctx context.Context, milestoneID int64, he
 	return s.store.InTx(ctx, func(tx store.Store) error {
 		m, err := tx.GetMilestone(ctx, milestoneID)
 		if err != nil {
+			return err
+		}
+		if err := requireWritable(ctx, tx, domain.KindInitiative, m.InitiativeID); err != nil {
 			return err
 		}
 		g := m.Git
@@ -389,7 +471,16 @@ func (s *Service) RecordTaskCommit(ctx context.Context, taskID int64, hash strin
 	if err := domain.ValidCommit(hash); err != nil {
 		return err
 	}
-	return s.store.SetTaskCommit(ctx, taskID, hash)
+	return s.store.InTx(ctx, func(tx store.Store) error {
+		t, err := tx.GetTask(ctx, taskID)
+		if err != nil {
+			return err
+		}
+		if err := requireTaskWritable(ctx, tx, t); err != nil {
+			return err
+		}
+		return tx.SetTaskCommit(ctx, taskID, hash)
+	})
 }
 
 // ---- tasks ----
@@ -428,6 +519,9 @@ func (s *Service) CreateTask(ctx context.Context, in TaskInput) (TaskView, error
 	if err != nil {
 		return TaskView{}, err
 	}
+	if err := requireWritable(ctx, s.store, domain.KindInitiative, m.InitiativeID); err != nil {
+		return TaskView{}, err
+	}
 	t := domain.Task{
 		MilestoneID:        m.ID,
 		Title:              strings.TrimSpace(in.Title),
@@ -439,11 +533,7 @@ func (s *Service) CreateTask(ctx context.Context, in TaskInput) (TaskView, error
 	if err := s.store.CreateTask(ctx, &t); err != nil {
 		return TaskView{}, err
 	}
-	archived, err := milestoneArchived(ctx, s.store, m)
-	if err != nil {
-		return TaskView{}, err
-	}
-	v := taskView(t, nil, archived)
+	v := taskView(t, nil, false)
 	v.IndexWarning = s.indexTask(ctx, t, m.InitiativeID)
 	return v, nil
 }
@@ -506,6 +596,9 @@ func (s *Service) UpdateTask(ctx context.Context, id int64, p TaskPatch) (TaskVi
 	if err != nil {
 		return TaskView{}, err
 	}
+	if err := requireTaskWritable(ctx, s.store, t); err != nil {
+		return TaskView{}, err
+	}
 	if t.Status.Terminal() {
 		return TaskView{}, fmt.Errorf("%w: %s is %s and can no longer be edited",
 			domain.ErrInvalid, domain.FormatID(domain.KindTask, id), t.Status)
@@ -557,6 +650,9 @@ func (s *Service) SetTaskStatus(ctx context.Context, id int64, to domain.Status,
 	err := s.store.InTx(ctx, func(tx store.Store) error {
 		t, err := tx.GetTask(ctx, id)
 		if err != nil {
+			return err
+		}
+		if err := requireTaskWritable(ctx, tx, t); err != nil {
 			return err
 		}
 		if err := t.CheckTransition(to, reason); err != nil {
@@ -617,6 +713,9 @@ func (s *Service) ReopenTask(ctx context.Context, id int64, reason string) (Task
 		if err != nil {
 			return err
 		}
+		if err := requireTaskWritable(ctx, tx, t); err != nil {
+			return err
+		}
 		if t.Status != domain.StatusDone {
 			return fmt.Errorf("%w: only a DONE task can be reopened; %s is %s",
 				domain.ErrInvalid, domain.FormatID(domain.KindTask, id), t.Status)
@@ -654,10 +753,17 @@ func (s *Service) AddTaskNote(ctx context.Context, id int64, kind domain.NoteKin
 	if err := domain.RequireText("note", body); err != nil {
 		return TaskView{}, err
 	}
-	if _, err := s.store.GetTask(ctx, id); err != nil {
-		return TaskView{}, err
-	}
-	if err := s.store.AddTaskNote(ctx, &domain.TaskNote{TaskID: id, Kind: kind, Body: strings.TrimSpace(body)}); err != nil {
+	err := s.store.InTx(ctx, func(tx store.Store) error {
+		t, err := tx.GetTask(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err := requireTaskWritable(ctx, tx, t); err != nil {
+			return err
+		}
+		return tx.AddTaskNote(ctx, &domain.TaskNote{TaskID: id, Kind: kind, Body: strings.TrimSpace(body)})
+	})
+	if err != nil {
 		return TaskView{}, err
 	}
 	return s.GetTask(ctx, id)
@@ -717,10 +823,8 @@ func (s *Service) CreateDocument(ctx context.Context, in DocumentInput) (Documen
 		return DocumentView{}, err
 	}
 	d := domain.Document{Kind: in.Kind, Title: strings.TrimSpace(in.Title), Body: strings.TrimSpace(in.Body)}
-	var initiativeArchivedNow bool
 	if in.InitiativeID != 0 {
-		var err error
-		if initiativeArchivedNow, err = initiativeArchived(ctx, s.store, in.InitiativeID); err != nil {
+		if err := requireWritable(ctx, s.store, domain.KindInitiative, in.InitiativeID); err != nil {
 			return DocumentView{}, err
 		}
 		id := in.InitiativeID
@@ -733,7 +837,7 @@ func (s *Service) CreateDocument(ctx context.Context, in DocumentInput) (Documen
 	if err != nil {
 		return DocumentView{}, err
 	}
-	v := documentView(d, true, initiativeArchivedNow)
+	v := documentView(d, true, false)
 	v.IndexWarning = s.indexDocument(ctx, d)
 	return v, nil
 }
@@ -790,6 +894,9 @@ func (s *Service) UpdateDocument(ctx context.Context, id int64, p DocumentPatch)
 	if err != nil {
 		return DocumentView{}, err
 	}
+	if err := requireWritable(ctx, s.store, domain.KindDocument, id); err != nil {
+		return DocumentView{}, err
+	}
 	if p.Kind != nil {
 		k, err := domain.ParseDocKind(string(*p.Kind))
 		if err != nil {
@@ -816,4 +923,89 @@ func (s *Service) UpdateDocument(ctx context.Context, id int64, p DocumentPatch)
 	v := documentView(d, true, archived)
 	v.IndexWarning = s.indexDocument(ctx, d)
 	return v, nil
+}
+
+// ---- archive ----
+
+// ArchiveInitiative archives an initiative, making it and everything under it
+// read-only. It is idempotent and refused while a loop holds one of its milestones.
+func (s *Service) ArchiveInitiative(ctx context.Context, id int64) (InitiativeView, error) {
+	return s.setInitiativeArchived(ctx, id, true)
+}
+
+// UnarchiveInitiative reverses ArchiveInitiative, under the same loop guard.
+func (s *Service) UnarchiveInitiative(ctx context.Context, id int64) (InitiativeView, error) {
+	return s.setInitiativeArchived(ctx, id, false)
+}
+
+func (s *Service) setInitiativeArchived(ctx context.Context, id int64, archive bool) (InitiativeView, error) {
+	var out InitiativeView
+	err := s.InTx(ctx, func(tx *Service) error {
+		i, err := tx.store.GetInitiative(ctx, id)
+		if err != nil {
+			return err
+		}
+		if archive != i.ArchivedAt.IsZero() {
+			out = initiativeView(i)
+			return nil
+		}
+		ms, err := tx.store.ListMilestones(ctx, id)
+		if err != nil {
+			return err
+		}
+		ids := make([]int64, len(ms))
+		for n, m := range ms {
+			ids[n] = m.ID
+		}
+		action := "unarchive"
+		var at time.Time
+		if archive {
+			action, at = "archive", time.Now().UTC()
+		}
+		if err := tx.guardLoop(action, domain.FormatID(domain.KindInitiative, id), ids); err != nil {
+			return err
+		}
+		if err := tx.store.SetInitiativeArchived(ctx, id, at); err != nil {
+			return err
+		}
+		if i, err = tx.store.GetInitiative(ctx, id); err != nil {
+			return err
+		}
+		out = initiativeView(i)
+		return nil
+	})
+	return out, err
+}
+
+// ArchiveDocument archives a document. It is idempotent.
+func (s *Service) ArchiveDocument(ctx context.Context, id int64) (DocumentView, error) {
+	return s.setDocumentArchived(ctx, id, true)
+}
+
+// UnarchiveDocument clears a document's own archive flag. A document in an
+// archived initiative stays effectively archived, and its view says so.
+func (s *Service) UnarchiveDocument(ctx context.Context, id int64) (DocumentView, error) {
+	return s.setDocumentArchived(ctx, id, false)
+}
+
+func (s *Service) setDocumentArchived(ctx context.Context, id int64, archive bool) (DocumentView, error) {
+	var out DocumentView
+	err := s.InTx(ctx, func(tx *Service) error {
+		d, err := tx.store.GetDocument(ctx, id)
+		if err != nil {
+			return err
+		}
+		if archive == d.ArchivedAt.IsZero() {
+			var at time.Time
+			if archive {
+				at = time.Now().UTC()
+			}
+			if err := tx.store.SetDocumentArchived(ctx, id, at); err != nil {
+				return err
+			}
+		}
+		out, err = tx.GetDocument(ctx, id)
+		return err
+	})
+	return out, err
 }

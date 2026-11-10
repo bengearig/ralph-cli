@@ -99,7 +99,7 @@ func (s *Service) checkDelete(ctx context.Context, kind domain.Kind, id int64, f
 		for i, m := range ms {
 			affected[i] = m.ID
 		}
-		if err := s.guardLoop(what, affected); err != nil {
+		if err := s.guardLoop("delete", what, affected); err != nil {
 			return c, err
 		}
 		if !force && (c.Milestones > 0 || c.Documents > 0) {
@@ -119,7 +119,7 @@ func (s *Service) checkDelete(ctx context.Context, kind domain.Kind, id int64, f
 		if err != nil {
 			return c, err
 		}
-		if err := s.guardLoop(what, []int64{id}); err != nil {
+		if err := s.guardLoop("delete", what, []int64{id}); err != nil {
 			return c, err
 		}
 		if !force && c.Tasks > 0 {
@@ -136,7 +136,7 @@ func (s *Service) checkDelete(ctx context.Context, kind domain.Kind, id int64, f
 		if err != nil {
 			return c, err
 		}
-		if err := s.guardLoop(what, []int64{t.MilestoneID}); err != nil {
+		if err := s.guardLoop("delete", what, []int64{t.MilestoneID}); err != nil {
 			return c, err
 		}
 		if !force && (t.Status == domain.StatusInProgress || t.Status == domain.StatusDone) {
@@ -158,7 +158,7 @@ func (s *Service) checkDelete(ctx context.Context, kind domain.Kind, id int64, f
 		if err != nil {
 			return store.Cascade{}, err
 		}
-		if err := s.guardLoop(what, []int64{t.MilestoneID}); err != nil {
+		if err := s.guardLoop("delete", what, []int64{t.MilestoneID}); err != nil {
 			return store.Cascade{}, err
 		}
 		return store.Cascade{Notes: 1}, nil
@@ -166,9 +166,9 @@ func (s *Service) checkDelete(ctx context.Context, kind domain.Kind, id int64, f
 	return store.Cascade{}, fmt.Errorf("%w: cannot delete a %s", domain.ErrInvalid, kind)
 }
 
-// guardLoop refuses a delete that touches the milestone a running loop holds,
+// guardLoop refuses an action (such as delete or archive) that touches the milestone a running loop holds,
 // whatever force says. An unparsable holder is assumed to touch everything.
-func (s *Service) guardLoop(what string, milestoneIDs []int64) error {
+func (s *Service) guardLoop(action, what string, milestoneIDs []int64) error {
 	if s.loopLockPath == "" {
 		return nil
 	}
@@ -189,11 +189,11 @@ func (s *Service) guardLoop(what string, milestoneIDs []int64) error {
 		return nil
 	}
 	if h.Milestone == "" {
-		return fmt.Errorf("%w: cannot delete %s while a loop holds the lock (holder unknown)",
-			looplock.ErrLoopRunning, what)
+		return fmt.Errorf("%w: cannot %s %s while a loop holds the lock (holder unknown)",
+			looplock.ErrLoopRunning, action, what)
 	}
-	return fmt.Errorf("%w: cannot delete %s while the loop (pid %d) is working on %s",
-		looplock.ErrLoopRunning, what, h.PID, h.Milestone)
+	return fmt.Errorf("%w: cannot %s %s while the loop (pid %d) is working on %s",
+		looplock.ErrLoopRunning, action, what, h.PID, h.Milestone)
 }
 
 func deleteView(kind domain.Kind, id int64, c store.Cascade) DeleteView {
