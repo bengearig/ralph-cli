@@ -145,6 +145,11 @@ func TestToolsAreListedWithSchemas(t *testing.T) {
 			t.Errorf("missing tool %s", want)
 		}
 	}
+	for _, n := range names {
+		if strings.Contains(n, "merge") {
+			t.Errorf("tool %s: merging is a person's action and has no MCP tool", n)
+		}
+	}
 	if init := cs.InitializeResult(); init == nil || !strings.Contains(init.Instructions, "RALPH") {
 		t.Error("server instructions missing")
 	} else if !strings.Contains(init.Instructions, "include_archived") {
