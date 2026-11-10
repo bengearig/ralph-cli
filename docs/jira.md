@@ -199,6 +199,23 @@ loop:
 A milestone without a card is named without the key. See [Branch names](loop.md#branch-names) for the fields, the
 fallback rules, and why an existing branch is never renamed.
 
+## Commit messages
+
+A task's card key can go in its commit subject and in a `Card:` trailer. Both are off until a team opts in:
+
+```yaml
+# .ralph/config.yaml
+loop:
+  commit_template: "{{.Task.CardKeyPrefix}}{{.Task.ID}}: {{.Task.Title}}"
+  commit_card_trailer: true
+```
+
+A commit for a task with card `ABC-1235` then reads `[ABC-1235] T-12: Add the Jira client`, with `Card: ABC-1235` in its
+trailers; a task without a card gets `T-12: Add the Jira client` and no `Card:` trailer. Jira links a commit to a card
+when its message mentions the card key and the repository is connected to Jira through a development-tool
+integration. See [Card keys in commits](loop.md#card-keys-in-commits) for the fields, the cleaning rule, and how the
+drift check copes with keys that appear later.
+
 ## Card types and why
 
 Ralph fixes the hierarchy: an initiative's card is the top level, a milestone's card is its child, and a task's card
