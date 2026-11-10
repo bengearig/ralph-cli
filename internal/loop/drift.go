@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"text/template"
 
@@ -40,21 +41,62 @@ func ResolveRepo(ctx context.Context, root string) (git.Repo, error) {
 	return git.Repo{Dir: gitRoot, Exclude: filepath.ToSlash(exclude)}, nil
 }
 
-func parseCommitTemplate(tmpl string) (*template.Template, error) {
+// CommitTask is the task as the commit template sees it. CardKey is the key of
+// the task's own card, empty without one; CardKeyPrefix is "[KEY] " or empty.
+type CommitTask struct {
+	service.TaskView
+	CardKey       string
+	CardKeyPrefix string
+}
+
+func commitTask(t service.TaskView) CommitTask {
+	ct := CommitTask{TaskView: t}
+	if t.Card != nil && t.Card.Key != "" {
+		ct.CardKey = t.Card.Key
+		ct.CardKeyPrefix = "[" + t.Card.Key + "] "
+	}
+	return ct
+}
+
+type commitTemplate struct {
+	*template.Template
+	usesKey bool
+}
+
+func parseCommitTemplate(tmpl string) (*commitTemplate, error) {
 	t, err := template.New("commit").Option("missingkey=error").Parse(tmpl)
 	if err != nil {
 		return nil, fmt.Errorf("loop.commit_template: %w", err)
 	}
-	return t, nil
+	return &commitTemplate{Template: t, usesKey: strings.Contains(tmpl, "CardKey")}, nil
+}
+
+var emptyBrackets = regexp.MustCompile(`\[\s*\]|\(\s*\)`)
+var blankRun = regexp.MustCompile(`[ \t]+`)
+
+// cleanSubject tidies the first line of a message rendered without a card key.
+func cleanSubject(msg string) string {
+	first, rest, multi := strings.Cut(msg, "\n")
+	first = emptyBrackets.ReplaceAllString(first, "")
+	first = blankRun.ReplaceAllString(first, " ")
+	first = strings.TrimLeft(first, " :-,;")
+	first = strings.TrimRight(first, " ")
+	if !multi {
+		return first
+	}
+	return first + "\n" + rest
 }
 
 // commitMessage renders the message the loop commits a task with.
-func commitMessage(t *template.Template, data commitData) (string, error) {
+func commitMessage(t *commitTemplate, data commitData) (string, error) {
 	var b strings.Builder
 	if err := t.Execute(&b, data); err != nil {
 		return "", fmt.Errorf("loop.commit_template: %w", err)
 	}
 	msg := strings.TrimSpace(b.String())
+	if t.usesKey && data.Task.CardKey == "" {
+		msg = strings.TrimSpace(cleanSubject(msg))
+	}
 	if msg == "" {
 		msg = data.Task.ID + ": " + data.Task.Title
 	}
@@ -71,7 +113,7 @@ func CommitSubject(tmpl string, initiative, milestone Ref) (func(service.TaskVie
 		return nil, err
 	}
 	return func(task service.TaskView) string {
-		msg, err := commitMessage(t, commitData{Task: task, Initiative: initiative, Milestone: milestone})
+		msg, err := commitMessage(t, commitData{Task: commitTask(task), Initiative: initiative, Milestone: milestone})
 		if err != nil {
 			return ""
 		}

@@ -79,7 +79,7 @@ type Outcome struct {
 }
 
 type commitData struct {
-	Task       service.TaskView
+	Task       CommitTask
 	Initiative Ref
 	Milestone  Ref
 }
@@ -498,8 +498,8 @@ func (r Runner) runSession(ctx context.Context, plan Plan, task service.TaskView
 	return res, logPath, errors.Join(runErr, transcript.Close())
 }
 
-func (r Runner) commit(ctx context.Context, repo git.Repo, tmpl *template.Template, plan Plan, task service.TaskView, f feed) (*Commit, error) {
-	msg, err := commitMessage(tmpl, commitData{Task: task, Initiative: plan.Initiative, Milestone: plan.Milestone})
+func (r Runner) commit(ctx context.Context, repo git.Repo, tmpl *commitTemplate, plan Plan, task service.TaskView, f feed) (*Commit, error) {
+	msg, err := commitMessage(tmpl, commitData{Task: commitTask(task), Initiative: plan.Initiative, Milestone: plan.Milestone})
 	if err != nil {
 		return nil, err
 	}

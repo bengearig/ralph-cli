@@ -90,8 +90,10 @@ loop:
   branch_template: "ralph/{{.Milestone.Slug}}"
   # Commit after each completed task.
   commit_per_task: true
-  # Go text/template for those commits; fields: .Task (.ID, .Title, ...),
-  # .Initiative and .Milestone (each with .ID, .Slug, .Title).
+  # Go text/template for those commits; fields: .Task (.ID, .Title, ...,
+  # .CardKey, and .CardKeyPrefix, which is "[ABC-1235] " or empty), .Initiative
+  # and .Milestone (each with .ID, .Slug, .Title). .CardKey and .CardKeyPrefix
+  # come from the task's own card and are empty without one.
   commit_template: "{{.Task.ID}}: {{.Task.Title}}"
   # Add a `Ralph-Task: <task ID>` trailer to those commits, so ralph can match
   # commits to tasks after history is rewritten (rebase, amend, squash).
