@@ -85,6 +85,27 @@ Whether a card is pending is worked out when it is shown, not stored: a card wit
 whose stored content hash differs from what ralph would send now needs updating. See
 [Card records](data-model.md#card-records).
 
+## Branch names
+
+A branch can start with the milestone's card key, for example `ABC-1234-implement-cool-feature`. This is opt-in: the
+default `loop.branch_template` does not use the key, so turning Jira on changes no branch name. Add the key to the
+template to use it:
+
+```yaml
+# .ralph/config.yaml
+task_manager:
+  provider: jira
+  jira:
+    base_url: https://acme.atlassian.net
+    project_key: ABC
+
+loop:
+  branch_template: "{{.Milestone.CardKeyPrefix}}{{.Milestone.Slug}}"
+```
+
+A milestone without a card is named without the key. See [Branch names](loop.md#branch-names) for the fields, the
+fallback rules, and why an existing branch is never renamed.
+
 ## Card types and why
 
 Ralph fixes the hierarchy: an initiative's card is the top level, a milestone's card is its child, and a task's card

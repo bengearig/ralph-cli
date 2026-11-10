@@ -24,4 +24,4 @@
 
 Architecture decision records live in [adr/](adr/). Each one records the context, the decision, and its
 consequences. For example, [ADR 21](adr/0021-jira-cloud-as-the-first-task-manager-provider.md) records the Jira
-provider, and [ADR 22](adr/0022-create-cards-when-resources-are-created.md) records how cards are created. Add a new record rather than editing an accepted one; mark the old record superseded.
+provider, and [ADR 22](adr/0022-create-cards-when-resources-are-created.md) records how cards are created, and [ADR 23](adr/0023-card-keys-in-branch-names.md) records card keys in branch names. Add a new record rather than editing an accepted one; mark the old record superseded.

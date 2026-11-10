@@ -35,6 +35,41 @@ The template is Go `text/template` with `missingkey=error`. It can use these fie
 `.Milestone` (each with `.ID`, `.Slug`, `.Title`), `.Branch`, `.Task` (the full task view, including `.Notes`),
 `.Iteration`, `.MaxIterations`, `.StallThreshold`, and `.CommitPerTask`.
 
+## Branch names
+
+A milestone's branch name comes from `loop.branch_template`, a Go `text/template` rendered with `.Initiative` and
+`.Milestone`. Each has `.ID`, `.Slug`, `.Title`, `.CardKey`, and `.CardKeyPrefix`. `.CardKey` is the task manager
+card key recorded in ralph for that entity, such as `ABC-1234`, and is empty when the entity has no card.
+`.CardKeyPrefix` is the key followed by `-`, or empty. The default template, `ralph/{{.Milestone.Slug}}`, does not use
+them, so nothing changes until a team edits the template.
+
+- **The recorded branch wins.** A milestone that already has a recorded branch keeps it. A card that appears later
+  never renames a branch the loop has created, and neither does changing the template.
+- **One name everywhere.** The loop, `ralph pr create`, and the drift check all compute the name through the same code,
+  from the same recorded card keys, so they cannot disagree.
+- **No Jira calls.** Naming a branch reads only the keys ralph has recorded. It never calls Jira and never creates a
+  card. A milestone has a key only if its card exists in ralph, which happens when the milestone is created with a
+  [task manager](jira.md) configured. There is no command that creates cards for milestones that predate the
+  provider, so those are named without a key.
+- **Commit and prompt templates do not get the key fields.** The drift check matches commits by their rendered
+  subject, so `loop.commit_template` and the prompt template keep their existing fields.
+
+With `{{.Milestone.CardKeyPrefix}}{{.Milestone.Slug}}` as the template, a milestone titled "Implement cool feature"
+gets `ABC-1234-implement-cool-feature` when its card is `ABC-1234`, and `implement-cool-feature` when it has no card.
+
+When a key is empty and the template uses a key field, the name is cleaned up so the missing key leaves no stray
+separator:
+
+- Leading `-`, `_`, and `.` are removed from each `/`-separated part, and repeated `-` collapse to one. So
+  `{{.Milestone.CardKey}}-{{.Milestone.Slug}}` gives `implement-cool-feature`, and `feature/{{.Milestone.CardKey}}-x`
+  gives `feature/x`.
+- A template that does not use the key fields is never cleaned, so existing names are never altered.
+- If the name rendered with the keys is not a valid git branch name, for example because a key contains a character
+  git rejects, the loop names the branch as if there were no keys instead of failing.
+
+Names are inconsistent across milestones when only some have cards. That is the accepted cost of falling back to the
+plain name. See [ADR 23](adr/0023-card-keys-in-branch-names.md).
+
 ## Running
 
 ```sh
