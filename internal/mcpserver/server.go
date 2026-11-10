@@ -141,13 +141,13 @@ func (t *tools) register(s *mcp.Server) {
 			"Refused while a loop is running on one of its milestones."}, t.initiativeUnarchive)
 
 	mcp.AddTool(s, &mcp.Tool{Name: "milestone_create", Annotations: write("Create milestone"),
-		Description: "Add a milestone to an initiative. Each milestone becomes one branch and one pull request, so keep it independently reviewable."}, t.milestoneCreate)
+		Description: "Add a milestone to an initiative. Each milestone becomes one branch and one pull request, so keep it independently reviewable. depends_on lists milestones (M-n, possibly in other initiatives) that must finish first; cycles are refused."}, t.milestoneCreate)
 	mcp.AddTool(s, &mcp.Tool{Name: "milestone_list", Annotations: readOnly("List milestones"),
 		Description: "List milestones with derived status and task counts, optionally for one initiative. Milestones of archived initiatives are hidden unless include_archived is set."}, t.milestoneList)
 	mcp.AddTool(s, &mcp.Tool{Name: "milestone_get", Annotations: readOnly("Get milestone"),
 		Description: "Get a milestone with its tasks in loop order and, when a task manager is configured, its card."}, t.milestoneGet)
 	mcp.AddTool(s, &mcp.Tool{Name: "milestone_update", Annotations: write("Update milestone"),
-		Description: "Edit a milestone's title, description, or position. Omitted fields are unchanged."}, t.milestoneUpdate)
+		Description: "Edit a milestone's title, description, position, or dependencies. Omitted fields are unchanged. depends_on replaces the whole set (milestones may be in other initiatives; cycles are refused); an empty array clears it."}, t.milestoneUpdate)
 	mcp.AddTool(s, &mcp.Tool{Name: "milestone_drift", Annotations: readOnly("Check milestone drift"),
 		Description: "Compare a milestone's recorded git state with its branch and report drift per task. Read-only."}, t.milestoneDrift)
 	mcp.AddTool(s, &mcp.Tool{Name: "milestone_reconcile", Annotations: destructive("Reconcile milestone drift"),
