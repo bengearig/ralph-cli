@@ -105,7 +105,15 @@ failure and attempt), and `synced_at` (the last success). Empty strings mean uns
   URL, hash, and `synced_at`.
 - The entity is polymorphic, so there is no foreign key. `DeleteInitiative`, `DeleteMilestone`, and `DeleteTask`
   remove the cards of the deleted resource and of everything the delete cascades to, in the same transaction.
-- Whether a card needs creating or updating is derived from these rows, not stored.
+- Whether a card needs creating or updating is derived from these rows, not stored; see below.
+
+### Pending cards
+
+There is no stored pending flag. A resource's card needs creating when it has no row or its row has an empty
+`card_key`. It needs updating when its row has a key and `content_hash` differs from the hash of the resource's
+current card request. Otherwise it is in sync. Because the state is derived, a crash between saving a resource and
+recording a failure leaves no gap: the resource still has no row, so it is found. `last_error` is kept only for
+display.
 
 ## Task state machine
 

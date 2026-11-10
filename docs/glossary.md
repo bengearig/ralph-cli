@@ -15,6 +15,9 @@ then promoted to `TODO`.
 **Brief.** The instructions for an initiative exactly as they were received. Clarifications are stored separately as
 `brief` or `decision` documents, so the original text is never lost.
 
+**Card.** The record in an external task manager that corresponds to one initiative, milestone, or task. Ralph keeps
+the card's key, URL, and last-pushed content hash in the `cards` table; see [Card records](data-model.md#card-records).
+
 **Chunk.** A piece of an entity's text, sized for embedding. Search ranks chunks and reports each entity's
 best-matching chunk.
 
@@ -63,6 +66,10 @@ retried.
 **Step.** A phase that can be configured with its own harness and model: `receive`, `articulate`, `loop`, or `pr`.
 
 **Task.** A single loopable unit of work with a description, acceptance criteria, status, position, and notes.
+
+**Task manager.** An external tracker, such as Jira, that ralph can keep cards in. It sits behind a provider-neutral
+interface in `internal/taskmanager`, selected by `task_manager.provider`; see
+[`task_manager`](configuration.md#task_manager).
 
 **Task note.** A dated entry on a task. Notes are of kind `NOTE`, `ITERATION` (context for the next iteration), or
 `KICKBACK`.

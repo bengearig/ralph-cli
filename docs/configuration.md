@@ -145,6 +145,33 @@ commands, so their overrides take effect once ralph launches those sessions itse
 | `pr.bitbucket_cloud.repo_slug` | `""` | Repository slug. |
 | `pr.bitbucket_cloud.token_env` | `RALPH_BITBUCKET_TOKEN` | **Name** of the environment variable holding the API token. Never put the token in a file. |
 
+### `task_manager`
+
+The task manager is an external tracker that ralph can keep one card per initiative, milestone, and task in. The
+provider-neutral interface and the card records exist, but the Jira provider is delivered separately: until then,
+setting `task_manager.provider` to `jira` fails because no provider is registered under that name. The default,
+`none`, leaves every task manager untouched.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `task_manager.provider` | `none` | Task manager: `none` or `jira`. |
+| `task_manager.timeout` | `10s` | Per-request timeout for task manager calls, as a Go duration. |
+| `task_manager.jira.base_url` | `""` | Base URL of the Jira site. |
+| `task_manager.jira.project_key` | `""` | Key of the Jira project that holds the cards. |
+| `task_manager.jira.email_env` | `RALPH_JIRA_EMAIL` | **Name** of the environment variable holding the account email. Never put the email in a file. |
+| `task_manager.jira.token_env` | `RALPH_JIRA_TOKEN` | **Name** of the environment variable holding the API token. Never put the token in a file. |
+| `task_manager.jira.issue_types.initiative` | `Epic` | Jira issue type for an initiative's card. |
+| `task_manager.jira.issue_types.milestone` | `Task` | Jira issue type for a milestone's card, a child of its initiative's card. |
+| `task_manager.jira.issue_types.task` | `Sub-task` | Jira issue type for a task's card, a child of its milestone's card. |
+| `task_manager.jira.canceled_status` | `""` | Name of the status a card moves to when its resource is cancelled or deleted. Empty leaves the card alone. |
+
+The `task_manager.jira` block is validated only when the provider is `jira`, as `pr.bitbucket_cloud` is.
+
+The default card types are Jira's built-in hierarchy (Epic, then Task, then Sub-task), which every standard project
+has. Ralph fixes the hierarchy itself: milestones are children of initiatives and tasks are children of milestones.
+Only the type names are configurable. Jira has no built-in Feature type, so a team that has one sets it here, for
+example as `issue_types.initiative`.
+
 ## Example project config
 
 ```yaml
@@ -157,4 +184,13 @@ pr:
   bitbucket_cloud:
     workspace: acme
     repo_slug: storefront
+# Takes effect once the Jira provider is available.
+task_manager:
+  provider: jira
+  jira:
+    base_url: https://acme.atlassian.net
+    project_key: STORE
+    issue_types:
+      initiative: Feature
+    canceled_status: Cancelled
 ```

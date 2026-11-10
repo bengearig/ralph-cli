@@ -54,6 +54,8 @@ flowchart TD
 | `internal/looplock` | The project-wide loop lock on `.ralph/loop.lock`: `Acquire` and `Release` for the loop, and `Probe` to see whether and by whom it is held. Imported by `loop`, which takes the lock, and by `service`, whose deletes refuse to touch a milestone a running loop is working on. `mcpserver` imports it only to recognise `ErrLoopRunning`. |
 | `internal/git` | The git commands the loop needs, run through the `git` CLI, always excluding `.ralph/`. |
 | `internal/pr` | The pull-request provider interface, registry, and milestone request builder. `pr/bitbucketcloud` validates its configuration; creation is stubbed. |
+| `internal/taskmanager` | The provider-neutral task manager interface, the registry, and the `CardRequest` with its content hash. It imports `config` and `domain` but must not import `service`, so that `service` can call a provider. No provider is registered yet. |
+| `internal/taskmanager/fake` | A test provider that records its calls and can be told to fail. |
 | `internal/errs` | Sentinel errors shared across packages. |
 | `internal/version` | Build version, from `-ldflags` or the Go toolchain's VCS stamp. |
 
@@ -61,9 +63,12 @@ flowchart TD
 
 - **One application layer.** The CLI and the MCP server both call `service`. The same rules apply no matter who is
   driving: the `TODO` guard, the Stall Statute, slug allocation, and indexing on write.
-- **Registries for extension points.** Harnesses and pull-request providers register a factory under their config
+- **Registries for extension points.** Harnesses, pull-request providers, and task manager providers register a factory under their config
   name in `init()`. The CLI imports implementations for their side effects. Adding a harness or provider means
   adding a package and a name to `config`'s known list; nothing else changes.
+- **Provider calls stay outside transactions.** The store may allow a single connection, so a transaction held across
+  a slow, networked task manager call would block every other ralph command. A resource is committed first, then
+  the provider is called, then the outcome is recorded in a separate write.
 - **Writes never fail because of search.** Entity writes commit first. Indexing runs afterward, and an embedding
   failure becomes a warning (`index_warning` in JSON) that leaves chunks stale for `ralph index`.
 - **stdout is sacred in `ralph mcp`.** Logs always go to stderr, because stdout carries the MCP protocol.
