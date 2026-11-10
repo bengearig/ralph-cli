@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -251,5 +253,96 @@ func TestDeleteCascadesToCards(t *testing.T) {
 
 	if err := s.DeleteTask(ctx, 9999); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("deleting missing task err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestClaimCard(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	claim := func(provider string, stale time.Duration) bool {
+		t.Helper()
+		ok, err := s.ClaimCard(ctx, domain.KindTask, 1, provider, stale)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+
+	if !claim("jira", time.Minute) {
+		t.Fatal("first claim refused")
+	}
+	c, err := s.GetCard(ctx, domain.KindTask, 1, "jira")
+	if err != nil || c.Key != "" || c.AttemptedAt.IsZero() {
+		t.Fatalf("row = %+v, %v", c, err)
+	}
+	if claim("jira", time.Minute) {
+		t.Fatal("second claim accepted")
+	}
+	again, _ := s.GetCard(ctx, domain.KindTask, 1, "jira")
+	if !again.AttemptedAt.Equal(c.AttemptedAt) {
+		t.Error("refused claim changed the row")
+	}
+
+	old := c
+	old.AttemptedAt = time.Now().Add(-time.Hour)
+	if err := s.SetCard(ctx, &old); err != nil {
+		t.Fatal(err)
+	}
+	if !claim("jira", time.Minute) {
+		t.Fatal("stale claim refused")
+	}
+	taken, _ := s.GetCard(ctx, domain.KindTask, 1, "jira")
+	if !taken.AttemptedAt.After(old.AttemptedAt.Add(30 * time.Minute)) {
+		t.Errorf("attempted_at not refreshed: %v", taken.AttemptedAt)
+	}
+
+	keyed := card(domain.KindTask, 1, "jira", "K-1")
+	keyed.AttemptedAt = time.Now().Add(-time.Hour)
+	if err := s.SetCard(ctx, &keyed); err != nil {
+		t.Fatal(err)
+	}
+	if claim("jira", time.Minute) {
+		t.Fatal("claimed a row that has a key")
+	}
+	if got, _ := s.GetCard(ctx, domain.KindTask, 1, "jira"); got.Key != "K-1" {
+		t.Errorf("key = %q", got.Key)
+	}
+
+	if !claim("other", time.Minute) {
+		t.Error("providers do not claim independently")
+	}
+}
+
+func TestClaimCardRace(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "race.db")
+	var stores []*Store
+	for i := 0; i < 4; i++ {
+		st, err := Open(ctx, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { st.Close() })
+		stores = append(stores, st)
+	}
+	const n = 20
+	var wg sync.WaitGroup
+	var won atomic.Int32
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ok, err := stores[i%len(stores)].ClaimCard(ctx, domain.KindTask, 7, "jira", time.Minute)
+			if err != nil {
+				t.Error(err)
+			}
+			if ok {
+				won.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if won.Load() != 1 {
+		t.Errorf("winners = %d, want 1", won.Load())
 	}
 }

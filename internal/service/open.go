@@ -32,9 +32,19 @@ func NewEmbedder(c config.EmbeddingsConfig) (embed.Embedder, error) {
 	return nil, fmt.Errorf("unknown embeddings provider %q", c.Provider)
 }
 
-// Open wires a Service for the project rooted at root. The caller must call
-// the returned close function.
+// Open wires a Service for the project rooted at root. A task manager that
+// cannot be built or validated is logged and leaves cards disabled. The caller
+// must call the returned close function.
 func Open(ctx context.Context, cfg *config.Config, root string, log *slog.Logger) (*Service, func() error, error) {
+	tm, err := NewTaskManager(cfg)
+	if err != nil && log != nil {
+		log.Warn("task manager disabled", "error", err)
+	}
+	return OpenWithTaskManager(ctx, cfg, root, log, tm)
+}
+
+// OpenWithTaskManager is Open with the task manager supplied by the caller; nil disables cards.
+func OpenWithTaskManager(ctx context.Context, cfg *config.Config, root string, log *slog.Logger, tm taskmanager.Provider) (*Service, func() error, error) {
 	st, err := sqlite.Open(ctx, cfg.StoragePath(root))
 	if err != nil {
 		return nil, nil, err
@@ -51,21 +61,21 @@ func Open(ctx context.Context, cfg *config.Config, root string, log *slog.Logger
 		Timeout:  cfg.Embeddings.Timeout,
 		Log:      log,
 	}
-	svc := New(st, ix, Options{TaskManager: newTaskManager(cfg, log),
+	svc := New(st, ix, Options{TaskManager: tm, CardClaimStale: 3 * cfg.TaskManager.Timeout,
 		StallThreshold: cfg.Loop.StallThreshold, SearchLimit: cfg.Search.Limit, Log: log,
 		LoopLockPath: filepath.Join(root, project.DirName, "loop.lock")})
 	return svc, st.Close, nil
 }
 
-// newTaskManager builds the configured provider; a build failure is logged and
-// leaves cards disabled.
-func newTaskManager(cfg *config.Config, log *slog.Logger) taskmanager.Provider {
+// NewTaskManager builds and validates the configured provider. It returns a nil
+// provider, with the error when there is one, when cards must stay disabled.
+func NewTaskManager(cfg *config.Config) (taskmanager.Provider, error) {
 	p, err := taskmanager.New(cfg)
-	if err != nil {
-		if log != nil {
-			log.Warn("task manager disabled", "error", err)
-		}
-		return nil
+	if err != nil || p == nil {
+		return nil, err
 	}
-	return p
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+	return p, nil
 }

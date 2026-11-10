@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -106,7 +107,11 @@ func (a *app) service(ctx context.Context) (*service.Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	svc, closeFn, err := service.Open(ctx, l.Config, p.Root, a.logger())
+	tm, err := service.NewTaskManager(l.Config)
+	if err != nil {
+		fmt.Fprintf(a.streams.Err, "task manager disabled: %v\n", err)
+	}
+	svc, closeFn, err := service.OpenWithTaskManager(ctx, l.Config, p.Root, a.logger(), tm)
 	if err != nil {
 		return nil, err
 	}

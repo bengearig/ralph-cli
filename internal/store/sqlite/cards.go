@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/bengearig/ralph/internal/domain"
 )
@@ -41,6 +42,23 @@ func (s *Store) SetCard(ctx context.Context, c *domain.Card) error {
 		string(c.Kind), c.EntityID, c.Provider, c.Key, c.URL, c.ContentHash, c.LastError,
 		formatArchivedAt(c.AttemptedAt), formatArchivedAt(c.SyncedAt))
 	return mapErr(err, fmt.Sprintf("saving %s card of %s", c.Provider, domain.FormatID(c.Kind, c.EntityID)))
+}
+
+func (s *Store) ClaimCard(ctx context.Context, kind domain.Kind, entityID int64, provider string, staleAfter time.Duration) (bool, error) {
+	now := time.Now().UTC()
+	res, err := s.q.ExecContext(ctx,
+		`INSERT INTO cards (kind, entity_id, provider, attempted_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT (kind, entity_id, provider) DO UPDATE SET attempted_at = excluded.attempted_at
+		WHERE card_key = '' AND (attempted_at = '' OR julianday(attempted_at) < julianday(?))`,
+		string(kind), entityID, provider, formatTime(now), formatTime(now.Add(-staleAfter)))
+	if err != nil {
+		return false, mapErr(err, fmt.Sprintf("claiming %s card of %s", provider, domain.FormatID(kind, entityID)))
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, mapErr(err, "claiming card")
+	}
+	return n > 0, nil
 }
 
 func (s *Store) ListCards(ctx context.Context, provider string) ([]domain.Card, error) {

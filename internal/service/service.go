@@ -29,7 +29,8 @@ type Service struct {
 	searchLimit    int
 	loopLockPath   string
 	// taskManager is nil when no provider is configured.
-	taskManager taskmanager.Provider
+	taskManager    taskmanager.Provider
+	cardClaimStale time.Duration
 	// inTx marks a service bound to a transaction, which never calls the provider.
 	inTx bool
 }
@@ -45,6 +46,8 @@ type Options struct {
 	LoopLockPath string
 	// TaskManager creates cards for new resources; nil disables it.
 	TaskManager taskmanager.Provider
+	// CardClaimStale is how long an unfinished card claim holds off other processes; zero means 30 seconds.
+	CardClaimStale time.Duration
 }
 
 // New returns a Service. The index must share the store.
@@ -57,8 +60,12 @@ func New(st store.Store, ix *search.Index, opts Options) *Service {
 	if limit < 1 {
 		limit = 10
 	}
+	claimStale := opts.CardClaimStale
+	if claimStale <= 0 {
+		claimStale = 30 * time.Second
+	}
 	return &Service{store: st, index: ix, log: log, stallThreshold: opts.StallThreshold, searchLimit: limit,
-		loopLockPath: opts.LoopLockPath, taskManager: opts.TaskManager}
+		loopLockPath: opts.LoopLockPath, taskManager: opts.TaskManager, cardClaimStale: claimStale}
 }
 
 // Store exposes the underlying store for read-only orchestration such as

@@ -126,6 +126,10 @@ type Store interface {
 	GetCard(ctx context.Context, kind domain.Kind, entityID int64, provider string) (domain.Card, error)
 	// SetCard inserts the card or replaces the row with the same kind, entity, and provider.
 	SetCard(ctx context.Context, c *domain.Card) error
+	// ClaimCard atomically reserves creation of the entity's card: it inserts an empty-key row stamped now when there
+	// is none, or refreshes the stamp of an empty-key row last attempted more than staleAfter ago, and reports true.
+	// A row with a key, or an empty-key row attempted more recently, is left alone and reports false.
+	ClaimCard(ctx context.Context, kind domain.Kind, entityID int64, provider string, staleAfter time.Duration) (bool, error)
 	// ListCards lists a provider's cards ordered by kind, then entity ID.
 	ListCards(ctx context.Context, provider string) ([]domain.Card, error)
 	// DeleteCards removes the entity's cards under every provider; it is a no-op when there are none.

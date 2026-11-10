@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -154,12 +154,12 @@ func TestCreateCardFailureNeverBlocks(t *testing.T) {
 		t.Fatalf("%v %q", err, m.CardWarning)
 	}
 	mc, _ := e.svc.Card(ctx, domain.KindMilestone, mid(t, m.ID), "fake")
-	if mc == nil || mc.Key != "" || !strings.Contains(mc.LastError, "parent "+i.ID+" has no card: jira down") {
+	if mc == nil || mc.Key != "" || !strings.Contains(mc.LastError, "parent "+i.ID+" has no card") {
 		t.Errorf("milestone card = %+v", mc)
 	}
 
 	tk, err := e.svc.CreateTask(ctx, TaskInput{MilestoneID: mid(t, m.ID), Title: "T"})
-	if err != nil || !strings.Contains(tk.CardWarning, "jira down") || !strings.Contains(tk.CardWarning, "parent "+m.ID) {
+	if err != nil || !strings.Contains(tk.CardWarning, "parent "+m.ID) {
 		t.Fatalf("%v %q", err, tk.CardWarning)
 	}
 	if len(p.Calls()) != 0 {
@@ -230,16 +230,117 @@ func TestCreateCardOutsideTransaction(t *testing.T) {
 func TestNewTaskManager(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.TaskManager.Provider = config.TaskManagerNone
-	if p := newTaskManager(cfg, slog.Default()); p != nil {
-		t.Errorf("none gave %v", p)
+	if p, err := NewTaskManager(cfg); p != nil || err != nil {
+		t.Errorf("none gave %v, %v", p, err)
 	}
 	cfg.TaskManager.Provider = "test-wiring"
-	taskmanager.Register("test-wiring", func(*config.Config) (taskmanager.Provider, error) { return tmfake.New(), nil })
-	if p := newTaskManager(cfg, nil); p == nil {
-		t.Error("registered provider gave nil")
+	fp := tmfake.New()
+	taskmanager.Register("test-wiring", func(*config.Config) (taskmanager.Provider, error) { return fp, nil })
+	if p, err := NewTaskManager(cfg); p == nil || err != nil {
+		t.Errorf("registered provider gave %v, %v", p, err)
+	}
+	fp.SetValidateError(errors.New("token missing"))
+	if p, err := NewTaskManager(cfg); p != nil || err == nil || !strings.Contains(err.Error(), "token missing") {
+		t.Errorf("invalid provider gave %v, %v", p, err)
 	}
 	cfg.TaskManager.Provider = "unregistered-xyz"
-	if p := newTaskManager(cfg, nil); p != nil {
-		t.Errorf("unknown gave %v", p)
+	if p, err := NewTaskManager(cfg); p != nil || err == nil {
+		t.Errorf("unknown gave %v, %v", p, err)
+	}
+}
+
+func TestCreateCardClaim(t *testing.T) {
+	ctx := context.Background()
+	e, p := withProvider(newEnv(t))
+	e.svc.cardClaimStale = time.Hour
+	i, _ := e.svc.CreateInitiative(ctx, InitiativeInput{Title: "I"})
+	id := iid(t, i.ID)
+	if len(p.Calls()) != 1 {
+		t.Fatalf("calls = %d", len(p.Calls()))
+	}
+
+	m, _ := e.svc.CreateMilestone(ctx, MilestoneInput{InitiativeID: id, Title: "M"})
+	mID := mid(t, m.ID)
+	if err := e.svc.store.DeleteCards(ctx, domain.KindMilestone, mID); err != nil {
+		t.Fatal(err)
+	}
+	callsBefore := len(p.Calls())
+
+	fresh := &domain.Card{Kind: domain.KindMilestone, EntityID: mID, Provider: "fake", AttemptedAt: time.Now()}
+	if err := e.svc.store.SetCard(ctx, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if w := e.svc.createCard(ctx, domain.KindMilestone, mID); w != "" {
+		t.Errorf("warning = %q", w)
+	}
+	if len(p.Calls()) != callsBefore {
+		t.Error("provider called under a fresh claim")
+	}
+
+	fresh.AttemptedAt = time.Now().Add(-2 * time.Hour)
+	if err := e.svc.store.SetCard(ctx, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if w := e.svc.createCard(ctx, domain.KindMilestone, mID); w != "" {
+		t.Errorf("warning = %q", w)
+	}
+	if len(p.Calls()) != callsBefore+1 {
+		t.Error("stale claim was not taken over")
+	}
+	if c, _ := e.svc.Card(ctx, domain.KindMilestone, mID, "fake"); c == nil || c.Key == "" {
+		t.Errorf("card = %+v", c)
+	}
+}
+
+func TestCreateCardRetryAfterFailureNeedsStaleClaim(t *testing.T) {
+	ctx := context.Background()
+	e, p := withProvider(newEnv(t))
+	e.svc.cardClaimStale = 50 * time.Millisecond
+	p.SetError(errors.New("jira down"))
+	i, _ := e.svc.CreateInitiative(ctx, InitiativeInput{Title: "I"})
+	id := iid(t, i.ID)
+	if i.CardWarning == "" {
+		t.Fatal("no warning")
+	}
+	p.SetError(nil)
+	if w := e.svc.createCard(ctx, domain.KindInitiative, id); w != "" || len(p.Calls()) != 0 {
+		t.Fatalf("retry inside the stale limit: %q, %d calls", w, len(p.Calls()))
+	}
+	time.Sleep(100 * time.Millisecond)
+	if w := e.svc.createCard(ctx, domain.KindInitiative, id); w != "" || len(p.Calls()) != 1 {
+		t.Fatalf("retry after the stale limit: %q, %d calls", w, len(p.Calls()))
+	}
+	if c, _ := e.svc.Card(ctx, domain.KindInitiative, id, "fake"); c == nil || c.Key == "" || c.LastError != "" {
+		t.Errorf("card = %+v", c)
+	}
+}
+
+func TestCreateCardConcurrent(t *testing.T) {
+	ctx := context.Background()
+	e, p := withProvider(newEnv(t))
+	i, _ := e.svc.CreateInitiative(ctx, InitiativeInput{Title: "I"})
+	m, _ := e.svc.CreateMilestone(ctx, MilestoneInput{InitiativeID: iid(t, i.ID), Title: "M"})
+	tk, _ := e.svc.CreateTask(ctx, TaskInput{MilestoneID: mid(t, m.ID), Title: "T"})
+	if err := e.svc.store.DeleteCards(ctx, domain.KindTask, tid(t, tk.ID)); err != nil {
+		t.Fatal(err)
+	}
+	before := len(p.Calls())
+
+	other := *e.svc
+	svcs := []*Service{e.svc, &other}
+	var wg sync.WaitGroup
+	for n := 0; n < 12; n++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			svcs[n%2].createCard(ctx, domain.KindTask, tid(t, tk.ID))
+		}()
+	}
+	wg.Wait()
+	if got := len(p.Calls()) - before; got != 1 {
+		t.Errorf("Create calls = %d, want 1", got)
+	}
+	if c, _ := e.svc.Card(ctx, domain.KindTask, tid(t, tk.ID), "fake"); c == nil || c.Key == "" {
+		t.Errorf("card = %+v", c)
 	}
 }

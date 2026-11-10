@@ -151,6 +151,9 @@ func (s *Service) cardParent(ctx context.Context, kind domain.Kind, id int64) (d
 	return "", 0, nil
 }
 
+// errCardClaimed means another process holds the card's creation, or the card exists.
+var errCardClaimed = errors.New("card claimed elsewhere")
+
 // createCard makes sure the resource, and any parent missing a card, has one.
 // It returns a warning when the resource's card could not be created; it is
 // empty on success and when cards are disabled. The provider is called only
@@ -160,6 +163,9 @@ func (s *Service) createCard(ctx context.Context, kind domain.Kind, id int64) st
 		return ""
 	}
 	if _, err := s.ensureCard(ctx, kind, id); err != nil {
+		if errors.Is(err, errCardClaimed) {
+			return ""
+		}
 		return fmt.Sprintf("%s card for %s not created: %v", s.taskManager.Name(), domain.FormatID(kind, id), err)
 	}
 	return ""
@@ -181,6 +187,9 @@ func (s *Service) ensureCard(ctx context.Context, kind domain.Kind, id int64) (s
 		}
 		parentKey, err = s.ensureCard(ctx, pk, pid)
 		if parentKey == "" {
+			if err == nil || errors.Is(err, errCardClaimed) {
+				err = errors.New("its creation is in progress or recently failed")
+			}
 			err = fmt.Errorf("parent %s has no card: %w", domain.FormatID(pk, pid), err)
 			return "", s.failCard(ctx, kind, id, err)
 		}
@@ -189,6 +198,13 @@ func (s *Service) ensureCard(ctx context.Context, kind domain.Kind, id int64) (s
 	req, err := buildCardRequest(ctx, s.store, kind, id, parentKey)
 	if err != nil {
 		return "", err
+	}
+	claimed, err := s.store.ClaimCard(ctx, kind, id, p.Name(), s.cardClaimStale)
+	if err != nil {
+		return "", err
+	}
+	if !claimed {
+		return "", errCardClaimed
 	}
 	card, err := p.Create(ctx, req)
 	if err != nil {
