@@ -170,7 +170,7 @@ func (e *env) input() Input {
 		MilestoneID:    e.mID,
 		BaseBranch:     "main",
 		TemplateBranch: branch,
-		Subject:        subject,
+		Subjects:       func(t service.TaskView) []string { return []string{subject(t)} },
 	}
 }
 
@@ -888,4 +888,34 @@ func TestApplyRefusedWhenArchived(t *testing.T) {
 	if after := e.snapshot(); !reflect.DeepEqual(before, after) {
 		t.Errorf("Apply changed records:\nbefore %+v\nafter  %+v", before, after)
 	}
+}
+
+func TestSubjectCandidates(t *testing.T) {
+	e := newEnv(t, "login", "logout")
+	e.do(0, false)
+	e.do(1, false)
+	e.recordHere()
+	keyed := func(tv service.TaskView) string { return "[ABC-1] " + subject(tv) }
+	in := e.input()
+	in.Subjects = func(tv service.TaskView) []string { return []string{keyed(tv), "", subject(tv)} }
+
+	r := e.check(in)
+	wantState(t, r, StateUnchanged)
+	wantTasks(t, r, want{MatchPresent, e.rev("HEAD~1")}, want{MatchPresent, e.rev("HEAD")})
+
+	gitCmd(t, e.root, "reset", "--quiet", "--hard", e.base)
+	first := e.commit("a.txt", "a\n", keyed(e.snapshot().Tasks[0]))
+	second := e.commit("b.txt", "b\n", subject(e.snapshot().Tasks[1]))
+	e.commit("c.txt", "c\n", "Unrelated work")
+	r = e.check(in)
+	wantTasks(t, r, want{MatchSubject, first}, want{MatchSubject, second})
+
+	gitCmd(t, e.root, "reset", "--quiet", "--hard", second)
+	gitCmd(t, e.root, "commit", "--quiet", "--amend", "-m", "Unrelated\n\nRalph-Task: "+e.snapshot().Tasks[1].ID)
+	r = e.check(in)
+	wantTasks(t, r, want{MatchSubject, first}, want{MatchTrailer, e.rev("HEAD")})
+
+	in.Subjects = func(service.TaskView) []string { return []string{"", "nothing like it"} }
+	r = e.check(in)
+	wantTasks(t, r, want{MatchMissing, ""}, want{MatchTrailer, e.rev("HEAD")})
 }

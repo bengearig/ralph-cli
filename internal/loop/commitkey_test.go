@@ -8,6 +8,7 @@ import (
 
 	"github.com/bengearig/ralph/internal/config"
 	"github.com/bengearig/ralph/internal/domain"
+	"github.com/bengearig/ralph/internal/drift"
 	"github.com/bengearig/ralph/internal/harness"
 	"github.com/bengearig/ralph/internal/project"
 	"github.com/bengearig/ralph/internal/search"
@@ -19,7 +20,7 @@ import (
 func renderCommit(t *testing.T, tmpl string, task service.TaskView) string {
 	t.Helper()
 	i, m := Ref{ID: "I-1", Slug: "sso", Title: "SSO"}, Ref{ID: "M-2", Slug: "login", Title: "Login"}
-	subject, err := CommitSubject(tmpl, i, m)
+	subjects, err := CommitSubjects(tmpl, i, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,8 +32,8 @@ func renderCommit(t *testing.T, tmpl string, task service.TaskView) string {
 	if err != nil {
 		t.Fatalf("%q: %v", tmpl, err)
 	}
-	if first, _, _ := strings.Cut(msg, "\n"); !strings.Contains(tmpl, "\n") && subject(task) != first {
-		t.Errorf("%q: subject %q differs from message %q", tmpl, subject(task), first)
+	if first, _, _ := strings.Cut(msg, "\n"); !strings.Contains(tmpl, "\n") && (len(subjects(task)) == 0 || subjects(task)[0] != first) {
+		t.Errorf("%q: subjects %q differ from message %q", tmpl, subjects(task), first)
 	}
 	return msg
 }
@@ -181,5 +182,51 @@ func TestRunCommitCardTrailer(t *testing.T) {
 				t.Errorf("trailers = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestDriftCleanAfterTemplateGainsKey(t *testing.T) {
+	e := newRunEnv(t, "a", "b")
+	ctx := context.Background()
+	st, err := sqlite.Open(ctx, filepath.Join(e.root, project.DirName, "ralph.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	e.svc = service.New(st, &search.Index{Store: st, Chunker: search.Chunker{MaxChars: 500}}, service.Options{StallThreshold: 2, TaskManager: fake.New()})
+	e.cfg.Loop.CommitTrailer = false
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+	if _, err := e.run(t, ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitCmd(t, e.root, "log", "-1", "--format=%s"); got != "T-2: b" {
+		t.Fatalf("subject = %q", got)
+	}
+
+	e.cfg.Loop.CommitTemplate = "{{.Task.CardKeyPrefix}}{{.Task.ID}}: {{.Task.Title}}"
+	for id, key := range map[int64]string{1: "ABC-1", 2: "ABC-2"} {
+		if err := e.svc.RecordCard(ctx, domain.KindTask, id, "fake", key, "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	in, err := DriftInput(ctx, e.svc, e.cfg, e.root, e.mID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := drift.Check(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Clean() {
+		t.Errorf("drift reported: %s", r.Summary())
+	}
+	for _, tk := range r.Tasks {
+		if tk.Match == drift.MatchMissing {
+			t.Errorf("task %s lost", tk.ID)
+		}
+	}
+	tv := e.status(t, 1)
+	if got := in.Subjects(tv); len(got) != 2 || got[0] != "[ABC-1] T-1: a" || got[1] != "T-1: a" {
+		t.Errorf("subjects = %q", got)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"text/template"
 
@@ -103,29 +104,52 @@ func commitMessage(t *commitTemplate, data commitData) (string, error) {
 	return msg, nil
 }
 
-// CommitSubject returns a function giving the subject git reports for the
-// commit the loop makes for a task of the milestone: the first paragraph of
-// the rendered loop.commit_template, its lines joined by spaces. The function
-// returns "" for a task the template fails on.
-func CommitSubject(tmpl string, initiative, milestone Ref) (func(service.TaskView) string, error) {
+// commitSubject renders the subject git reports for a task's commit: the first
+// paragraph of the rendered template, its lines joined by spaces. It returns
+// "" for a task the template fails on.
+func commitSubject(t *commitTemplate, task service.TaskView, initiative, milestone Ref) string {
+	msg, err := commitMessage(t, commitData{Task: commitTask(task), Initiative: initiative, Milestone: milestone})
+	if err != nil {
+		return ""
+	}
+	var lines []string
+	for _, l := range strings.Split(msg, "\n") {
+		l = strings.TrimRight(l, " \t\r")
+		if l == "" {
+			break
+		}
+		lines = append(lines, l)
+	}
+	return strings.Join(lines, " ")
+}
+
+// CommitSubjects returns a function giving the subjects the loop's commit for a
+// task of the milestone may carry, without duplicates and skipping any the
+// template fails on. The first is the subject a commit made now would get,
+// with the task's card key. When the template uses the card key and the task
+// has one, the keyless subject follows, so a commit made before the task had a
+// card, or before the template used the key, still matches. A commit carrying
+// a key that has since changed or disappeared cannot be reconstructed from
+// ralph's data; the Ralph-Task trailer remains the durable matcher for it.
+func CommitSubjects(tmpl string, initiative, milestone Ref) (func(service.TaskView) []string, error) {
 	t, err := parseCommitTemplate(tmpl)
 	if err != nil {
 		return nil, err
 	}
-	return func(task service.TaskView) string {
-		msg, err := commitMessage(t, commitData{Task: commitTask(task), Initiative: initiative, Milestone: milestone})
-		if err != nil {
-			return ""
-		}
-		var lines []string
-		for _, l := range strings.Split(msg, "\n") {
-			l = strings.TrimRight(l, " \t\r")
-			if l == "" {
-				break
+	return func(task service.TaskView) []string {
+		var out []string
+		add := func(s string) {
+			if s != "" && !slices.Contains(out, s) {
+				out = append(out, s)
 			}
-			lines = append(lines, l)
 		}
-		return strings.Join(lines, " ")
+		add(commitSubject(t, task, initiative, milestone))
+		if t.usesKey && task.Card != nil && task.Card.Key != "" {
+			keyless := task
+			keyless.Card = nil
+			add(commitSubject(t, keyless, initiative, milestone))
+		}
+		return out
 	}, nil
 }
 
@@ -151,7 +175,7 @@ func DriftInput(ctx context.Context, svc *service.Service, cfg *config.Config, r
 	if err != nil {
 		return drift.Input{}, err
 	}
-	subject, err := CommitSubject(cfg.Loop.CommitTemplate, initiative, milestone)
+	subjects, err := CommitSubjects(cfg.Loop.CommitTemplate, initiative, milestone)
 	if err != nil {
 		return drift.Input{}, err
 	}
@@ -165,6 +189,6 @@ func DriftInput(ctx context.Context, svc *service.Service, cfg *config.Config, r
 		MilestoneID:    milestoneID,
 		BaseBranch:     cfg.PR.BaseBranch,
 		TemplateBranch: branch,
-		Subject:        subject,
+		Subjects:       subjects,
 	}, nil
 }

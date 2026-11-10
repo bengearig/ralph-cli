@@ -116,7 +116,7 @@ func (e *driftEnv) options() Options {
 			MilestoneID:    milestoneID,
 			BaseBranch:     "main",
 			TemplateBranch: driftBranch,
-			Subject:        func(tv service.TaskView) string { return tv.ID + ": " + tv.Title },
+			Subjects:       func(tv service.TaskView) []string { return []string{tv.ID + ": " + tv.Title} },
 		}, nil
 	}}
 }

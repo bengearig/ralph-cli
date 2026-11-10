@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -170,7 +171,7 @@ func TestDefaultPromptRendersWithoutNotes(t *testing.T) {
 	}
 }
 
-func TestCommitSubject(t *testing.T) {
+func TestCommitSubjects(t *testing.T) {
 	i, m := Ref{ID: "I-1", Slug: "sso", Title: "SSO"}, Ref{ID: "M-2", Slug: "login", Title: "Login"}
 	task := service.TaskView{ID: "T-3", Title: "Add route"}
 	for _, tc := range []struct{ tmpl, want string }{
@@ -179,23 +180,55 @@ func TestCommitSubject(t *testing.T) {
 		{"  {{.Task.ID}}  \n{{.Task.Title}}\n\nbody", "T-3 Add route"},
 		{"{{if false}}x{{end}}", "T-3: Add route"},
 	} {
-		subject, err := CommitSubject(tc.tmpl, i, m)
+		subjects, err := CommitSubjects(tc.tmpl, i, m)
 		if err != nil {
 			t.Fatalf("%q: %v", tc.tmpl, err)
 		}
-		if got := subject(task); got != tc.want {
-			t.Errorf("%q: subject = %q, want %q", tc.tmpl, got, tc.want)
+		if got := subjects(task); !slices.Equal(got, []string{tc.want}) {
+			t.Errorf("%q: subjects = %q, want %q", tc.tmpl, got, tc.want)
 		}
 	}
-	if _, err := CommitSubject("{{.Task", i, m); err == nil || !strings.Contains(err.Error(), "loop.commit_template") {
+	if _, err := CommitSubjects("{{.Task", i, m); err == nil || !strings.Contains(err.Error(), "loop.commit_template") {
 		t.Errorf("bad template: err = %v", err)
 	}
-	subject, err := CommitSubject("{{.Task.Nope}}", i, m)
+	subjects, err := CommitSubjects("{{.Task.Nope}}", i, m)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := subject(task); got != "" {
-		t.Errorf("failing template: subject = %q, want empty", got)
+	if got := subjects(task); len(got) != 0 {
+		t.Errorf("failing template: subjects = %q, want none", got)
+	}
+}
+
+func TestCommitSubjectsCardKey(t *testing.T) {
+	i, m := Ref{ID: "I-1", Slug: "sso", Title: "SSO"}, Ref{ID: "M-2", Slug: "login", Title: "Login"}
+	base := service.TaskView{ID: "T-12", Title: "Add X"}
+	keyed := base
+	keyed.Card = &service.CardView{Key: "ABC-1235"}
+	emptyKey := base
+	emptyKey.Card = &service.CardView{}
+	for _, tc := range []struct {
+		name, tmpl string
+		task       service.TaskView
+		want       []string
+	}{
+		{"prefix keyed", "{{.Task.CardKeyPrefix}}{{.Task.ID}}: {{.Task.Title}}", keyed, []string{"[ABC-1235] T-12: Add X", "T-12: Add X"}},
+		{"key keyed", "{{.Task.CardKey}} {{.Task.ID}}", keyed, []string{"ABC-1235 T-12", "T-12"}},
+		{"prefix no card", "{{.Task.CardKeyPrefix}}{{.Task.ID}}: {{.Task.Title}}", base, []string{"T-12: Add X"}},
+		{"prefix empty key", "{{.Task.CardKeyPrefix}}{{.Task.ID}}: {{.Task.Title}}", emptyKey, []string{"T-12: Add X"}},
+		{"no key fields keyed", "{{.Task.ID}}: {{.Task.Title}}", keyed, []string{"T-12: Add X"}},
+		{"no key fields no card", "{{.Task.ID}}: {{.Task.Title}}", base, []string{"T-12: Add X"}},
+		{"key not in subject", "{{.Task.ID}}: {{.Task.Title}}\n\nCard {{.Task.CardKey}}", keyed, []string{"T-12: Add X"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			subjects, err := CommitSubjects(tc.tmpl, i, m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := subjects(tc.task); !slices.Equal(got, tc.want) {
+				t.Errorf("subjects = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

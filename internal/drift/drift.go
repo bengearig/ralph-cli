@@ -54,9 +54,9 @@ type Input struct {
 	// TemplateBranch is the template-derived branch name, used when the
 	// milestone has no recorded branch.
 	TemplateBranch string
-	// Subject renders the first line of the loop's commit message for a task.
-	// Nil disables the subject matcher.
-	Subject func(service.TaskView) string
+	// Subjects renders the commit subjects the loop may have given a task;
+	// a commit matching any is the task's. Nil disables the subject matcher.
+	Subjects func(service.TaskView) []string
 }
 
 // Recorded is the milestone's git state as stored.
@@ -417,8 +417,11 @@ func match(ctx context.Context, in Input, tip string, t service.TaskView, candid
 		}
 	}
 
-	if in.Subject != nil {
-		if want := in.Subject(t); want != "" {
+	if in.Subjects != nil {
+		for _, want := range in.Subjects(t) {
+			if want == "" {
+				continue
+			}
 			for _, c := range candidates {
 				if c.Subject == want {
 					return MatchSubject, c.Hash, nil
