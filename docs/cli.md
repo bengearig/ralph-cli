@@ -59,6 +59,23 @@ when the card is behind, and the last error on the next line. The `list` command
 `initiative show` gain a `CARD` column. `--json` output carries a `card` object, absent when the resource has no card.
 Without a provider none of this appears.
 
+Edits to a resource and changes to a task's or milestone's status are pushed to its card, and a failure of any card
+operation is a `warning:` line on standard error, never a failed command. See [Jira](jira.md) for what is pushed.
+
+| Command | Purpose |
+|---|---|
+| `ralph cards sync [--initiative <id>] [--include-archived] [--verbose]` | Create cards for work that has none and bring pending and out-of-date cards up to date, parents first. |
+
+- Sync is explicit: it is the only way work that predates the task manager gets cards, and nothing runs it
+  automatically. It is safe to rerun, and it skips cancelled work that has no card.
+- `--initiative` limits it to one initiative, `--include-archived` also syncs archived initiatives, and `--verbose`
+  also lists the items already in sync.
+- Output is one line per created, updated, failed, or skipped item, then a line of totals. With `--json` it is the
+  report: counts named `created`, `updated`, `in_sync`, `skipped`, and `failed`, and `items` with each item's `id`,
+  `outcome`, and `key`, `url`, or `error` where they apply.
+- Exit code `0` means nothing failed, `3` means at least one item failed, and `1` is any other error, including no
+  task manager being configured.
+
 ### Deleting
 
 Deletes are permanent. To drop planned work, prefer `ralph task status <id> CANCELLED`, which keeps the task and its
@@ -79,9 +96,13 @@ reason; delete is for items created by mistake. See [Deleting](data-model.md#del
   prints `cancelled` and deletes nothing.
 - When stdin is not a terminal, the command refuses to delete without `--yes` instead of guessing.
 - While a loop is running on an affected milestone, the delete is refused even with `--force`; stop the loop first.
+- With a task manager configured and `task_manager.jira.canceled_status` set, the cards of everything deleted are first
+  moved to that status, and each card that could not be moved prints `warning: card <key> was not moved: <reason>` on
+  standard error; the delete goes ahead regardless. See [Jira](jira.md#deleting).
 - Text output is `deleted <id>`, followed by the counts of anything else removed. With `--json` the output is
   `{"id", "kind", "deleted"}`, where `deleted` maps each kind removed (`initiatives`, `milestones`, `tasks`, `notes`,
-  `documents`) to its row count. This is the shape the MCP delete tools return.
+  `documents`) to its row count. This is the shape the MCP delete tools return. When cards were moved or could not be, the result also has `cards`: a list
+  of `{id, key, url, moved, error}`, one per card, with `error` only for a card that was not moved.
 
 ### Archiving
 

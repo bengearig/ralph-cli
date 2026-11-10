@@ -55,4 +55,4 @@ what an update may change.
   says so. Labels added by people survive.
 - A project must have issue types matching the configured names, or Jira rejects the request and the error says so.
 - The provider can create and update cards. Ralph's commands call it to create cards ([ADR 22](0022-create-cards-when-resources-are-created.md));
-  pushing later edits is delivered separately.
+  pushing later edits and status changes is covered by [ADR 23](0023-sync-cards-one-way-with-explicit-backfill.md).
