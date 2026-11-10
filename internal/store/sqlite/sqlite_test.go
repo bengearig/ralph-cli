@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/bengearig/ralph/internal/domain"
@@ -584,5 +586,288 @@ func TestConcurrentProcessesShareDatabase(t *testing.T) {
 	all, err := a.ListInitiatives(ctx)
 	if err != nil || len(all) != 40 {
 		t.Errorf("initiatives = %d, %v", len(all), err)
+	}
+}
+
+const rebuildMilestonesSQL = `-- ralph:rebuild
+CREATE TABLE milestones_new (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    initiative_id INTEGER NOT NULL REFERENCES initiatives (id) ON DELETE CASCADE,
+    slug          TEXT NOT NULL,
+    title         TEXT NOT NULL,
+    description   TEXT NOT NULL DEFAULT '',
+    position      INTEGER NOT NULL,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    branch        TEXT NOT NULL DEFAULT '',
+    base_commit   TEXT NOT NULL DEFAULT '',
+    head_commit   TEXT NOT NULL DEFAULT '',
+    UNIQUE (initiative_id, slug)
+);
+INSERT INTO milestones_new (id, initiative_id, slug, title, description, position, created_at, updated_at, branch, base_commit, head_commit)
+    SELECT id, initiative_id, slug, title, description, position, created_at, updated_at, branch, base_commit, head_commit FROM milestones%s;
+DROP TABLE milestones;
+ALTER TABLE milestones_new RENAME TO milestones;
+%s`
+
+const milestonesTriggerSQL = `CREATE TRIGGER milestones_ad AFTER DELETE ON milestones BEGIN
+    DELETE FROM chunks WHERE owner_kind = 'milestone' AND owner_id = old.id;
+END;`
+
+const rebuildVersion = 99
+
+func rebuildFS(t *testing.T, body string) fstest.MapFS {
+	t.Helper()
+	fsys := fstest.MapFS{}
+	entries, err := fs.ReadDir(migrationFS, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		b, err := fs.ReadFile(migrationFS, "migrations/"+e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		fsys["migrations/"+e.Name()] = &fstest.MapFile{Data: b}
+	}
+	fsys[fmt.Sprintf("migrations/%04d_rebuild.sql", rebuildVersion)] = &fstest.MapFile{Data: []byte(body)}
+	return fsys
+}
+
+// openPopulated returns a migrated store holding an initiative, milestone,
+// task with notes, documents and chunks (some embedded).
+func openPopulated(t *testing.T) (*Store, string) {
+	t.Helper()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "ralph.db")
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	const now = "2026-01-01T00:00:00Z"
+	for _, stmt := range []string{
+		`INSERT INTO initiatives (id, slug, title, created_at, updated_at) VALUES (1, 'i', 'I', '` + now + `', '` + now + `')`,
+		`INSERT INTO milestones (id, initiative_id, slug, title, position, created_at, updated_at, branch) VALUES (1, 1, 'm1', 'M1', 1, '` + now + `', '` + now + `', 'ralph/m1')`,
+		`INSERT INTO milestones (id, initiative_id, slug, title, position, created_at, updated_at) VALUES (2, 1, 'm2', 'M2', 2, '` + now + `', '` + now + `')`,
+		`INSERT INTO tasks (id, milestone_id, title, status, position, created_at, updated_at) VALUES (1, 1, 'T1', 'TODO', 1, '` + now + `', '` + now + `')`,
+		`INSERT INTO task_notes (id, task_id, kind, body, created_at) VALUES (1, 1, 'NOTE', 'a', '` + now + `'), (2, 1, 'NOTE', 'b', '` + now + `')`,
+		`INSERT INTO documents (id, initiative_id, kind, slug, title, created_at, updated_at) VALUES (1, 1, 'design', 'd', 'D', '` + now + `', '` + now + `'), (2, NULL, 'note', 'p', 'P', '` + now + `', '` + now + `')`,
+		`INSERT INTO chunks (owner_kind, owner_id, initiative_id, seq, text, content_hash, model, dims, embedding) VALUES
+			('milestone', 1, 1, 0, 'alpha', 'h1', 'm', 1, x'00000000'),
+			('milestone', 2, 1, 0, 'beta', 'h2', '', 0, NULL),
+			('task', 1, 1, 0, 'gamma', 'h3', 'm', 1, x'00000000'),
+			('document', 1, 1, 0, 'delta', 'h4', '', 0, NULL)`,
+	} {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("populating: %v", err)
+		}
+	}
+	return s, path
+}
+
+// dbState captures every schema definition and the rows of every ralph table.
+func dbState(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	ctx := context.Background()
+	var b strings.Builder
+	rows, err := db.QueryContext(ctx, `SELECT type, name, IFNULL(sql, '') FROM sqlite_master ORDER BY type, name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var typ, name, def string
+		if err := rows.Scan(&typ, &name, &def); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(&b, "%s %s %s\n", typ, name, def)
+	}
+	rows.Close()
+	for _, tbl := range []string{"schema_migrations", "initiatives", "milestones", "tasks", "task_notes", "documents", "chunks"} {
+		rows, err := db.QueryContext(ctx, `SELECT * FROM `+tbl+` ORDER BY 1`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cols, _ := rows.Columns()
+		for rows.Next() {
+			vals := make([]any, len(cols))
+			ptrs := make([]any, len(cols))
+			for i := range vals {
+				ptrs[i] = &vals[i]
+			}
+			if err := rows.Scan(ptrs...); err != nil {
+				t.Fatal(err)
+			}
+			fmt.Fprintf(&b, "%s %v\n", tbl, vals)
+		}
+		rows.Close()
+	}
+	return b.String()
+}
+
+func count(t *testing.T, db *sql.DB, query string) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRowContext(context.Background(), query).Scan(&n); err != nil {
+		t.Fatalf("%s: %v", query, err)
+	}
+	return n
+}
+
+func requireForeignKeysOn(t *testing.T, s *Store) {
+	t.Helper()
+	if n := count(t, s.db, `SELECT foreign_keys FROM pragma_foreign_keys`); n != 1 {
+		t.Errorf("foreign_keys = %d, want 1", n)
+	}
+}
+
+func backups(t *testing.T, path string) []string {
+	t.Helper()
+	m, err := filepath.Glob(fmt.Sprintf("%s.pre-%d-*.bak", path, rebuildVersion))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func TestRebuildMigrationPreservesEverything(t *testing.T) {
+	ctx := context.Background()
+	s, path := openPopulated(t)
+	tables := []string{"initiatives", "milestones", "tasks", "task_notes", "documents", "chunks", "chunks_fts"}
+	before := map[string]int{}
+	for _, tbl := range tables {
+		before[tbl] = count(t, s.db, `SELECT COUNT(*) FROM `+tbl)
+	}
+	embedded := count(t, s.db, `SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL`)
+	originalState := dbState(t, s.db)
+
+	body := fmt.Sprintf(rebuildMilestonesSQL, "", milestonesTriggerSQL)
+	if err := s.migrateFS(ctx, rebuildFS(t, body)); err != nil {
+		t.Fatalf("migrateFS: %v", err)
+	}
+	for _, tbl := range tables {
+		if got := count(t, s.db, `SELECT COUNT(*) FROM `+tbl); got != before[tbl] {
+			t.Errorf("%s rows = %d, want %d", tbl, got, before[tbl])
+		}
+	}
+	if got := count(t, s.db, `SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL`); got != embedded {
+		t.Errorf("embedded chunks = %d, want %d", got, embedded)
+	}
+	if got := count(t, s.db, fmt.Sprintf(`SELECT COUNT(*) FROM schema_migrations WHERE version = %d`, rebuildVersion)); got != 1 {
+		t.Errorf("schema_migrations rows for rebuild = %d, want 1", got)
+	}
+	if got := count(t, s.db, `SELECT COUNT(*) FROM sqlite_master WHERE sql LIKE '%AUTOINCREMENT%'`); got != 1 {
+		t.Errorf("AUTOINCREMENT tables = %d, want 1", got)
+	}
+	requireForeignKeysOn(t, s)
+
+	bs := backups(t, path)
+	if len(bs) != 1 {
+		t.Fatalf("backups = %v, want exactly one", bs)
+	}
+	raw, err := sql.Open("sqlite", "file:"+bs[0]+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if got := dbState(t, raw); got != originalState {
+		t.Errorf("backup does not hold the original database:\n%s", got)
+	}
+	var qc string
+	if err := raw.QueryRow(`PRAGMA quick_check`).Scan(&qc); err != nil || qc != "ok" {
+		t.Errorf("backup quick_check = %q, %v", qc, err)
+	}
+}
+
+func TestRebuildMigrationFailuresRollBack(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		wantCheck string
+	}{
+		{"missing trigger", fmt.Sprintf(rebuildMilestonesSQL, "", ""), `"snapshot"`},
+		{"dangling foreign key", fmt.Sprintf(rebuildMilestonesSQL, " WHERE id <> 1", milestonesTriggerSQL), `"foreign_key_check"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			s, path := openPopulated(t)
+			before := dbState(t, s.db)
+
+			err := s.migrateFS(ctx, rebuildFS(t, tt.body))
+			if err == nil {
+				t.Fatal("migration succeeded, want failure")
+			}
+			bs := backups(t, path)
+			if len(bs) != 1 {
+				t.Fatalf("backups = %v, want exactly one", bs)
+			}
+			if !strings.Contains(err.Error(), tt.wantCheck) || !strings.Contains(err.Error(), bs[0]) {
+				t.Errorf("error %q should name check %s and backup %s", err, tt.wantCheck, bs[0])
+			}
+			if after := dbState(t, s.db); after != before {
+				t.Errorf("database changed after failed migration:\nbefore:\n%s\nafter:\n%s", before, after)
+			}
+			requireForeignKeysOn(t, s)
+		})
+	}
+}
+
+// Documents why rebuild mode exists: run as a normal migration, DROP TABLE
+// cascades through the foreign keys and destroys child rows.
+func TestRebuildSQLAsNormalMigrationCascades(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openPopulated(t)
+	body := strings.TrimPrefix(fmt.Sprintf(rebuildMilestonesSQL, "", milestonesTriggerSQL), rebuildMarker+"\n")
+	if err := s.migrateFS(ctx, rebuildFS(t, body)); err != nil {
+		t.Fatalf("migrateFS: %v", err)
+	}
+	if n := count(t, s.db, `SELECT COUNT(*) FROM tasks`); n != 0 {
+		t.Errorf("tasks = %d; expected the cascade to delete them", n)
+	}
+	if n := count(t, s.db, `SELECT COUNT(*) FROM task_notes`); n != 0 {
+		t.Errorf("task_notes = %d; expected the cascade to delete them", n)
+	}
+}
+
+func TestRebuildMigrationNotRepeated(t *testing.T) {
+	ctx := context.Background()
+	s, path := openPopulated(t)
+	fsys := rebuildFS(t, fmt.Sprintf(rebuildMilestonesSQL, "", milestonesTriggerSQL))
+	if err := s.migrateFS(ctx, fsys); err != nil {
+		t.Fatal(err)
+	}
+	state := dbState(t, s.db)
+	if err := s.migrateFS(ctx, fsys); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if got := backups(t, path); len(got) != 1 {
+		t.Errorf("backups after second run = %v, want one", got)
+	}
+	if dbState(t, s.db) != state {
+		t.Error("second run changed the database")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer s2.Close()
+	if got := backups(t, path); len(got) != 1 {
+		t.Errorf("backups after reopen = %v, want one", got)
+	}
+	requireForeignKeysOn(t, s2)
+}
+
+func TestRebuildMarkerMustBeFirstLine(t *testing.T) {
+	fsys := rebuildFS(t, "-- note\n"+rebuildMarker+"\nSELECT 1;")
+	ms, err := loadMigrationsFS(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := ms[len(ms)-1]; last.rebuild {
+		t.Errorf("%s detected as rebuild; marker is not on the first line", last.name)
 	}
 }
