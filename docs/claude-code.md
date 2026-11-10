@@ -12,7 +12,7 @@ Claude Code is the first supported harness (`harness.default: claude_code`). It 
 |---|---|---|
 | `.mcp.json` | Adds `mcpServers.ralph` → `{"type": "stdio", "command": "ralph", "args": ["mcp"]}`. Other servers and keys are preserved. | Yes, so the team shares it. |
 | `.claude/settings.json` | Adds `mcp__ralph` to `permissions.allow`, so ralph's tools run without a prompt each time. Other settings are preserved. | Yes |
-| `.claude/commands/ralph/*.md` | The `/ralph:receive`, `/ralph:articulate`, `/ralph:status`, `/ralph:search`, and `/ralph:reconcile` slash commands. | Yes |
+| `.claude/commands/ralph/*.md` | The `/ralph:receive`, `/ralph:articulate`, `/ralph:status`, `/ralph:search`, `/ralph:reconcile`, and `/ralph:import` slash commands. | Yes |
 | `CLAUDE.md` | A RALPH section between `<!-- ralph:begin -->` and `<!-- ralph:end -->`. Text outside the markers is left alone; the section is replaced on rerun. | Yes |
 | `.ralph/config.yaml` | Project config template, every setting commented out. | Yes |
 | `.ralph/ralph.db` | The store. | No, it is git-ignored. |
@@ -87,7 +87,18 @@ A change that affects only the neutral rendering needs steps 1, 4, and 5.
    branch as it is) and applies them only after you approve them in plan mode, entering plan mode itself if the
    session is not already in it. If you decline plan mode, nothing is applied, and the agent prints the equivalent
    `ralph milestone reconcile` command for you to run. See [Drift and reconcile](loop.md#drift-and-reconcile).
-6. **Pull request.** Run `ralph pr create --milestone M-1`. Planned.
+6. **Import, when you have existing documentation.** Run `/ralph:import [paths]`, either after
+   [`ralph import`](cli.md#import) has queued files, or with paths to queue and integrate them in one go. With no
+   paths it works the existing queue. The agent works one file at a time, reading each from its stored snapshot, so
+   an import can be stopped and resumed: a record is finished only when its file is, and anything unfinished is picked
+   up again on the next run. It applies additive changes directly: new documents, and knowledge merged into existing
+   documents in a preserve-then-add style. Where a file contradicts a document, an initiative's brief, or the plan,
+   it proposes resolutions and applies them only after you approve them in plan mode, entering plan mode itself if
+   the session is not already in it. Each resolution is recorded as a `decision` document, and any `TODO` task it
+   invalidates is kicked back to `PROPOSED`. If you decline the plan, the conflicting changes are not applied and the
+   record is left `deferred`, to be settled by a later run. Nothing is deleted. See
+   [Imports](data-model.md#imports) and [ADR 25](adr/0025-import-documentation-into-ralph.md).
+7. **Pull request.** Run `ralph pr create --milestone M-1`. Planned.
 
 At any point, `/ralph:search <question>` searches the store, reads the best matches, and answers with their IDs.
 It changes nothing. `ralph search` is the terminal equivalent.

@@ -47,8 +47,8 @@ consulted.
 
 ### Later milestones
 
-The agent workflow (the `/ralph:import` command and the MCP prompt that drive the tools) and import from issue
-trackers follow in later milestones. This decision covers the queue, the records, the tools, and the fast path.
+Import from issue trackers follows in a later milestone. This decision covers the queue, the records, the tools, and
+the fast path; the agent workflow is described in the follow-up below.
 
 ## Consequences
 
@@ -58,3 +58,25 @@ trackers follow in later milestones. This decision covers the queue, the records
   against documents that may have been edited since.
 - Snapshots duplicate file content in the database, which is git-ignored and local to each clone.
 - Renaming a file creates a new record; the old one remains with its links.
+
+## Follow-up: the agent workflow
+
+The agent workflow is `/ralph:import` in Claude Code and the `import` MCP prompt elsewhere. It drives the tools above
+and adds no new storage.
+
+- **Per file.** The agent works one record at a time, from its snapshot, and resolves each before starting the next, so
+  an import can stop and resume. `deferred` records are worked before `pending` ones.
+- **Preserve-then-add merging.** New knowledge becomes new documents. Knowledge that extends an existing document is
+  merged by keeping its structure and wording and adding to it, with the source path mentioned. Additive changes are
+  applied directly, without asking.
+- **Plan-mode approval for contradictions.** Where a file conflicts with a document, an initiative's brief, or the plan,
+  the agent presents the conflicting statements and its proposed resolutions and applies them only after approval, in
+  plan mode where the harness has it. If approval is declined, the conflicting changes are not applied and the record
+  is resolved as `deferred`, with the open items in its note.
+- **Decision documents.** Each resolved contradiction is recorded as a `decision` document: what conflicted, what was
+  chosen, and why.
+- **Kickbacks.** A `TODO` task the resolution invalidates returns to `PROPOSED` with a `KICKBACK` note citing the
+  decision, and a `PROPOSED` task gets a note. Tasks that are in progress, done, or cancelled are never changed.
+- **No deletes.** The agent does not delete documents, tasks, or files. Duplicates are reported to the user instead.
+- **Shared workflow source.** The command and the prompt are two renderings of one template, as for the other
+  workflows ([ADR 0031](0031-serve-workflows-to-any-harness.md)), so they do not drift apart.

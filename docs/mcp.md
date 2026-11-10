@@ -39,6 +39,7 @@ prompt does not declare is ignored.
 | `reconcile` | `milestone` |
 | `status` | `initiative` |
 | `search` | `query` |
+| `import` | `paths` |
 
 The authoritative list, with descriptions, is whatever `prompts/list` returns. The workflows are defined in
 `internal/workflow`, so a workflow added there is served without changes to the server.

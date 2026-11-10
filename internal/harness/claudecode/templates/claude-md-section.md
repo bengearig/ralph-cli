@@ -23,6 +23,6 @@ request → **H**uman review. The plan lives in ralph's store, reached through t
 - Before a pull request, resolve any branch drift (the branch no longer matching ralph's record) with
   `/ralph:reconcile` or `ralph milestone reconcile`.
 
-Slash commands: `/ralph:receive`, `/ralph:articulate`, `/ralph:status`, `/ralph:search`, `/ralph:reconcile`. The loop
+Slash commands: `/ralph:receive`, `/ralph:articulate`, `/ralph:status`, `/ralph:search`, `/ralph:reconcile`, `/ralph:import`. The loop
 runs outside this session via `ralph loop --milestone <ID>` or `ralph loop --initiative <ID>`; a person merges a
 finished milestone with `ralph milestone merge`.

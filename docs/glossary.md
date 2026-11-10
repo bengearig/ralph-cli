@@ -38,7 +38,10 @@ its model identity (the model plus any document prefix), and vectors with differ
 
 **Import.** Bringing an existing text file into ralph's documents. The file is queued as an import record with a
 snapshot of its content, integrated into documents by an agent (or imported verbatim with `--as-new`), and then
-resolved. After an import, ralph's documents are the source of truth, not the file. See [Imports](data-model.md#imports).
+resolved. The agent workflow (`/ralph:import`, or the `import` MCP prompt) works one file at a time: it applies
+additive changes directly and asks for approval before resolving contradictions, and a file whose contradictions stay
+open is left with the status `deferred`, to be picked up again. After an import, ralph's documents are the source of
+truth, not the file. See [Imports](data-model.md#imports).
 
 **Initiative.** One received set of instructions and everything articulated from it.
 
