@@ -96,8 +96,16 @@ type Store interface {
 	UpdateMilestone(ctx context.Context, m *domain.Milestone) error
 	// SetMilestoneGit replaces a milestone's git record without changing updated_at.
 	SetMilestoneGit(ctx context.Context, id int64, g domain.MilestoneGit) error
-	// DeleteMilestone removes a milestone with its tasks and their notes.
+	// DeleteMilestone removes a milestone with its tasks and their notes, and the dependency edges to and from it.
 	DeleteMilestone(ctx context.Context, id int64) error
+	// SetMilestoneDependencies replaces the milestone's whole dependency set; an empty slice clears it.
+	// A missing milestone, on either side, gives ErrNotFound.
+	SetMilestoneDependencies(ctx context.Context, milestoneID int64, dependsOn []int64) error
+	// ListMilestoneDependencies maps each dependent milestone to the milestones it depends on, ascending, for
+	// the dependents of one initiative, or of every initiative when initiativeID is 0.
+	ListMilestoneDependencies(ctx context.Context, initiativeID int64) (map[int64][]int64, error)
+	// ListDependents returns the milestones that depend on the milestone, ascending.
+	ListDependents(ctx context.Context, milestoneID int64) ([]int64, error)
 
 	CreateTask(ctx context.Context, t *domain.Task) error
 	GetTask(ctx context.Context, id int64) (domain.Task, error)
