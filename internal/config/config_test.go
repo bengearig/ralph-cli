@@ -49,6 +49,92 @@ func TestDefaults(t *testing.T) {
 	if cfg.Receive.ConfirmOutline {
 		t.Error("receive.confirm_outline should default to false")
 	}
+	tm := cfg.TaskManager
+	if tm.Provider != TaskManagerNone || tm.Timeout != 10*time.Second {
+		t.Errorf("task_manager defaults = %+v", tm)
+	}
+	if j := tm.Jira; j.EmailEnv != "RALPH_JIRA_EMAIL" || j.TokenEnv != "RALPH_JIRA_TOKEN" || j.CanceledStatus != "" ||
+		j.IssueTypes != (JiraIssueTypes{Initiative: "Epic", Milestone: "Task", Task: "Sub-task"}) {
+		t.Errorf("jira defaults = %+v", j)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("default config should validate: %v", err)
+	}
+}
+
+func TestValidateTaskManager(t *testing.T) {
+	complete := func(c *Config) {
+		c.TaskManager.Provider = TaskManagerJira
+		c.TaskManager.Jira.BaseURL = "https://example.atlassian.net"
+		c.TaskManager.Jira.ProjectKey = "RAL"
+	}
+	cases := []struct {
+		name   string
+		mutate func(*Config)
+		want   []string
+	}{
+		{"bad provider", func(c *Config) { c.TaskManager.Provider = "bogus" }, []string{"task_manager.provider:"}},
+		{"zero timeout", func(c *Config) { c.TaskManager.Timeout = 0 }, []string{"task_manager.timeout:"}},
+		{"jira defaults", func(c *Config) { c.TaskManager.Provider = TaskManagerJira },
+			[]string{"task_manager.jira.base_url:", "task_manager.jira.project_key:"}},
+		{"bad url and blank type", func(c *Config) {
+			complete(c)
+			c.TaskManager.Jira.BaseURL = "example.atlassian.net"
+			c.TaskManager.Jira.IssueTypes.Task = " "
+		}, []string{"task_manager.jira.base_url:", "task_manager.jira.issue_types.task:"}},
+		{"blank env names", func(c *Config) {
+			complete(c)
+			c.TaskManager.Jira.EmailEnv = ""
+			c.TaskManager.Jira.TokenEnv = ""
+			c.TaskManager.Jira.IssueTypes.Initiative = ""
+			c.TaskManager.Jira.IssueTypes.Milestone = ""
+		}, []string{"email_env:", "token_env:", "issue_types.initiative:", "issue_types.milestone:"}},
+		{"complete jira", complete, nil},
+		{"none ignores jira block", func(c *Config) {
+			c.TaskManager.Jira = JiraConfig{BaseURL: "garbage"}
+		}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, _ := Defaults()
+			tc.mutate(cfg)
+			err := cfg.Validate()
+			if tc.want == nil {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			for _, key := range tc.want {
+				if !strings.Contains(err.Error(), key) {
+					t.Errorf("missing %s in:\n%v", key, err)
+				}
+			}
+		})
+	}
+}
+
+func TestTaskManagerLayers(t *testing.T) {
+	project := writeFile(t, t.TempDir(), "p.yaml", "task_manager:\n  provider: jira\n  jira:\n    base_url: https://example.atlassian.net\n    project_key: RAL\n")
+	l, err := Load(Sources{ProjectFile: project, Environ: []string{"RALPH_TASK_MANAGER__JIRA__ISSUE_TYPES__TASK=Story"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := l.Config.TaskManager.Jira
+	if l.Config.TaskManager.Provider != TaskManagerJira || j.ProjectKey != "RAL" || j.IssueTypes.Task != "Story" || j.IssueTypes.Milestone != "Task" {
+		t.Errorf("task_manager = %+v", l.Config.TaskManager)
+	}
+	if err := l.Config.Validate(); err != nil {
+		t.Errorf("validate: %v", err)
+	}
+
+	typo := writeFile(t, t.TempDir(), "typo.yaml", "task_manager:\n  jira:\n    issue_type: {}\n")
+	if _, err := Load(Sources{ProjectFile: typo}); err == nil || !strings.Contains(err.Error(), "issue_type") {
+		t.Errorf("err = %v, want an unknown-key error naming issue_type", err)
+	}
 }
 
 func TestLayerPrecedence(t *testing.T) {
@@ -343,5 +429,8 @@ func TestProjectTemplateOverridesNothing(t *testing.T) {
 	}
 	if !strings.Contains(string(tmpl), "\n#   confirm_outline: false\n") {
 		t.Error("template is missing the commented receive.confirm_outline setting")
+	}
+	if !strings.Contains(string(tmpl), "\n# task_manager:\n") {
+		t.Error("template is missing the commented task_manager section")
 	}
 }

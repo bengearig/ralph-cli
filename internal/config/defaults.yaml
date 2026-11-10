@@ -103,3 +103,24 @@ pr:
     # Name of the environment variable holding the API token. Never put the
     # token itself in a config file.
     token_env: RALPH_BITBUCKET_TOKEN
+
+task_manager:
+  # none | jira. With none, ralph does not touch any task manager.
+  provider: none
+  # Per-request timeout for task manager calls.
+  timeout: 10s
+  jira:
+    base_url: ""
+    project_key: ""
+    # Names of environment variables holding the account email and API token.
+    # Never put the credentials themselves in a config file.
+    email_env: RALPH_JIRA_EMAIL
+    token_env: RALPH_JIRA_TOKEN
+    # Jira issue type names used for each ralph resource.
+    issue_types:
+      initiative: Epic
+      milestone: Task
+      task: Sub-task
+    # Name of the status a card moves to when its resource is cancelled or
+    # deleted. Empty leaves the card alone.
+    canceled_status: ""

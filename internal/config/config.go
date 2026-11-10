@@ -22,14 +22,18 @@ const (
 	EmbeddingsNone   = "none"
 
 	PRBitbucketCloud = "bitbucket_cloud"
+
+	TaskManagerNone = "none"
+	TaskManagerJira = "jira"
 )
 
 var (
-	knownHarnesses   = []string{HarnessClaudeCode}
-	knownEmbeddings  = []string{EmbeddingsOllama, EmbeddingsNone}
-	knownPRProviders = []string{PRBitbucketCloud}
-	knownLogLevels   = []string{"debug", "info", "warn", "error"}
-	knownLogFormats  = []string{"text", "json"}
+	knownHarnesses    = []string{HarnessClaudeCode}
+	knownEmbeddings   = []string{EmbeddingsOllama, EmbeddingsNone}
+	knownPRProviders  = []string{PRBitbucketCloud}
+	knownTaskManagers = []string{TaskManagerNone, TaskManagerJira}
+	knownLogLevels    = []string{"debug", "info", "warn", "error"}
+	knownLogFormats   = []string{"text", "json"}
 )
 
 // Step is a phase of the RALPH method that can run on its own harness.
@@ -56,6 +60,8 @@ type Config struct {
 	Receive    ReceiveConfig    `koanf:"receive"`
 	Loop       LoopConfig       `koanf:"loop"`
 	PR         PRConfig         `koanf:"pr"`
+
+	TaskManager TaskManagerConfig `koanf:"task_manager"`
 }
 
 type ProjectConfig struct {
@@ -144,6 +150,27 @@ type BitbucketCloudConfig struct {
 	Workspace string `koanf:"workspace"`
 	RepoSlug  string `koanf:"repo_slug"`
 	TokenEnv  string `koanf:"token_env"`
+}
+
+type TaskManagerConfig struct {
+	Provider string        `koanf:"provider"`
+	Timeout  time.Duration `koanf:"timeout"`
+	Jira     JiraConfig    `koanf:"jira"`
+}
+
+type JiraConfig struct {
+	BaseURL        string         `koanf:"base_url"`
+	ProjectKey     string         `koanf:"project_key"`
+	EmailEnv       string         `koanf:"email_env"`
+	TokenEnv       string         `koanf:"token_env"`
+	IssueTypes     JiraIssueTypes `koanf:"issue_types"`
+	CanceledStatus string         `koanf:"canceled_status"`
+}
+
+type JiraIssueTypes struct {
+	Initiative string `koanf:"initiative"`
+	Milestone  string `koanf:"milestone"`
+	Task       string `koanf:"task"`
 }
 
 // Step returns the raw override block for a step.
@@ -291,6 +318,29 @@ func (c *Config) Validate() error {
 	}
 	if c.PR.Provider == PRBitbucketCloud && strings.TrimSpace(c.PR.BitbucketCloud.TokenEnv) == "" {
 		bad("pr.bitbucket_cloud.token_env", "must name an environment variable")
+	}
+
+	oneOf("task_manager.provider", c.TaskManager.Provider, knownTaskManagers)
+	if c.TaskManager.Timeout <= 0 {
+		bad("task_manager.timeout", "must be positive")
+	}
+	if c.TaskManager.Provider == TaskManagerJira {
+		j := c.TaskManager.Jira
+		if u, err := url.Parse(j.BaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			bad("task_manager.jira.base_url", "%q is not an http(s) URL", j.BaseURL)
+		}
+		for _, f := range []struct{ key, val string }{
+			{"project_key", j.ProjectKey},
+			{"email_env", j.EmailEnv},
+			{"token_env", j.TokenEnv},
+			{"issue_types.initiative", j.IssueTypes.Initiative},
+			{"issue_types.milestone", j.IssueTypes.Milestone},
+			{"issue_types.task", j.IssueTypes.Task},
+		} {
+			if strings.TrimSpace(f.val) == "" {
+				bad("task_manager.jira."+f.key, "must not be empty")
+			}
+		}
 	}
 
 	return errors.Join(errs...)

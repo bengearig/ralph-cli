@@ -174,8 +174,14 @@ func TestConfigLayersVisible(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(h.dir, ".ralph", "config.yaml"), []byte("search:\n  limit: 3\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	var cfg struct{ Search struct{ Limit int } }
+	var cfg struct {
+		Search      struct{ Limit int }
+		TaskManager struct{ Provider string }
+	}
 	h.json(&cfg, "config", "show")
+	if cfg.TaskManager.Provider != "none" {
+		t.Errorf("config show lacks task_manager: %+v", cfg)
+	}
 	if cfg.Search.Limit != 3 {
 		t.Errorf("project config not applied: %+v", cfg)
 	}
