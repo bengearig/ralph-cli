@@ -304,7 +304,7 @@ func TestReportJSON(t *testing.T) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"milestone", "branch", "base_ref", "recorded", "tip", "branch_exists", "state", "remote_branch_exists", "tasks", "unattributed_commits", "proposed_base"} {
+	for _, k := range []string{"milestone", "branch", "base_ref", "recorded", "tip", "branch_exists", "state", "remote_branch_exists", "tasks", "unattributed_commits", "proposed_base", "unstarted"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("JSON lacks %q: %s", k, data)
 		}
@@ -1291,4 +1291,91 @@ func TestNoDoneTasksNotMergedByTasks(t *testing.T) {
 	r := e.check(e.input())
 	wantState(t, r, StateUnchanged)
 	wantMergedBy(t, r, "")
+}
+
+// unstartedMoved records an unstarted milestone, gives main two new commits
+// and moves the branch to main's tip.
+func unstartedMoved(t *testing.T) (*env, []string) {
+	t.Helper()
+	e := newEnv(t)
+	e.recordHere()
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	c1 := e.commit("a.txt", "a\n", "Upstream a")
+	c2 := e.commit("b.txt", "b\n", "Upstream b")
+	gitCmd(t, e.root, "branch", "--quiet", "-f", branch, "main")
+	return e, []string{c2, c1}
+}
+
+func TestUnstartedMovedOntoBase(t *testing.T) {
+	e, extra := unstartedMoved(t)
+	r := e.check(e.input())
+	wantState(t, r, StateAhead)
+	wantMergedBy(t, r, "")
+	if !r.Unstarted {
+		t.Error("unstarted = false")
+	}
+	if r.ProposedBase != r.Tip || r.Tip != e.rev("main") {
+		t.Errorf("proposed base %q, tip %q, want both main's tip", r.ProposedBase, r.Tip)
+	}
+	wantCommits(t, "extra commits", r.ExtraCommits, extra...)
+}
+
+func TestUnstartedWithOwnCommit(t *testing.T) {
+	e, _ := unstartedMoved(t)
+	gitCmd(t, e.root, "switch", "--quiet", branch)
+	own := e.commit("own.txt", "mine\n", "Mine")
+	r := e.check(e.input())
+	wantState(t, r, StateAhead)
+	if !r.Unstarted || r.ProposedBase != e.base {
+		t.Errorf("unstarted %v, proposed base %q, want true and %q", r.Unstarted, r.ProposedBase, e.base)
+	}
+	if len(r.ExtraCommits) == 0 || r.ExtraCommits[0].Hash != own {
+		t.Errorf("extra commits = %v, want %s first", hashes(r.ExtraCommits), own)
+	}
+}
+
+func TestUnstartedAtHead(t *testing.T) {
+	e := newEnv(t)
+	e.recordHere()
+	r := e.check(e.input())
+	wantState(t, r, StateUnchanged)
+	if !r.Unstarted {
+		t.Error("unstarted = false")
+	}
+}
+
+func TestStartedFastForwardMergedNotUnstarted(t *testing.T) {
+	e := newEnv(t, "login")
+	e.do(0, true)
+	e.recordHere()
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	gitCmd(t, e.root, "merge", "--quiet", "--ff-only", branch)
+	r := e.check(e.input())
+	wantState(t, r, StateMerged)
+	wantMergedBy(t, r, MergedByAncestry)
+	if r.Unstarted {
+		t.Error("unstarted = true for a started milestone")
+	}
+}
+
+func TestDeletedBranchNotUnstarted(t *testing.T) {
+	e := newEnv(t)
+	e.recordHere()
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	gitCmd(t, e.root, "branch", "--quiet", "-D", branch)
+	r := e.check(e.input())
+	wantState(t, r, StateBranchMissing)
+	if r.Unstarted {
+		t.Error("unstarted = true for a deleted branch")
+	}
+}
+
+func TestUnstartedAcceptMovedBranch(t *testing.T) {
+	e, _ := unstartedMoved(t)
+	tip := e.rev("main")
+	before, after := e.apply(Actions{Accept: true})
+	wantState(t, before, StateAhead)
+	wantState(t, after, StateUnchanged)
+	e.wantRecord(domain.MilestoneGit{Branch: branch, BaseCommit: tip, HeadCommit: tip})
+	wantState(t, e.check(e.input()), StateUnchanged)
 }

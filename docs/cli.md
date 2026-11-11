@@ -279,7 +279,7 @@ When flags were given, an `applied:` list of what changed follows, then the repo
 result still needs a person, the error message ends with what to run next. `--json` prints
 `{"before": <report>, "after": <report or null>}`, with full hashes; `after` is `null` without flags. The report's
 fields are those of the drift check: `milestone`, `branch`, `base_ref`, `recorded`, `tip`, `state`,
-`branch_exists`, `remote_branch_exists`, `merged_by`, `extra_commits`, `lost_commits`, `tasks`, `unattributed_commits`, and `proposed_base`. `merged_by` is present only for `merged`: `ancestry` or `tasks`.
+`branch_exists`, `remote_branch_exists`, `merged_by`, `extra_commits`, `lost_commits`, `tasks`, `unattributed_commits`, `proposed_base`, and `unstarted`. `merged_by` is present only for `merged`: `ancestry` or `tasks`. `unstarted` is `true` for an existing branch whose recorded head equals its recorded base and with no `DONE` tasks; such a branch is never `merged` by ancestry.
 
 | Exit code | When |
 |---|---|

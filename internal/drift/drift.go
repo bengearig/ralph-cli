@@ -113,6 +113,10 @@ type Report struct {
 	UnattributedCommits []Commit      `json:"unattributed_commits"`
 	// ProposedBase is the base reconcile --accept would record.
 	ProposedBase string `json:"proposed_base,omitempty"`
+	// Unstarted reports whether the milestone has no work of its own: an
+	// existing branch whose recorded head equals its recorded base and with
+	// no DONE tasks. Always present.
+	Unstarted bool `json:"unstarted"`
 }
 
 // Clean reports whether the branch is exactly as recorded.
@@ -251,7 +255,8 @@ func check(ctx context.Context, in Input, branch string) (Report, error) {
 	if r.Tip, err = in.Repo.RevParse(ctx, "refs/heads/"+r.Branch); err != nil {
 		return Report{}, err
 	}
-	if r.ProposedBase, err = proposedBase(ctx, in.Repo, r.Recorded.BaseCommit, r.Tip, r.BaseRef); err != nil {
+	r.Unstarted = r.Recorded.HeadCommit != "" && r.Recorded.HeadCommit == r.Recorded.BaseCommit && len(tasks) == 0
+	if r.ProposedBase, err = proposedBase(ctx, in.Repo, r.Recorded.BaseCommit, r.Tip, r.BaseRef, r.Unstarted); err != nil {
 		return Report{}, err
 	}
 	if r.State, err = state(ctx, in.Repo, &r); err != nil {
@@ -307,7 +312,15 @@ func baseRef(ctx context.Context, repo git.Repo, branch string) (string, error) 
 
 // proposedBase is the recorded base while it is still an ancestor of the tip,
 // otherwise the merge-base of tip and base ref ("" without shared history).
-func proposedBase(ctx context.Context, repo git.Repo, recorded, tip, baseRef string) (string, error) {
+// An unstarted milestone whose tip is in the base ref proposes the tip: the
+// branch carries nothing the base branch lacks.
+func proposedBase(ctx context.Context, repo git.Repo, recorded, tip, baseRef string, unstarted bool) (string, error) {
+	if unstarted {
+		ok, err := repo.IsAncestor(ctx, tip, baseRef)
+		if err != nil || ok {
+			return tip, err
+		}
+	}
 	if recorded != "" {
 		ok, err := isAncestor(ctx, repo, recorded, tip)
 		if err != nil || ok {
@@ -375,12 +388,14 @@ func state(ctx context.Context, repo git.Repo, r *Report) (State, error) {
 	if base == "" {
 		base = r.ProposedBase
 	}
-	wasMerged, err := merged(ctx, repo, r.Tip, base, r.BaseRef)
-	if err != nil {
-		return "", err
-	}
-	if wasMerged {
-		return StateMerged, nil
+	if !r.Unstarted {
+		wasMerged, err := merged(ctx, repo, r.Tip, base, r.BaseRef)
+		if err != nil {
+			return "", err
+		}
+		if wasMerged {
+			return StateMerged, nil
+		}
 	}
 	if r.Tip == head {
 		return StateUnchanged, nil
