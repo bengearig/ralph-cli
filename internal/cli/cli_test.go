@@ -804,22 +804,36 @@ func TestMilestoneReconcileSquashMerged(t *testing.T) {
 	}
 }
 
-// fakeProvider is a pull request provider that counts Create calls.
+// fakeProvider is a pull request provider that counts and records calls.
 type fakeProvider struct {
-	created   int
-	found     pr.PullRequest
-	foundOK   bool
-	findError error
+	created     int
+	found       pr.PullRequest
+	foundOK     bool
+	findError   error
+	createError error
+	onCreate    func()
+	finds       int
+	findArgs    [2]string
+	createReq   pr.Request
 }
 
 func (f *fakeProvider) Name() string    { return "fake" }
 func (f *fakeProvider) Validate() error { return nil }
-func (f *fakeProvider) Create(context.Context, pr.Request) (pr.PullRequest, error) {
+func (f *fakeProvider) Create(_ context.Context, req pr.Request) (pr.PullRequest, error) {
 	f.created++
+	f.createReq = req
+	if f.onCreate != nil {
+		f.onCreate()
+	}
+	if f.createError != nil {
+		return pr.PullRequest{}, f.createError
+	}
 	return pr.PullRequest{ID: "1", Namespace: "acme", Repository: "sso", Number: 1, URL: "https://example.com/pr/1"}, nil
 }
 
-func (f *fakeProvider) FindOpen(context.Context, string, string) (pr.PullRequest, bool, error) {
+func (f *fakeProvider) FindOpen(_ context.Context, source, destination string) (pr.PullRequest, bool, error) {
+	f.finds++
+	f.findArgs = [2]string{source, destination}
 	return f.found, f.foundOK, f.findError
 }
 
@@ -913,6 +927,10 @@ func TestPRCreateDriftGate(t *testing.T) {
 	// The real provider is reached on a clean milestone, against a fake server.
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"values": []}`))
+			return
+		}
 		gotPath = r.URL.Path
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"id": 9, "links": {"html": {"href": "https://bitbucket.example/acme/sso/pull-requests/9"}}}`))
@@ -925,10 +943,11 @@ func TestPRCreateDriftGate(t *testing.T) {
 	t.Setenv("RALPH_PR__BITBUCKET_CLOUD__REPO_SLUG", "sso")
 	t.Setenv(cfg.PR.BitbucketCloud.EmailEnv, "me@example.com")
 	t.Setenv(cfg.PR.BitbucketCloud.TokenEnv, "secret")
+	h.ok("pr", "unlink", "--milestone", "M-1")
 	if help := h.ok("pr", "create", "--help"); strings.Contains(help, "not implemented") {
 		t.Errorf("help still says creation is not implemented:\n%s", help)
 	}
-	if out := h.ok("pr", "create", "--milestone", "M-1"); out != "opened https://bitbucket.example/acme/sso/pull-requests/9\n" || gotPath != "/repositories/acme/sso/pullrequests" {
+	if out := h.ok("pr", "create", "--milestone", "M-1"); out != "opened https://bitbucket.org/acme/sso/pull-requests/9\n" || gotPath != "/repositories/acme/sso/pullrequests" {
 		t.Errorf("clean milestone with bitbucket_cloud: %q, path %q", out, gotPath)
 	}
 	newPRProvider = func(*config.Config) (pr.Provider, error) { return fake, nil }

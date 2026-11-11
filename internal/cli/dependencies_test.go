@@ -215,6 +215,7 @@ func TestLoopAndPRCreateEnforceDependencies(t *testing.T) {
 	if _, errOut, err = h.run("", "loop", "--milestone", "M-2", "--dry-run"); err != nil || strings.Contains(errOut, "depends on") {
 		t.Errorf("loop after merge: err = %v, stderr = %q", err, errOut)
 	}
+	h.ok("pr", "unlink", "--milestone", "M-3")
 	if _, _, err := h.run("", "pr", "create", "--milestone", "M-3"); err != nil || fake.created != 2 {
 		t.Errorf("pr after merge: %v (created %d)", err, fake.created)
 	}
