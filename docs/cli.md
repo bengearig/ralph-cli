@@ -44,7 +44,8 @@ Commit hashes recorded by the loop are shown shortened in text output and in ful
 | `ralph task note <id> <text...> [--kind NOTE\|ITERATION\|KICKBACK]` | Add a note. |
 | `ralph task next --milestone <id>` | Show the task the loop would pick next. |
 | `ralph doc create --kind <k> --title <t> [--initiative <id>] [--body \| --file] [--slug]` | Create a document. Without `--initiative` it is project-wide. |
-| `ralph doc list [--initiative <id> \| --project] [--kind <k>]` / `show <id>` / `update <id> ...` | Browse and edit documents. |
+| `ralph doc list [--initiative <id> \| --project] [--kind <k>]` / `show <id>` / `update <id> ...` | Browse and edit documents. A promoted document shows `from I-n`. |
+| `ralph doc promote <id> [--slug <slug>]` / `ralph doc return <id> [--slug <slug>]` | Make an initiative's document project-wide, remembering its origin, or send it back to that origin. See [Promoting documents](#promoting-documents). |
 | `ralph initiative delete <id>`, `milestone delete <id>`, `task delete <id>` `[--force] [--yes]`, `ralph doc delete <id>`, `ralph note delete <id>` `[--yes]` | Delete permanently. See [Deleting](#deleting). |
 | `ralph initiative archive <id>` / `unarchive <id>`, `ralph doc archive <id>` / `unarchive <id>` | Hide an item and make it read-only, or undo that. See [Archiving](#archiving). |
 | `ralph status [--initiative <id>]` | Progress summary: milestones with derived status and task counts, and `waiting on M-n` for a milestone whose dependencies are not satisfied. |
@@ -116,6 +117,26 @@ for the rules.
 - An archived item, and everything in an archived initiative, is read-only until it is unarchived. Deletes still work.
 - `initiative list`, `milestone list`, `task list`, `doc list`, `status`, and `search` leave archived items out
   unless given `--archived`. `show` always works and prints an `archived:` line for an archived item.
+
+### Promoting documents
+
+`ralph doc promote` makes a document of an initiative project-wide. The document keeps the initiative it came from as
+its origin, shown as `from I-n` by `doc show` and `doc list`, and `ralph doc return` puts it back. See
+[Promoting](data-model.md#promoting-documents) for the rules.
+
+- `doc promote <id>` prints `promoted D-n to project-wide (from I-n)`; `doc return <id>` prints `returned D-n to I-n`.
+  With `--json` both print the document view, which carries `origin_initiative_id` while an origin is set.
+- A promoted document is an ordinary project-wide document. `doc list --initiative` no longer lists it, `doc list
+  --project`, `status`, and `search` treat it as project-wide, and it stays visible when its origin initiative is
+  archived.
+- Promoting a document that is already project-wide is refused, as is promoting or returning a document that is itself
+  archived. Promoting a document of an archived initiative is allowed, which backfills documents that were archived
+  with their initiative (the documents of an old initiative, such as D-13 and D-14 from I-3, are an example). Returning
+  is refused while the origin initiative is archived, and for a document with no origin.
+- Documents are unique by initiative and slug. When the destination already has a document with the slug, the command
+  is refused with a message that names that document, and nothing is renamed implicitly. Repeat the command with
+  `--slug <slug>` to apply a new slug as part of the move. `--slug` is not a general rename: it only takes effect
+  as part of a promote or return.
 
 ## Search
 

@@ -103,6 +103,7 @@ The authoritative list, with schemas, is whatever `tools/list` returns. The regi
 | `doc_list` | Documents without bodies, filtered by initiative, project scope, or kind. |
 | `doc_get` | A document with its body. |
 | `doc_update` | Edit kind, title, or body; a new body replaces the old one. |
+| `doc_promote` / `doc_return` | Make an initiative's document project-wide, keeping its origin initiative, or send it back to the origin. Parameters: `id` and an optional `slug`, the new slug to apply as part of the move. Non-destructive writes that return the document view. See [Promoting documents](#promoting-documents). |
 | `doc_archive` / `doc_unarchive` | Hide a document and make it read-only, or undo that. Parameter `id`. |
 | `doc_delete` | Destructive. Parameter `id`. Removes the document and its search index entries; nothing else cascades. |
 
@@ -130,6 +131,20 @@ writes, not destructive. The rules are in [Archiving](data-model.md#archiving).
 - Changing an archived item, or anything in an archived initiative, is a tool error that says to unarchive it first.
   Agents unarchive only with the user's agreement.
 - `task_next` refuses a milestone whose initiative is archived.
+- A promoted document is project-wide, so `doc_list` filtered by initiative no longer includes it and it stays visible
+  when its origin initiative is archived. See [Promoting documents](#promoting-documents).
+
+### Promoting documents
+
+`doc_promote` clears the initiative of a document and records it as `origin_initiative_id` in the view; `doc_return`
+reverses that. The rules are in [Promoting documents](data-model.md#promoting-documents).
+
+- A project-wide document, or an archived one, is refused by `doc_promote`. An archived initiative does not stop it, so
+  documents archived with an initiative can be backfilled.
+- `doc_return` is refused for a document with no origin, an archived document, and an archived origin initiative.
+- When the destination already has a document with the slug, the tool errors naming that document and saying to retry
+  with `slug`. Nothing is renamed implicitly. `slug` applies a new slug as part of the move and is not a general rename;
+  an invalid slug is refused as it is by `doc_create`.
 
 ### Cards
 

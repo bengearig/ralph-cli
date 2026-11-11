@@ -90,7 +90,9 @@ note kind follows from the transition: kickbacks (to `BLOCKED`, or back to `PROP
 
 Kinds are `brief`, `architecture`, `design`, `decision`, `reference`, and `note`. A document with no initiative is
 project-wide. Slugs are unique within their scope; the project scope counts as its own scope. `archived_at` is empty
-until the document is [archived](#archiving).
+until the document is [archived](#archiving). `origin_initiative_id` is empty unless the document was
+[promoted](#promoting-documents); it references the initiative with `ON DELETE SET NULL`, so deleting that initiative
+only clears the link. Views show it as `origin_initiative_id`, and the CLI as `from I-n`.
 
 ## Git records
 
@@ -269,6 +271,26 @@ reports `archived`, and milestones and tasks report `archived`.
   milestones of archived initiatives; see [the loop](loop.md#before-the-first-session).
 
 See [ADR 0019](adr/0019-archive-initiatives-and-documents.md).
+
+## Promoting documents
+
+Promoting makes a document of an initiative project-wide: `initiative_id` is cleared and `origin_initiative_id` records
+where it came from. Returning reverses it. A document is *promoted* while it has no initiative and has an origin; a
+document created project-wide has no origin.
+
+- A promoted document is an ordinary project-wide document. It is not listed under its origin initiative, and since
+  its archived state depends only on its own flag, it stays visible when the origin initiative is archived.
+- **Promote** is refused for a document that is already project-wide and for one that is itself archived. A document
+  of an archived initiative may be promoted, which backfills documents archived along with their initiative.
+- **Return** is refused for a document with no origin (including one whose origin initiative was deleted), for an
+  archived document, and while the origin initiative is archived.
+- **Slugs** are unique by initiative and slug, and the project scope counts as its own scope. A move that would collide
+  with another document, archived ones included, is refused with an error that names the other document. Nothing is
+  renamed implicitly. An optional new slug, checked like the one `doc_create` accepts, is applied together with the
+  move; it is not a general rename, and `doc_update` still does not change slugs.
+- Both operations re-index the document, because search chunks carry the initiative.
+
+See [ADR 0033](adr/0033-promote-documents-to-project-wide.md).
 
 ## Imports
 

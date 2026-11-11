@@ -19,7 +19,8 @@ request → **H**uman review. The plan lives in ralph's store, reached through t
   agreement.
 - Search the store (`search`) before writing new documents or tasks.
 - Archived initiatives and documents are hidden from lists, status, and search unless `include_archived` is set. An
-  archived initiative, and everything under it, must be unarchived before it can be changed.
+  archived initiative, and everything under it, must be unarchived before it can be changed. To keep a document visible
+  after its initiative is archived, promote it to project-wide with `doc_promote`.
 - Before a pull request, resolve any branch drift (the branch no longer matching ralph's record) with
   `/ralph:reconcile` or `ralph milestone reconcile`.
 

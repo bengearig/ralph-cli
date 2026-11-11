@@ -32,5 +32,6 @@ provider, [ADR 22](adr/0022-create-cards-when-resources-are-created.md) records 
 [ADR 28](adr/0028-milestone-dependencies.md) records milestone dependencies, and
 [ADR 29](adr/0029-looping-an-initiative.md) records looping an initiative, and
 [ADR 31](adr/0031-serve-workflows-to-any-harness.md) records how workflows are served to any harness, and
-[ADR 32](adr/0032-unstarted-milestone-branches.md) records how unstarted milestone branches are reported and kept current. Add a new record
+[ADR 32](adr/0032-unstarted-milestone-branches.md) records how unstarted milestone branches are reported and kept current, and
+[ADR 33](adr/0033-promote-documents-to-project-wide.md) records promoting documents to project-wide. Add a new record
 rather than editing an accepted one; mark the old record superseded.
