@@ -134,7 +134,7 @@ func TestSyncCommandNeedsHuman(t *testing.T) {
 func TestSyncCommandHelp(t *testing.T) {
 	h, _, _ := newGitTestEnv(t)
 	help := h.ok("sync", "--help")
-	for _, want := range []string{"--dry-run", "Exit codes: 0 when synced or already current, 3 when it needs a person"} {
+	for _, want := range []string{"--dry-run", "--delete-branches", "Exit codes: 0 when synced or already current, 3 when it needs a person"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("help lacks %q", want)
 		}
@@ -188,15 +188,24 @@ func TestSyncCommandReportsMergedMilestones(t *testing.T) {
 		}
 	}
 
-	out := h.ok("sync", "--dry-run")
+	out := h.ok("sync", "--dry-run", "--delete-branches")
+	if !strings.HasSuffix(out, "\nwould be merged: M-1 (branch ralph/login, kept locally)\n  would delete branch ralph/login\n") {
+		t.Errorf("dry run: %q", out)
+	}
+	if git("branch", "--list", "ralph/login") == "" {
+		t.Fatal("dry run deleted the branch")
+	}
+	out = h.ok("sync", "--dry-run")
 	if !strings.HasSuffix(out, "\nwould be merged: M-1 (branch ralph/login, kept locally)\n") {
 		t.Errorf("dry run: %q", out)
 	}
-	out = h.ok("sync")
-	if !strings.HasSuffix(out, "\nmerged: M-1 (branch ralph/login, kept locally)\n") || strings.Contains(out, "would") {
-		t.Errorf("sync: %q", out)
+	out = h.ok("sync", "--delete-branches", "--json")
+	if !strings.Contains(out, `"branch_deleted": true`) || strings.Contains(out, "delete_error") {
+		t.Errorf("json: %s", out)
 	}
-	git("branch", "-D", "ralph/login")
+	if git("branch", "--list", "ralph/login") != "" {
+		t.Error("branch not deleted")
+	}
 	if out = h.ok("sync"); strings.Contains(out, "merged:") {
 		t.Errorf("a second sync reported merges: %q", out)
 	}

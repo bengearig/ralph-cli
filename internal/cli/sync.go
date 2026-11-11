@@ -8,7 +8,7 @@ import (
 )
 
 func (a *app) newSyncCommand() *cobra.Command {
-	var dryRun bool
+	var dryRun, deleteBranches bool
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Fast-forward the base branch to its remote",
@@ -26,6 +26,11 @@ running.
 --dry-run makes every check, the fetch included (which updates only the
 remote-tracking branch), and prints what would happen without moving the base
 branch.
+
+--delete-branches removes the local branches of the milestones this sync
+merged. Only those branches are considered, with git's safe delete, locally
+only; a branch git refuses to delete (for example a squash-merged branch git
+does not see as merged) is kept with a warning.
 
 Syncing is a person's action, so there is no MCP tool for it.
 
@@ -45,7 +50,7 @@ errors.`,
 			if err != nil {
 				return err
 			}
-			res, err := loop.SyncBase(cmd.Context(), svc, l.Config, p.Root, loop.SyncOptions{DryRun: dryRun})
+			res, err := loop.SyncBase(cmd.Context(), svc, l.Config, p.Root, loop.SyncOptions{DryRun: dryRun, DeleteBranches: deleteBranches})
 			if err != nil {
 				return err
 			}
@@ -61,12 +66,12 @@ errors.`,
 				if err := a.printf("fast-forwarded %s to %s: %s..%s (%d commit(s))\n", res.BaseBranch, upstream, shortCommit(res.From), shortCommit(res.To), res.Behind); err != nil {
 					return err
 				}
-				return a.printMerged(res, "merged:")
+				return a.printMerged(res, "merged:", deleteBranches)
 			case res.DryRun && res.State == git.BaseBehind:
 				if err := a.printf("would fast-forward %s to %s: %s..%s (%d commit(s))\n", res.BaseBranch, upstream, shortCommit(res.From), shortCommit(res.RemoteTip), res.Behind); err != nil {
 					return err
 				}
-				return a.printMerged(res, "would be merged:")
+				return a.printMerged(res, "would be merged:", deleteBranches)
 			case res.State == git.BaseCurrent:
 				return a.printf("%s is already up to date with %s\n", res.BaseBranch, upstream)
 			}
@@ -74,16 +79,34 @@ errors.`,
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "fetch and check, then print what would happen without moving the branch")
+	cmd.Flags().BoolVar(&deleteBranches, "delete-branches", false, "remove the local branches of the milestones this sync brought in, with git's safe delete")
 	return cmd
 }
 
-func (a *app) printMerged(res loop.SyncResult, verb string) error {
+func (a *app) printMerged(res loop.SyncResult, verb string, deleteBranches bool) error {
 	for _, m := range res.NewlyMerged {
 		kept := "already deleted"
 		if m.BranchExists {
 			kept = "kept locally"
 		}
 		if err := a.printf("%s %s (branch %s, %s)\n", verb, m.ID, m.Branch, kept); err != nil {
+			return err
+		}
+		if !deleteBranches || !m.BranchExists {
+			continue
+		}
+		var line string
+		switch {
+		case res.DryRun && m.Branch == res.BaseBranch:
+			line = "would keep branch " + m.Branch
+		case res.DryRun:
+			line = "would delete branch " + m.Branch
+		case m.BranchDeleted:
+			line = "deleted branch " + m.Branch
+		default:
+			line = "kept branch " + m.Branch
+		}
+		if err := a.printf("  %s\n", line); err != nil {
 			return err
 		}
 	}

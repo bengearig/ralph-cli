@@ -424,3 +424,105 @@ func TestNewlyMergedSkipsFailingMilestone(t *testing.T) {
 		t.Errorf("warnings = %v", warnings)
 	}
 }
+
+func (e *runEnv) branchExists(t *testing.T, name string) bool {
+	t.Helper()
+	return gitCmd(t, e.root, "branch", "--list", name) != ""
+}
+
+func TestSyncBaseDeleteBranches(t *testing.T) {
+	e, bare, _ := newMergedEnv(t)
+	remoteBefore := gitCmd(t, bare, "for-each-ref")
+	res, err := e.sync(SyncOptions{DeleteBranches: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.NewlyMerged) != 2 {
+		t.Fatalf("result = %+v", res)
+	}
+	deleted, kept := res.NewlyMerged[0], res.NewlyMerged[1]
+	if !deleted.BranchDeleted || deleted.DeleteError != "" || e.branchExists(t, mergeBranch) {
+		t.Errorf("merged branch: %+v", deleted)
+	}
+	if kept.BranchDeleted || kept.DeleteError == "" || !e.branchExists(t, "ralph/squashed") {
+		t.Errorf("squashed branch: %+v", kept)
+	}
+	if len(res.Warnings) != 1 || res.Warnings[0] != "kept branch ralph/squashed: "+kept.DeleteError {
+		t.Errorf("warnings = %q", res.Warnings)
+	}
+	for _, b := range []string{"ralph/premerged", "ralph/unmerged", "ralph/open"} {
+		if !e.branchExists(t, b) {
+			t.Errorf("%s was deleted", b)
+		}
+	}
+	if got := gitCmd(t, bare, "for-each-ref"); got != remoteBefore {
+		t.Errorf("remote changed:\n%s\n%s", remoteBefore, got)
+	}
+}
+
+func TestSyncBaseDeleteBranchesCheckedOutElsewhere(t *testing.T) {
+	e, _, _ := newMergedEnv(t)
+	gitCmd(t, e.root, "worktree", "add", "--quiet", t.TempDir()+"/wt", mergeBranch)
+	res, err := e.sync(SyncOptions{DeleteBranches: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.NewlyMerged[0].BranchDeleted || res.NewlyMerged[0].DeleteError == "" || !e.branchExists(t, mergeBranch) {
+		t.Errorf("result = %+v", res.NewlyMerged)
+	}
+}
+
+func TestSyncBaseDeleteBranchesOffByDefaultAndDryRun(t *testing.T) {
+	for _, opts := range []SyncOptions{{}, {DryRun: true, DeleteBranches: true}} {
+		e, _, _ := newMergedEnv(t)
+		res, err := e.sync(opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range res.NewlyMerged {
+			if m.BranchDeleted || m.DeleteError != "" {
+				t.Errorf("%+v: %+v", opts, m)
+			}
+		}
+		if len(res.Warnings) != 0 || !e.branchExists(t, mergeBranch) || !e.branchExists(t, "ralph/squashed") {
+			t.Errorf("%+v: %+v", opts, res)
+		}
+	}
+}
+
+func TestSyncBaseDeleteBranchesNothingWithoutSync(t *testing.T) {
+	t.Run("current", func(t *testing.T) {
+		e := newMergeEnv(t)
+		e.addRemote(t)
+		res, err := e.sync(SyncOptions{DeleteBranches: true})
+		if err != nil || len(res.NewlyMerged) != 0 || !e.branchExists(t, mergeBranch) {
+			t.Fatalf("%+v, %v", res, err)
+		}
+	})
+	t.Run("refusal", func(t *testing.T) {
+		e, _, _ := newMergedEnv(t)
+		e.commitFile(t, "local.txt")
+		_, err := e.sync(SyncOptions{DeleteBranches: true})
+		if !errors.Is(err, errs.ErrNeedsHuman) || !e.branchExists(t, mergeBranch) {
+			t.Fatalf("%v", err)
+		}
+	})
+}
+
+func TestSyncBaseDeleteBranchesAlreadyGone(t *testing.T) {
+	e, _, _ := newMergedEnv(t)
+	gitCmd(t, e.root, "branch", "-D", mergeBranch)
+	res, err := e.sync(SyncOptions{DeleteBranches: true})
+	if err != nil || res.NewlyMerged[0].BranchDeleted || res.NewlyMerged[0].DeleteError != "" {
+		t.Fatalf("%+v, %v", res, err)
+	}
+}
+
+func TestSyncResultDeleteBranchesSkipsBase(t *testing.T) {
+	e := newMergeEnv(t)
+	r := SyncResult{BaseBranch: "main", Warnings: []string{}, NewlyMerged: []MergedMilestone{{ID: "M-9", Branch: "main", BranchExists: true}}}
+	r.deleteBranches(context.Background(), git.Repo{Dir: e.root})
+	if r.NewlyMerged[0].BranchDeleted || r.NewlyMerged[0].DeleteError != "" || len(r.Warnings) != 1 || !e.branchExists(t, "main") {
+		t.Fatalf("%+v", r)
+	}
+}

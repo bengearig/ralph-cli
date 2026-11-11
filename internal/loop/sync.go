@@ -22,6 +22,9 @@ import (
 type SyncOptions struct {
 	// DryRun makes every check, the fetch included, but never moves the branch.
 	DryRun bool
+	// DeleteBranches removes, with git's safe delete, the local branches of the
+	// milestones the sync brought in.
+	DeleteBranches bool
 }
 
 // SyncResult is what SyncBase did, or with DryRun would do.
@@ -49,11 +52,16 @@ type MergedMilestone struct {
 	Branch       string `json:"branch"`
 	BranchExists bool   `json:"branch_exists"`
 	MergedBy     string `json:"merged_by"`
+	// BranchDeleted is set when --delete-branches removed the local branch;
+	// DeleteError is git's message when it refused.
+	BranchDeleted bool   `json:"branch_deleted"`
+	DeleteError   string `json:"delete_error,omitempty"`
 }
 
 // SyncBase fetches pr.base_branch from pr.remote and fast-forwards the local
-// base branch to it. It never pushes, merges, rewrites, deletes, or switches
-// branches.
+// base branch to it. It never pushes, merges, rewrites, or switches branches,
+// and deletes only when opts.DeleteBranches is set: the local branches of the
+// milestones it brought in, with git's safe delete.
 func SyncBase(ctx context.Context, svc *service.Service, cfg *config.Config, root string, opts SyncOptions) (SyncResult, error) {
 	remote, branch := cfg.PR.Remote, cfg.PR.BaseBranch
 	res := SyncResult{Remote: remote, BaseBranch: branch, DryRun: opts.DryRun, Warnings: []string{}, NewlyMerged: []MergedMilestone{}}
@@ -105,7 +113,13 @@ func SyncBase(ctx context.Context, svc *service.Service, cfg *config.Config, roo
 			return res, err
 		}
 		res.Synced = true
-		return res, res.reportMerged(ctx, svc, cfg, root, res.From, res.To)
+		if err := res.reportMerged(ctx, svc, cfg, root, res.From, res.To); err != nil {
+			return res, err
+		}
+		if opts.DeleteBranches {
+			res.deleteBranches(ctx, repo)
+		}
+		return res, nil
 	}
 	return res, nil
 }
@@ -118,6 +132,25 @@ func (r *SyncResult) reportMerged(ctx context.Context, svc *service.Service, cfg
 	r.NewlyMerged = merged
 	r.Warnings = append(r.Warnings, warnings...)
 	return nil
+}
+
+func (r *SyncResult) deleteBranches(ctx context.Context, repo git.Repo) {
+	for i := range r.NewlyMerged {
+		m := &r.NewlyMerged[i]
+		if !m.BranchExists {
+			continue
+		}
+		if m.Branch == r.BaseBranch {
+			r.Warnings = append(r.Warnings, fmt.Sprintf("kept branch %s: it is the base branch", m.Branch))
+			continue
+		}
+		if err := repo.DeleteBranch(ctx, m.Branch); err != nil {
+			m.DeleteError = gitMessage(err)
+			r.Warnings = append(r.Warnings, fmt.Sprintf("kept branch %s: %s", m.Branch, m.DeleteError))
+			continue
+		}
+		m.BranchDeleted = true
+	}
 }
 
 // NewlyMerged lists the DONE milestones, in initiatives that are not archived,
