@@ -42,5 +42,6 @@ provider, [ADR 22](adr/0022-create-cards-when-resources-are-created.md) records 
 [ADR 35](adr/0035-watch-by-polling-and-snapshot-comparison.md) records how watching works, and
 [ADR 36](adr/0036-watch-milestones-tasks-and-the-overview.md) records how milestones, tasks, and the overview are watched, and
 [ADR 37](adr/0037-release-from-version-tags-with-checksummed-archives.md) records how releases are made from version tags, and
-[ADR 38](adr/0038-install-from-github-releases-and-update-in-place.md) records how ralph is installed from releases and updated in place. Add a new
+[ADR 38](adr/0038-install-from-github-releases-and-update-in-place.md) records how ralph is installed from releases and updated in place, and
+[ADR 39](adr/0039-fetch-the-base-branch-and-refuse-a-stale-one.md) records how the base branch is fetched and a stale one refused. Add a new
 record rather than editing an accepted one; mark the old record superseded.

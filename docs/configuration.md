@@ -148,7 +148,7 @@ commands, so their overrides take effect once ralph launches those sessions itse
 | `pr.provider` | `bitbucket_cloud` | Pull-request host: `bitbucket_cloud` or `github`. |
 | `pr.base_branch` | `main` | Branch the milestone branch is created from and merged into. |
 | `pr.remote` | `origin` | Git remote `ralph pr create` pushes the milestone's branch to. Must not be empty. |
-| `pr.stale_base` | `refuse` | What to do when the local `pr.base_branch` is behind `pr.remote`'s copy: `refuse` stops the guarded commands, while `sync` fast-forwards the base branch first (fast-forward only, clean work tree; otherwise it refuses). |
+| `pr.stale_base` | `refuse` | What to do when the local `pr.base_branch` is behind `pr.remote`'s copy: `refuse` stops the guarded commands, while `sync` fast-forwards the base branch first (fast-forward only, clean work tree; otherwise it refuses). See [The staleness guard](loop.md#the-staleness-guard). |
 | `pr.draft` | `true` | Open pull requests as drafts. |
 | `pr.timeout` | `30s` | Per-request timeout for every pull request provider call. Must be positive. |
 | `pr.bitbucket_cloud.workspace` | `""` | Bitbucket workspace ID. |
