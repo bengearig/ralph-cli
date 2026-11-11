@@ -182,7 +182,7 @@ branch is then compared with the fetched one (see [ADR 39](adr/0039-fetch-the-ba
 | State | Result |
 |---|---|
 | Current, or ahead | Proceeds. |
-| Behind | Refuses with exit code `3`, naming `git pull --ff-only`. With `pr.stale_base: sync`, fast-forwards the base branch and proceeds. |
+| Behind | Refuses with exit code `3`, naming [`ralph sync`](cli.md#ralph-sync) (or `git pull --ff-only`). With `pr.stale_base: sync`, fast-forwards the base branch and proceeds. |
 | Diverged | Refuses with exit code `3`, whatever `pr.stale_base` is. |
 
 `sync` fast-forwards only, never creates a merge commit, and needs a clean work tree; when it cannot, the command refuses
@@ -193,8 +193,8 @@ because an unknown remote state is treated as unsafe. A repository with no reach
 `warning:` line instead of refusing; it never fast-forwards, even under `sync`.
 
 The read-only views use the remote-tracking ref as the last fetch left it. A dependency that is merged into it but not
-into the local base branch is reported as `base_stale` rather than unmerged, with `git pull --ff-only <remote> <base>`
-as the fix; it is still not satisfied.
+into the local base branch is reported as `base_stale` rather than unmerged, with `ralph sync` as the fix, the same
+command the refusal names; it is still not satisfied.
 
 ### Milestone dependencies
 

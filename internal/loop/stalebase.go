@@ -70,7 +70,7 @@ func EnsureFreshBase(ctx context.Context, cfg *config.Config, root string, opts 
 			branch, remote, branch, st.Ahead, st.Behind, remote, branch)
 	case git.BaseBehind:
 		if cfg.PR.StaleBase != config.StaleBaseSync {
-			return refuse("local %s is %d commit(s) behind %s/%s; fast-forward it with: git pull --ff-only %s %s, or set pr.stale_base to sync, or use --force",
+			return refuse("local %s is %d commit(s) behind %s/%s; fast-forward it with: ralph sync (or git pull --ff-only %s %s), or set pr.stale_base to sync, or use --force",
 				branch, st.Behind, remote, branch, remote, branch)
 		}
 		if opts.DryRun {

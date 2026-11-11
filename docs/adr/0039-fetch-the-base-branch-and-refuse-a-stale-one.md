@@ -35,6 +35,9 @@ state, so that rule has to change.
   warning rather than a refusal, and a dry run never fast-forwards, even under `sync`.
 - **The guard runs first.** It comes before the dependency check and before any branch is created.
 - **A missing local base branch is not staleness.** The loop already falls back to the remote-tracking ref.
+- **`ralph sync` does the fast-forward on demand.** It fetches the base branch, fast-forwards the local one, and can
+  remove the local branches of the milestones it merged, with git's safe delete only. The guard's refusal messages and
+  the `base_stale` fix name it.
 - **The dependency check gets a state for it.** A dependency merged into the remote's base but not yet into the local
   one is `base_stale`, not unmerged, and its fix is to update the base branch.
 
