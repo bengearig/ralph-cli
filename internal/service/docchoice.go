@@ -20,6 +20,33 @@ type DocumentChoice struct {
 	IDs  []int64
 }
 
+// ParseDocumentChoice turns "all", "none", or document IDs into a choice.
+// Keywords cannot be mixed with IDs; an empty list means no choice.
+func ParseDocumentChoice(items []string) (DocumentChoice, error) {
+	var c DocumentChoice
+	keywords := 0
+	for _, raw := range items {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case "all":
+			c.All = true
+			keywords++
+		case "none":
+			c.None = true
+			keywords++
+		default:
+			id, err := domain.ParseID(domain.KindDocument, raw)
+			if err != nil {
+				return DocumentChoice{}, err
+			}
+			c.IDs = append(c.IDs, id)
+		}
+	}
+	if keywords > 0 && (keywords > 1 || len(c.IDs) > 0) {
+		return DocumentChoice{}, fmt.Errorf("%w: \"all\" and \"none\" stand alone and cannot be combined with each other or with document IDs", domain.ErrInvalid)
+	}
+	return c, nil
+}
+
 func (c DocumentChoice) chosen() bool { return c.All || c.None || len(c.IDs) > 0 }
 
 // DocumentSummary identifies a candidate document.
@@ -46,6 +73,15 @@ func newDocumentChoiceError(i domain.Initiative, docs []domain.Document) *Docume
 		}
 	}
 	return e
+}
+
+// SuggestedIDs joins the suggested document IDs with commas; empty when there are none.
+func (e *DocumentChoiceError) SuggestedIDs() string {
+	ids := make([]string, len(e.Suggested))
+	for n, d := range e.Suggested {
+		ids[n] = d.ID
+	}
+	return strings.Join(ids, ",")
 }
 
 func (e *DocumentChoiceError) Is(target error) bool { return target == ErrDocumentChoiceRequired }

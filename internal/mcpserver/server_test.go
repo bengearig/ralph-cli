@@ -840,3 +840,106 @@ func TestDocPromoteAndReturnTools(t *testing.T) {
 		t.Errorf("found %d promote/return tools, want both", seen)
 	}
 }
+
+func seedArchiveDocs(t *testing.T, cs *mcp.ClientSession) {
+	t.Helper()
+	mustOK(t, cs, "initiative_create", map[string]any{"title": "Customer SSO"}, nil)
+	mustOK(t, cs, "doc_create", map[string]any{"initiative_id": "I-1", "kind": "design", "title": "Flow", "body": "x"}, nil)
+	mustOK(t, cs, "doc_create", map[string]any{"initiative_id": "I-1", "kind": "reference", "title": "Notes", "body": "y"}, nil)
+}
+
+func TestInitiativeArchiveRequiresPromoteChoice(t *testing.T) {
+	cs := connect(t)
+	seedArchiveDocs(t, cs)
+	res := call(t, cs, "initiative_archive", map[string]any{"id": "I-1"}, nil)
+	msg := text(res)
+	if !res.IsError {
+		t.Fatalf("archive without promote succeeded: %s", msg)
+	}
+	for _, want := range []string{`D-1  design  "Flow"`, `D-2  reference  "Notes"`, "Suggested (design and decision documents): D-1", `promote: ["D-1"]`, `promote: "all"`, `promote: "none"`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("refusal lacks %q:\n%s", want, msg)
+		}
+	}
+	var got service.InitiativeView
+	mustOK(t, cs, "initiative_get", map[string]any{"id": "I-1"}, &got)
+	if got.ArchivedAt != "" {
+		t.Errorf("initiative archived despite refusal: %+v", got)
+	}
+}
+
+func TestInitiativeArchivePromoteForms(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		promote any
+		want    []string
+	}{
+		{"all", "all", []string{"D-1", "D-2"}},
+		{"none", "none", nil},
+		{"list", []string{"D-2"}, []string{"D-2"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cs := connect(t)
+			seedArchiveDocs(t, cs)
+			var v service.InitiativeView
+			mustOK(t, cs, "initiative_archive", map[string]any{"id": "I-1", "promote": tc.promote}, &v)
+			if v.ArchivedAt == "" || !slices.Equal(v.PromotedDocuments, tc.want) {
+				t.Errorf("view = %+v, want promoted %v", v, tc.want)
+			}
+		})
+	}
+}
+
+func TestInitiativeArchivePromoteInvalid(t *testing.T) {
+	for name, promote := range map[string]any{
+		"mixed":     []string{"all", "D-1"},
+		"malformed": []string{"X-1"},
+		"number":    5,
+	} {
+		t.Run(name, func(t *testing.T) {
+			cs := connect(t)
+			seedArchiveDocs(t, cs)
+			res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "initiative_archive", Arguments: map[string]any{"id": "I-1", "promote": promote}})
+			if err == nil && !res.IsError {
+				t.Fatalf("invalid promote %v accepted", promote)
+			}
+			var v service.InitiativeView
+			mustOK(t, cs, "initiative_get", map[string]any{"id": "I-1"}, &v)
+			if v.ArchivedAt != "" {
+				t.Errorf("initiative archived despite invalid promote")
+			}
+		})
+	}
+}
+
+func TestInitiativeArchiveSchemaAllowsArrayOrKeywords(t *testing.T) {
+	cs := connect(t)
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name != "initiative_archive" {
+			continue
+		}
+		raw, _ := json.Marshal(tool.InputSchema)
+		var s struct {
+			Properties map[string]struct {
+				OneOf []struct {
+					Type string   `json:"type"`
+					Enum []string `json:"enum"`
+				} `json:"oneOf"`
+			} `json:"properties"`
+			Required []string `json:"required"`
+		}
+		if err := json.Unmarshal(raw, &s); err != nil {
+			t.Fatal(err)
+		}
+		p := s.Properties["promote"]
+		if len(p.OneOf) != 2 || p.OneOf[0].Type != "array" || p.OneOf[1].Type != "string" || !slices.Equal(p.OneOf[1].Enum, []string{"all", "none"}) || slices.Contains(s.Required, "promote") {
+			t.Errorf("promote schema = %s", raw)
+		}
+		return
+	}
+	t.Fatal("initiative_archive not listed")
+}

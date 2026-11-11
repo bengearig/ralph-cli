@@ -2,11 +2,14 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/bengearig/ralph/internal/domain"
@@ -53,13 +56,72 @@ func (t *tools) initiativeList(ctx context.Context, _ *mcp.CallToolRequest, in i
 	return nil, initiativeList{Initiatives: all}, toolError(err)
 }
 
-func (t *tools) initiativeArchive(ctx context.Context, _ *mcp.CallToolRequest, in idIn) (*mcp.CallToolResult, service.InitiativeView, error) {
+// promoteChoice is the promote parameter: an array of document IDs, or "all" or "none".
+type promoteChoice struct {
+	items []string
+}
+
+func (p *promoteChoice) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		p.items = []string{s}
+		return nil
+	}
+	var list []string
+	if err := json.Unmarshal(b, &list); err != nil {
+		return fmt.Errorf("%w: promote must be an array of document IDs, \"all\", or \"none\"", domain.ErrInvalid)
+	}
+	p.items = list
+	return nil
+}
+
+func promoteSchema() *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Description: "which of the initiative's documents to promote to project-wide: an array of document IDs, or \"all\", or \"none\"",
+		OneOf: []*jsonschema.Schema{
+			{Type: "array", Items: &jsonschema.Schema{Type: "string"}},
+			{Type: "string", Enum: []any{"all", "none"}},
+		},
+	}
+}
+
+type initiativeArchiveIn struct {
+	ID      string        `json:"id" jsonschema:"initiative ID, for example I-1"`
+	Promote promoteChoice `json:"promote,omitempty"`
+}
+
+func initiativeArchiveSchema() (*jsonschema.Schema, error) {
+	return jsonschema.For[initiativeArchiveIn](&jsonschema.ForOptions{
+		TypeSchemas: map[reflect.Type]*jsonschema.Schema{reflect.TypeFor[promoteChoice](): promoteSchema()},
+	})
+}
+
+func (t *tools) initiativeArchive(ctx context.Context, _ *mcp.CallToolRequest, in initiativeArchiveIn) (*mcp.CallToolResult, service.InitiativeView, error) {
 	id, err := domain.ParseID(domain.KindInitiative, in.ID)
 	if err != nil {
 		return nil, service.InitiativeView{}, err
 	}
-	v, err := t.svc.ArchiveInitiative(ctx, id, service.DocumentChoice{})
+	var choice service.DocumentChoice
+	if choice, err = service.ParseDocumentChoice(in.Promote.items); err != nil {
+		return nil, service.InitiativeView{}, err
+	}
+	v, err := t.svc.ArchiveInitiative(ctx, id, choice)
+	var need *service.DocumentChoiceError
+	if errors.As(err, &need) {
+		return nil, v, promoteHint(need)
+	}
 	return nil, v, toolError(err)
+}
+
+func promoteHint(e *service.DocumentChoiceError) error {
+	suggested := `promote: []`
+	if ids := e.SuggestedIDs(); ids != "" {
+		suggested = `promote: ["` + strings.ReplaceAll(ids, ",", `", "`) + `"]`
+	}
+	return fmt.Errorf("%v\nRerun initiative_archive with the user's choice: %s (the suggestion), promote: \"all\", or promote: \"none\". Ask the user if unsure.", e, suggested)
 }
 
 func (t *tools) initiativeUnarchive(ctx context.Context, _ *mcp.CallToolRequest, in idIn) (*mcp.CallToolResult, service.InitiativeView, error) {

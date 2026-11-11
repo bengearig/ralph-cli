@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/bengearig/ralph/internal/domain"
+	"github.com/bengearig/ralph/internal/errs"
 	"github.com/bengearig/ralph/internal/service"
 )
 
@@ -184,7 +187,8 @@ func (a *app) newInitiativeArchiveCommand(archive bool) *cobra.Command {
 	if archive {
 		use, short, verb = "archive <id>", "Archive an initiative, hiding it and making it and its contents read-only", "archived"
 	}
-	return &cobra.Command{
+	var promote string
+	cmd := &cobra.Command{
 		Use:   use,
 		Short: short,
 		Args:  cobra.ExactArgs(1),
@@ -193,15 +197,25 @@ func (a *app) newInitiativeArchiveCommand(archive bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			var choice service.DocumentChoice
+			if archive && cmd.Flags().Changed("promote") {
+				if choice, err = service.ParseDocumentChoice(strings.Split(promote, ",")); err != nil {
+					return err
+				}
+			}
 			svc, err := a.service(cmd.Context())
 			if err != nil {
 				return err
 			}
 			var v service.InitiativeView
 			if archive {
-				v, err = svc.ArchiveInitiative(cmd.Context(), id, service.DocumentChoice{})
+				v, err = svc.ArchiveInitiative(cmd.Context(), id, choice)
 			} else {
 				v, err = svc.UnarchiveInitiative(cmd.Context(), id)
+			}
+			var need *service.DocumentChoiceError
+			if errors.As(err, &need) {
+				return fmt.Errorf("%w: %s", errs.ErrNeedsHuman, documentChoiceMessage(need))
 			}
 			if err != nil {
 				return err
@@ -209,7 +223,26 @@ func (a *app) newInitiativeArchiveCommand(archive bool) *cobra.Command {
 			if a.jsonOut {
 				return a.writeJSON(v)
 			}
+			if len(v.PromotedDocuments) > 0 {
+				return a.printf("%s %s; promoted %s\n", verb, v.ID, strings.Join(v.PromotedDocuments, ", "))
+			}
 			return a.printf("%s %s\n", verb, v.ID)
 		},
 	}
+	if archive {
+		cmd.Flags().StringVar(&promote, "promote", "", "documents to promote to project-wide: comma-separated IDs (D-1,D-2), all, or none; required when the initiative has documents")
+	}
+	return cmd
+}
+
+func documentChoiceMessage(e *service.DocumentChoiceError) string {
+	var b strings.Builder
+	b.WriteString(e.Error())
+	b.WriteString("\nRerun with one of:")
+	if ids := e.SuggestedIDs(); ids != "" {
+		fmt.Fprintf(&b, "\n  ralph initiative archive %s --promote %s", e.Initiative, ids)
+	}
+	fmt.Fprintf(&b, "\n  ralph initiative archive %s --promote all", e.Initiative)
+	fmt.Fprintf(&b, "\n  ralph initiative archive %s --promote none", e.Initiative)
+	return b.String()
 }

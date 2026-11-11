@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1525,5 +1526,64 @@ func TestDocPromoteAndReturnCommands(t *testing.T) {
 	_, _, err = h.run("", "doc", "return", "D-2")
 	if err == nil || !strings.Contains(err.Error(), "I-2") || !strings.Contains(err.Error(), "unarchive") {
 		t.Errorf("return to archived origin error = %v", err)
+	}
+}
+
+func TestInitiativeArchivePromoteChoice(t *testing.T) {
+	seed := func(t *testing.T) *testEnv {
+		h := newTestEnv(t, true)
+		h.ok("initiative", "create", "--title", "Customer SSO")
+		h.ok("doc", "create", "--initiative", "I-1", "--kind", "design", "--title", "Flow", "--body", "x")
+		h.ok("doc", "create", "--initiative", "I-1", "--kind", "reference", "--title", "Notes", "--body", "y")
+		return h
+	}
+
+	h := seed(t)
+	_, _, err := h.run("", "initiative", "archive", "I-1")
+	if !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("err = %v, want ErrNeedsHuman", err)
+	}
+	for _, want := range []string{`D-1  design  "Flow"`, `D-2  reference  "Notes"`, "ralph initiative archive I-1 --promote D-1\n", "--promote all", "--promote none"} {
+		if !strings.Contains(err.Error()+"\n", want) {
+			t.Errorf("refusal lacks %q:\n%v", want, err)
+		}
+	}
+	var inits []service.InitiativeView
+	h.json(&inits, "initiative", "list")
+	if len(inits) != 1 {
+		t.Errorf("initiative archived despite refusal: %+v", inits)
+	}
+	if _, _, err := h.run("", "initiative", "archive", "I-1", "--json"); !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Errorf("--json refusal err = %v", err)
+	}
+	if _, _, err := h.run("", "initiative", "archive", "I-1", "--promote", "all,D-1"); !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("mixed promote err = %v, want ErrInvalid", err)
+	}
+
+	for _, tc := range []struct{ flag, want string }{
+		{"all", "archived I-1; promoted D-1, D-2\n"},
+		{"none", "archived I-1\n"},
+		{"D-1,D-2", "archived I-1; promoted D-1, D-2\n"},
+	} {
+		h := seed(t)
+		if got := h.ok("initiative", "archive", "I-1", "--promote", tc.flag); got != tc.want {
+			t.Errorf("--promote %s = %q, want %q", tc.flag, got, tc.want)
+		}
+	}
+
+	h = seed(t)
+	var v service.InitiativeView
+	h.json(&v, "initiative", "archive", "I-1", "--promote", "D-2")
+	if !slices.Equal(v.PromotedDocuments, []string{"D-2"}) {
+		t.Errorf("json promoted = %v", v.PromotedDocuments)
+	}
+	if got := h.ok("initiative", "archive", "I-1"); got != "archived I-1\n" {
+		t.Errorf("already archived = %q", got)
+	}
+
+	h = newTestEnv(t, true)
+	h.ok("initiative", "create", "--title", "Bare")
+	if got := h.ok("initiative", "archive", "I-1"); got != "archived I-1\n" {
+		t.Errorf("no documents = %q", got)
 	}
 }

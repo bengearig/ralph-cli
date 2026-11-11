@@ -156,9 +156,16 @@ func (t *tools) register(s *mcp.Server) {
 		Description: deletePolicy + forcePolicy + "Cascades to the initiative's milestones, their tasks and notes, and its documents. " +
 			"Refused without force when the initiative has milestones or documents, and while a loop is running on one of its milestones."}, t.initiativeDelete)
 
-	mcp.AddTool(s, &mcp.Tool{Name: "initiative_archive", Annotations: write("Archive initiative"),
+	archiveSchema, err := initiativeArchiveSchema()
+	if err != nil {
+		panic(err)
+	}
+	mcp.AddTool(s, &mcp.Tool{Name: "initiative_archive", Annotations: write("Archive initiative"), InputSchema: archiveSchema,
 		Description: archivePolicy + "Archives the initiative: it and its milestones, tasks, and documents are hidden from lists, status, and search " +
-			"and become read-only. Refused while a loop is running on one of its milestones."}, t.initiativeArchive)
+			"and become read-only. Its initiative-scoped documents stay hidden unless promoted to project-wide: pass promote as an array of document IDs, " +
+			"\"all\", or \"none\". Refused, changing nothing, when the initiative has such documents and no promote was given; the error lists them with a suggested selection " +
+			"(design and decision documents), so ask the user, then rerun with promote. The result's promoted_documents lists what was promoted. " +
+			"Refused while a loop is running on one of its milestones."}, t.initiativeArchive)
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_unarchive", Annotations: write("Unarchive initiative"),
 		Description: "Reverse initiative_archive, making the initiative and its contents visible and editable again. " +
 			"Refused while a loop is running on one of its milestones."}, t.initiativeUnarchive)
