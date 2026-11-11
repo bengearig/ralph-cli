@@ -157,6 +157,7 @@ type LoopConfig struct {
 type PRConfig struct {
 	Provider       string               `koanf:"provider"`
 	BaseBranch     string               `koanf:"base_branch"`
+	Remote         string               `koanf:"remote"`
 	Draft          bool                 `koanf:"draft"`
 	Timeout        time.Duration        `koanf:"timeout"`
 	BitbucketCloud BitbucketCloudConfig `koanf:"bitbucket_cloud"`
@@ -355,6 +356,9 @@ func (c *Config) Validate() error {
 	oneOf("pr.provider", c.PR.Provider, knownPRProviders)
 	if strings.TrimSpace(c.PR.BaseBranch) == "" {
 		bad("pr.base_branch", "must not be empty")
+	}
+	if strings.TrimSpace(c.PR.Remote) == "" {
+		bad("pr.remote", "must not be empty")
 	}
 	if c.PR.Timeout <= 0 {
 		bad("pr.timeout", "must be positive")

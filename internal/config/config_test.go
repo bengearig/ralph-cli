@@ -345,6 +345,7 @@ func TestValidateReportsAllProblems(t *testing.T) {
 	cfg.Loop.BranchTemplate = "ralph/{{.Milestone"
 	cfg.PR.Provider = "github"
 	cfg.PR.BaseBranch = " "
+	cfg.PR.Remote = " "
 	cfg.Harness.ClaudeCode.MaxBudgetUSD = -1
 	cfg.Loop.CommitTemplate = "{{.Task"
 
@@ -355,7 +356,7 @@ func TestValidateReportsAllProblems(t *testing.T) {
 	for _, key := range []string{
 		"log.level", "embeddings.provider", "embeddings.timeout", "embeddings.chunk.overlap_chars",
 		"search.limit", "import.max_file_bytes", "steps.loop.harness", "loop.stall_threshold", "loop.branch_template",
-		"pr.provider", "pr.base_branch", "harness.claude_code.max_budget_usd", "loop.commit_template",
+		"pr.provider", "pr.base_branch", "pr.remote", "harness.claude_code.max_budget_usd", "loop.commit_template",
 	} {
 		if !strings.Contains(err.Error(), key+":") {
 			t.Errorf("missing problem for %s in:\n%v", key, err)
@@ -478,6 +479,8 @@ func TestValidatePR(t *testing.T) {
 			c.PR.BitbucketCloud.Auth = "bearer"
 			c.PR.BitbucketCloud.EmailEnv = ""
 		}, ""},
+		{"empty remote", func(c *Config) { c.PR.Remote = "" }, "pr.remote:"},
+		{"blank remote", func(c *Config) { c.PR.Remote = " \t" }, "pr.remote:"},
 		{"zero timeout", func(c *Config) { c.PR.Timeout = 0 }, "pr.timeout:"},
 		{"negative timeout", func(c *Config) { c.PR.Timeout = -time.Second }, "pr.timeout:"},
 		{"unknown auth", func(c *Config) { c.PR.BitbucketCloud.Auth = "oauth" }, "pr.bitbucket_cloud.auth:"},
@@ -619,5 +622,35 @@ func TestImportMaxFileBytes(t *testing.T) {
 	}
 	if l.Config.Import.MaxFileBytes != 4096 {
 		t.Errorf("env: import.max_file_bytes = %d", l.Config.Import.MaxFileBytes)
+	}
+}
+
+func TestPRRemote(t *testing.T) {
+	cfg, err := Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PR.Remote != "origin" {
+		t.Errorf("default pr.remote = %q, want origin", cfg.PR.Remote)
+	}
+
+	project := writeFile(t, t.TempDir(), "p.yaml", "pr:\n  remote: fork\n")
+	l, err := Load(Sources{ProjectFile: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Config.PR.Remote != "fork" {
+		t.Errorf("project pr.remote = %q, want fork", l.Config.PR.Remote)
+	}
+
+	l, err = Load(Sources{ProjectFile: project, Environ: []string{"RALPH_PR__REMOTE=upstream"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Config.PR.Remote != "upstream" {
+		t.Errorf("env pr.remote = %q, want upstream", l.Config.PR.Remote)
+	}
+	if got := EnvVar("pr.remote"); got != "RALPH_PR__REMOTE" {
+		t.Errorf("EnvVar = %q", got)
 	}
 }

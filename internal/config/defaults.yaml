@@ -109,6 +109,8 @@ pr:
   # bitbucket_cloud
   provider: bitbucket_cloud
   base_branch: main
+  # Git remote `ralph pr create` pushes the milestone's branch to.
+  remote: origin
   draft: true
   # Per-request timeout for pull request provider calls.
   timeout: 30s
