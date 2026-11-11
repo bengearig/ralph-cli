@@ -327,8 +327,9 @@ func (r Runner) prepareBranch(ctx context.Context, plan Plan, milestoneID int64,
 		return repo, "", fmt.Errorf("%s's recorded branch %s differs from the planned %s; rerun to plan again", m.ID, recorded, branch)
 	}
 
+	var report *drift.Report
 	if recorded != "" {
-		if err := r.checkDrift(ctx, milestoneID, f); err != nil {
+		if report, err = r.checkDrift(ctx, milestoneID, f); err != nil {
 			return repo, "", err
 		}
 	}
@@ -356,24 +357,78 @@ func (r Runner) prepareBranch(ctx context.Context, plan Plan, milestoneID int64,
 		}
 		return repo, branch, r.recordBranch(ctx, milestoneID, g)
 	}
+	if report != nil {
+		return repo, branch, r.fastForwardStale(ctx, repo, milestoneID, *report, f)
+	}
 	return repo, branch, nil
+}
+
+// fastForwardStale brings an unstarted branch that carries nothing of its own
+// up to the base ref when the base branch is ahead, recording the new tip as
+// base and head. The branch must be checked out. It never creates a merge
+// commit or moves a branch backwards, and it leaves a dirty tree alone.
+func (r Runner) fastForwardStale(ctx context.Context, repo git.Repo, milestoneID int64, report drift.Report, f feed) error {
+	ownless := report.State == drift.StateUnchanged ||
+		(report.State == drift.StateAhead && report.ProposedBase == report.Tip)
+	if !report.Unstarted || !ownless || report.BaseRef == "" || report.Tip == "" {
+		return nil
+	}
+	baseTip, err := repo.RevParse(ctx, report.BaseRef)
+	if err != nil {
+		return err
+	}
+	if baseTip == report.Tip {
+		return nil
+	}
+	behind, err := repo.IsAncestor(ctx, report.Tip, baseTip)
+	if err != nil {
+		return err
+	}
+	if !behind {
+		return nil
+	}
+	baseName := strings.TrimPrefix(strings.TrimPrefix(report.BaseRef, "refs/heads/"), "refs/remotes/")
+	dirty, err := repo.Dirty(ctx)
+	if err != nil {
+		return err
+	}
+	if len(dirty) > 0 {
+		f.printf("! %s branch %s had no work of its own and is behind %s, but the working tree has uncommitted changes; not fast-forwarding\n",
+			report.Milestone, report.Branch, baseName)
+		return nil
+	}
+	if err := repo.MergeFFOnly(ctx, report.BaseRef); err != nil {
+		return fmt.Errorf("fast-forwarding %s to %s: %w", report.Branch, baseName, err)
+	}
+	tip, err := repo.RevParse(ctx, "HEAD")
+	if err != nil {
+		return err
+	}
+	f.printf("! %s branch %s had no work of its own and was behind %s; fast-forwarded to %s\n",
+		report.Milestone, report.Branch, baseName, tip[:min(len(tip), 10)])
+	g := domain.MilestoneGit{Branch: report.Branch, BaseCommit: tip, HeadCommit: tip}
+	if err := r.Service.RecordMilestoneGit(ctx, milestoneID, g); err != nil {
+		return fmt.Errorf("recording the milestone base and head: %w", err)
+	}
+	return nil
 }
 
 // checkDrift applies the loop's drift policy to a recorded branch before
 // anything touches the working tree: unchanged and unrecorded proceed, ahead
-// is adopted as the new head, and every other state needs a person.
-func (r Runner) checkDrift(ctx context.Context, milestoneID int64, f feed) error {
+// is adopted as the new head, and every other state needs a person. It
+// returns the report it computed.
+func (r Runner) checkDrift(ctx context.Context, milestoneID int64, f feed) (*drift.Report, error) {
 	in, err := DriftInput(ctx, r.Service, r.Config, r.Root, milestoneID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	report, err := drift.Check(ctx, in)
 	if err != nil {
-		return fmt.Errorf("checking the milestone branch for drift: %w", err)
+		return nil, fmt.Errorf("checking the milestone branch for drift: %w", err)
 	}
 	switch report.State {
 	case drift.StateUnchanged, drift.StateUnrecorded:
-		return nil
+		return &report, nil
 	case drift.StateAhead:
 		if report.Unstarted && report.ProposedBase == report.Tip {
 			g := domain.MilestoneGit{Branch: report.Recorded.Branch, BaseCommit: report.Tip, HeadCommit: report.Tip}
@@ -381,22 +436,22 @@ func (r Runner) checkDrift(ctx context.Context, milestoneID int64, f feed) error
 				report.Milestone, g.Branch, report.Tip[:min(len(report.Tip), 10)],
 				strings.TrimPrefix(strings.TrimPrefix(report.BaseRef, "refs/heads/"), "refs/remotes/"))
 			if err := r.Service.RecordMilestoneGit(ctx, milestoneID, g); err != nil {
-				return fmt.Errorf("recording the milestone base and head: %w", err)
+				return nil, fmt.Errorf("recording the milestone base and head: %w", err)
 			}
-			return nil
+			return &report, nil
 		}
 		f.printf("! %s branch has %d commit(s) beyond the recorded head:\n", report.Milestone, len(report.ExtraCommits))
 		for _, c := range report.ExtraCommits {
 			f.printf("  %s %s\n", c.Hash[:min(len(c.Hash), 12)], c.Subject)
 		}
 		if err := r.Service.RecordMilestoneHead(ctx, milestoneID, report.Tip); err != nil {
-			return fmt.Errorf("recording the milestone head: %w", err)
+			return nil, fmt.Errorf("recording the milestone head: %w", err)
 		}
-		return nil
+		return &report, nil
 	}
 	msg := fmt.Sprintf("%s; run: ralph milestone reconcile %s", report.Summary(), report.Milestone)
 	f.printf("■ %s\n", msg)
-	return fmt.Errorf("%w: %s", errs.ErrNeedsHuman, msg)
+	return nil, fmt.Errorf("%w: %s", errs.ErrNeedsHuman, msg)
 }
 
 // checkout puts the work tree on branch. It returns the start ref when it

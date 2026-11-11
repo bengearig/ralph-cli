@@ -1063,3 +1063,119 @@ func TestRunNamesBranchAfterCardAndKeepsIt(t *testing.T) {
 		t.Errorf("branches: %q", list)
 	}
 }
+
+func newStaleUnstartedEnv(t *testing.T) (e *runEnv, base, tip string) {
+	t.Helper()
+	e = newUnstartedEnv(t)
+	base = e.milestone(t).BaseCommit
+	e.commitFile(t, "main-moves-on.txt")
+	tip = gitCmd(t, e.root, "rev-parse", "HEAD")
+	return e, base, tip
+}
+
+func (e *runEnv) assertFastForwarded(t *testing.T, tip string) {
+	t.Helper()
+	if got := gitCmd(t, e.root, "rev-parse", "ralph/oidc-login~1"); got != tip {
+		t.Errorf("branch parent = %s, want the base tip %s", got, tip)
+	}
+	if merges := gitCmd(t, e.root, "rev-list", "--merges", "--count", "main..ralph/oidc-login"); merges != "0" {
+		t.Errorf("merge commits = %s", merges)
+	}
+	want := "! M-1 branch ralph/oidc-login had no work of its own and was behind main; fast-forwarded to " + tip[:10] + "\n"
+	if !strings.Contains(e.out.String(), want) {
+		t.Errorf("feed lacks %q:\n%s", want, e.out.String())
+	}
+}
+
+func TestRunFastForwardsStaleUnstartedBranch(t *testing.T) {
+	for _, onBranch := range []bool{false, true} {
+		e, _, tip := newStaleUnstartedEnv(t)
+		if onBranch {
+			gitCmd(t, e.root, "switch", "--quiet", "ralph/oidc-login")
+		}
+		h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) {
+			if m := e.milestone(t); m.BaseCommit != tip || m.HeadCommit != tip {
+				t.Errorf("during the session base %q head %q, want %q", m.BaseCommit, m.HeadCommit, tip)
+			}
+			if got := gitCmd(t, e.root, "rev-parse", "HEAD"); got != tip {
+				t.Errorf("HEAD during the session = %s, want %s", got, tip)
+			}
+			return e.complete(id)
+		}}
+		if _, err := e.run(t, context.Background(), h); err != nil {
+			t.Fatalf("onBranch=%v: %v\n%s", onBranch, err, e.out.String())
+		}
+		e.assertFastForwarded(t, tip)
+	}
+}
+
+func TestRunDoesNotFastForwardInDirtyTree(t *testing.T) {
+	e, base, tip := newStaleUnstartedEnv(t)
+	gitCmd(t, e.root, "switch", "--quiet", "ralph/oidc-login")
+	if err := os.WriteFile(filepath.Join(e.root, "scratch.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) {
+		if got := gitCmd(t, e.root, "rev-parse", "HEAD"); got != base {
+			t.Errorf("HEAD during the session = %s, want unmoved %s", got, base)
+		}
+		return e.complete(id)
+	}}
+	if _, err := e.run(t, context.Background(), h); err != nil {
+		t.Fatalf("%v\n%s", err, e.out.String())
+	}
+	if !strings.Contains(e.out.String(), "uncommitted changes; not fast-forwarding") || strings.Contains(e.out.String(), "fast-forwarded to") {
+		t.Errorf("feed:\n%s", e.out.String())
+	}
+	if m := e.milestone(t); m.BaseCommit != base || m.BaseCommit == tip {
+		t.Errorf("base = %q, want unchanged %q", m.BaseCommit, base)
+	}
+}
+
+func TestRunDoesNotFastForwardBranchWithOwnCommit(t *testing.T) {
+	e, base, _ := newStaleUnstartedEnv(t)
+	gitCmd(t, e.root, "switch", "--quiet", "ralph/oidc-login")
+	e.commitFile(t, "manual.txt")
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+	if _, err := e.run(t, context.Background(), h); err != nil {
+		t.Fatalf("%v\n%s", err, e.out.String())
+	}
+	if strings.Contains(e.out.String(), "fast-forward") {
+		t.Errorf("feed:\n%s", e.out.String())
+	}
+	if m := e.milestone(t); m.BaseCommit != base {
+		t.Errorf("base = %q, want unchanged %q", m.BaseCommit, base)
+	}
+}
+
+func TestRunDoesNotFastForwardStartedMilestone(t *testing.T) {
+	e := newRecordedEnv(t)
+	record := e.milestone(t)
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	e.commitFile(t, "main-moves-on.txt")
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+	if _, err := e.run(t, context.Background(), h); err != nil {
+		t.Fatalf("%v\n%s", err, e.out.String())
+	}
+	if strings.Contains(e.out.String(), "fast-forward") {
+		t.Errorf("feed:\n%s", e.out.String())
+	}
+	if m := e.milestone(t); m.BaseCommit != record.BaseCommit {
+		t.Errorf("base = %q, want unchanged %q", m.BaseCommit, record.BaseCommit)
+	}
+}
+
+func TestRunUnstartedBranchAtBaseTipIsLeftAlone(t *testing.T) {
+	e := newUnstartedEnv(t)
+	record := e.milestone(t)
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+	if _, err := e.run(t, context.Background(), h); err != nil {
+		t.Fatalf("%v\n%s", err, e.out.String())
+	}
+	if strings.Contains(e.out.String(), "fast-forward") || strings.Contains(e.out.String(), "!") {
+		t.Errorf("feed:\n%s", e.out.String())
+	}
+	if m := e.milestone(t); m.BaseCommit != record.BaseCommit {
+		t.Errorf("base = %q, want unchanged %q", m.BaseCommit, record.BaseCommit)
+	}
+}
