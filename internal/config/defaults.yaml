@@ -111,6 +111,8 @@ pr:
   base_branch: main
   # Git remote `ralph pr create` pushes the milestone's branch to.
   remote: origin
+  # refuse | sync. What to do when the local base branch is behind pr.remote's: refuse, or fast-forward it first.
+  stale_base: refuse
   draft: true
   # Per-request timeout for pull request provider calls.
   timeout: 30s
