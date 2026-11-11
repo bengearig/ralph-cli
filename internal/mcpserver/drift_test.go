@@ -320,7 +320,7 @@ func TestMilestoneGetWaitingOnStaleBase(t *testing.T) {
 	}
 	mustOK(t, cs, "milestone_get", map[string]any{"id": two.ID}, &g)
 	if len(g.WaitingOn) != 1 || g.WaitingOn[0].State != loop.DependencyBaseStale ||
-		g.WaitingOn[0].Reason != "is merged into origin/main, but local main is behind" || g.WaitingOn[0].Fix != "git pull --ff-only origin main" {
+		g.WaitingOn[0].Reason != "is merged into origin/main, but local main is behind" || g.WaitingOn[0].Fix != "ralph sync" {
 		t.Fatalf("waiting_on = %+v", g.WaitingOn)
 	}
 }

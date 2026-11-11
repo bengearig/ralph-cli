@@ -50,7 +50,7 @@ func TestStaleBaseDependencyIsReportedByReadOnlyViews(t *testing.T) {
 	fetches := traceFetches(t)
 
 	reason := "is merged into origin/main, but local main is behind"
-	fix := "git pull --ff-only origin main"
+	fix := "ralph sync"
 	line := "depends on: M-1 (waiting: " + reason + ")\n"
 	if out := h.ok("milestone", "show", "M-2"); !strings.Contains(out, line) || strings.Contains(out, "ralph milestone merge") {
 		t.Fatalf("show: %s", out)

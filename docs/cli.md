@@ -382,6 +382,7 @@ the document is project-wide. The file's record is marked `done` with a `created
 | `ralph loop --initiative <id> [--merge] [--force]` | Run the initiative's next ready milestone, then stop for review; with `--merge`, fast-forward each finished milestone into the base branch and carry on until the initiative is complete or something needs a person. `--dry-run` prints the ordered milestones and the next step. Exactly one of `--milestone` and `--initiative` is required, and `--merge` needs `--initiative`. See [Looping an initiative](loop.md#looping-an-initiative). |
 | `ralph milestone reconcile <id> [--branch <name>] [--reopen <ids>] [--reason <text>] [--accept]` | Report how the milestone's branch differs from its record and resolve it. See [below](#ralph-milestone-reconcile). |
 | `ralph milestone merge <id> [--dry-run] [--delete-branch]` | Fast-forward the base branch to a finished milestone's branch. See [below](#ralph-milestone-merge). |
+| `ralph sync [--dry-run] [--delete-branches]` | Fetch the base branch and fast-forward the local one, then report the milestones that are now merged. See [below](#ralph-sync). |
 | `ralph pr create --milestone <id> [--force] --dry-run` | Print the pull request that would be opened, the push that would happen, the drift check's result, and any provider configuration problems. Pushes nothing and calls no provider API. |
 | `ralph pr create --milestone <id> [--force]` | Push the milestone's branch, adopt or open its pull request on the configured provider, record it on the milestone, and print its link. See [below](#ralph-pr-create), [Bitbucket Cloud](bitbucket-cloud.md), and [GitHub](github.md). |
 | `ralph pr unlink --milestone <id>` | Forget the milestone's recorded pull request. See [below](#recorded-pull-requests). |
@@ -390,7 +391,7 @@ the document is project-wide. The file's record is marked `done` with a `created
 [archived](#archiving).
 
 Both also fetch `pr.base_branch` from `pr.remote` before they start and refuse with exit code `3` when the local base
-branch is behind or diverged, or the fetch fails. `pr.stale_base: sync` fast-forwards a behind base instead. `--force`
+branch is behind or diverged, or the fetch fails; for a behind base the message names [`ralph sync`](#ralph-sync). `pr.stale_base: sync` fast-forwards a behind base instead. `--force`
 skips this stale-base check as well as the dependency check, and `--dry-run` fetches and reports it as a warning. See
 [The staleness guard](loop.md#the-staleness-guard).
 
@@ -443,7 +444,7 @@ changes nothing when the remote is up to date, and the provider is asked for an 
 created. A milestone that is not `DONE` gets a `warning:` on standard error but still proceeds, since a draft of
 unfinished work is useful.
 
-Only `ralph pr create` pushes. `ralph milestone merge` and the loop push nothing.
+Only `ralph pr create` pushes. `ralph milestone merge`, `ralph sync`, and the loop push nothing.
 
 The title is `M-n: Title`. When a task manager is configured and the milestone has a card with a key, the title is
 prefixed with it, `[KEY] M-n: Title`, like the commit subjects. Only the recorded card is used: no provider call is
@@ -645,6 +646,78 @@ above, so that a milestone that is unfinished, drifted, or not fast-forwardable 
 
 A milestone whose branch has been deleted after its merge is still reported by the drift check as `merged`, with
 `branch_exists` false; see [ADR 27](adr/0027-merge-milestones-locally-with-fast-forward-only.md).
+
+### `ralph sync`
+
+```sh
+ralph sync [--dry-run] [--delete-branches]
+```
+
+Brings the local base branch up to date with its remote by fast-forward only. It is the fix the
+[staleness guard](loop.md#the-staleness-guard) names when the base branch is behind, after a pull request was merged on
+the hosting service. Syncing is a person's action, so there is no MCP tool for it.
+
+It reads `pr.base_branch` and `pr.remote` (see [Configuration](configuration.md)) and fetches only that branch from
+that remote, into its remote-tracking ref. `pr.stale_base` does not matter here: the command always syncs. It never
+talks to the hosting provider, so milestones are reported as merged by the drift check from the repository alone.
+
+| Flag | Effect |
+|---|---|
+| `--dry-run` | Make every check, the fetch included (which updates only the remote-tracking branch), print what would happen, and leave the base branch alone. |
+| `--delete-branches` | After a successful fast-forward, delete the local branches of the milestones this sync merged, with git's safe delete only (`git branch -d`). If git refuses (a squash-merged branch it does not see as merged, for example), the branch is kept and a warning says so. |
+
+A base branch that is already current prints that and succeeds. One that is ahead of the remote is left alone with a
+warning. The command stops and changes nothing when the remote cannot be fetched, the branches have diverged, a loop is
+running, or the fast-forward cannot be done (for example the base branch is checked out with uncommitted changes). It
+never pushes, never creates a merge commit, never rewrites history, never force-deletes a branch, and never switches
+branches.
+
+```text
+$ ralph sync --delete-branches
+fast-forwarded main to origin/main: 1c77c2cac6a3..60debf7e2275 (3 commit(s))
+merged: M-1 (branch ralph/login, kept locally)
+  deleted branch ralph/login
+```
+
+Each newly merged milestone gets a `merged:` line, or `would be merged:` under `--dry-run`, saying whether its branch
+still exists. With `--delete-branches`, an indented line follows: `deleted branch`, `kept branch`, `would delete branch`,
+or `would keep branch`. Warnings go to standard error.
+
+| Exit code | When |
+|---|---|
+| `0` | The base branch was fast-forwarded (or, with `--dry-run`, could be), or it was already current or ahead. |
+| `3` | A person must act: the fetch failed, the branches have diverged, or the fast-forward could not be done. |
+| `1` | Any other error: a loop is running, the local base branch does not exist, or git failed. |
+
+With `--json` it prints one object, with full hashes. `from` and `to` are the base branch's tip before and after the
+sync (equal when nothing moved), and `newly_merged` lists the milestones the sync brought into the base branch, empty
+when there are none:
+
+```json
+{
+  "remote": "origin",
+  "base_branch": "main",
+  "state": "behind",
+  "behind": 3,
+  "ahead": 0,
+  "from": "1c77c2cac6a3d5ce4df0be0b969b511ff5516f24",
+  "to": "60debf7e22758ae34182fa75ac7f74a94abf79bb",
+  "dry_run": false,
+  "synced": true,
+  "warnings": [],
+  "newly_merged": [
+    {
+      "id": "M-1",
+      "branch": "ralph/login",
+      "branch_exists": true,
+      "merged_by": "ancestry",
+      "branch_deleted": true
+    }
+  ]
+}
+```
+
+A milestone whose branch could not be deleted has `branch_deleted` false and a `delete_error` with git's message.
 
 ## Example session
 

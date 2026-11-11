@@ -137,7 +137,7 @@ func ClassifyDependency(ctx context.Context, dm service.MilestoneView, input fun
 			if stale {
 				f.State = DependencyBaseStale
 				f.Reason = fmt.Sprintf("is merged into %s/%s, but local %s is behind", in.BaseRemote, in.BaseBranch, in.BaseBranch)
-				f.Fix = fmt.Sprintf("git pull --ff-only %s %s", in.BaseRemote, in.BaseBranch)
+				f.Fix = "ralph sync"
 				return f, nil
 			}
 		}

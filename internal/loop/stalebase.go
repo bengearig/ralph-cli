@@ -52,10 +52,11 @@ func EnsureFreshBase(ctx context.Context, cfg *config.Config, root string, opts 
 		}
 		return res, err
 	}
-	if err := repo.FetchBranch(ctx, remote, branch); err != nil {
-		return refuse("could not fetch %s/%s: %s; fix the remote, or use --force to skip this check", remote, branch, gitMessage(err))
+	st, err := fetchAndCompare(ctx, repo, remote, branch)
+	var fe *fetchError
+	if errors.As(err, &fe) {
+		return refuse("could not fetch %s/%s: %s; fix the remote, or use --force to skip this check", remote, branch, gitMessage(fe.err))
 	}
-	st, err := repo.CompareBase(ctx, remote, branch)
 	if errors.Is(err, git.ErrNoLocalBase) {
 		return res, nil
 	}
@@ -69,7 +70,7 @@ func EnsureFreshBase(ctx context.Context, cfg *config.Config, root string, opts 
 			branch, remote, branch, st.Ahead, st.Behind, remote, branch)
 	case git.BaseBehind:
 		if cfg.PR.StaleBase != config.StaleBaseSync {
-			return refuse("local %s is %d commit(s) behind %s/%s; fast-forward it with: git pull --ff-only %s %s, or set pr.stale_base to sync, or use --force",
+			return refuse("local %s is %d commit(s) behind %s/%s; fast-forward it with: ralph sync (or git pull --ff-only %s %s), or set pr.stale_base to sync, or use --force",
 				branch, st.Behind, remote, branch, remote, branch)
 		}
 		if opts.DryRun {
@@ -83,6 +84,22 @@ func EnsureFreshBase(ctx context.Context, cfg *config.Config, root string, opts 
 		res.Notices = append(res.Notices, fmt.Sprintf("fast-forwarded %s to %s/%s (%d commit(s))", branch, remote, branch, st.Behind))
 	}
 	return res, nil
+}
+
+// fetchError marks a failed fetch, as opposed to a failed comparison.
+type fetchError struct{ err error }
+
+func (e *fetchError) Error() string { return e.err.Error() }
+func (e *fetchError) Unwrap() error { return e.err }
+
+// fetchAndCompare fetches the base branch from the remote, then compares it
+// with the local branch. It returns git.ErrNoLocalBase when the local branch is
+// missing and a *fetchError when the fetch fails.
+func fetchAndCompare(ctx context.Context, repo git.Repo, remote, branch string) (git.BaseStatus, error) {
+	if err := repo.FetchBranch(ctx, remote, branch); err != nil {
+		return git.BaseStatus{}, &fetchError{err: err}
+	}
+	return repo.CompareBase(ctx, remote, branch)
 }
 
 func gitMessage(err error) string {

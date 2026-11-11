@@ -79,13 +79,10 @@ func TestEnsureFreshBaseBehindRefuses(t *testing.T) {
 	if !errors.Is(err, errs.ErrNeedsHuman) {
 		t.Fatalf("err = %v, want ErrNeedsHuman", err)
 	}
-	for _, want := range []string{"2 commit(s)", "git pull --ff-only origin main"} {
+	for _, want := range []string{"2 commit(s)", "ralph sync (or git pull --ff-only origin main)"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err %q lacks %q", err, want)
 		}
-	}
-	if strings.Contains(err.Error(), "ralph sync") {
-		t.Errorf("err mentions ralph sync: %v", err)
 	}
 	if got := gitCmd(t, e.root, "rev-parse", "main"); got != before {
 		t.Errorf("main moved to %s", got)

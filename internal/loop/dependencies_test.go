@@ -221,7 +221,7 @@ func TestDependencyCheckStaleBase(t *testing.T) {
 		t.Fatalf("findings = %+v", fs)
 	}
 	stale := fs[1]
-	if stale.State != DependencyBaseStale || stale.Satisfied || stale.Reason != "is merged into origin/main, but local main is behind" || stale.Fix != "git pull --ff-only origin main" {
+	if stale.State != DependencyBaseStale || stale.Satisfied || stale.Reason != "is merged into origin/main, but local main is behind" || stale.Fix != "ralph sync" {
 		t.Errorf("stale finding = %+v", stale)
 	}
 	if strings.Contains(stale.Message("M-1"), "ralph milestone merge") {
