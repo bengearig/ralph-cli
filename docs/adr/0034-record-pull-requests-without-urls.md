@@ -56,6 +56,14 @@ request already exists. A stored URL would go stale when the hosting provider or
   nothing, and `ralph pr unlink` removes no link. See [Pull request links](../jira.md#pull-request-links).
 - `--dry-run` pushes nothing and calls no provider API. It prints the remote and branch that would be pushed, and the
   recorded pull request when there is one.
+- The GitHub provider targets github.com only, at its public API; GitHub Enterprise Server is out of scope. It uses the
+  REST API with a token sent as a bearer credential, a personal access token or an installation token, read from the
+  variable named by `pr.github.token_env`. `RALPH_GITHUB_TOKEN` is only that setting's default.
+- The GitHub provider keeps the neutral record: owner as the namespace, the repository, and the pull request number,
+  with no URL. Its link function is registered next to its factory, and adopting uses the same rule as above, with the
+  head and base branches in place of source and destination.
+- `pr.draft: true` is sent as is. A repository without draft pull requests makes GitHub refuse the request, and the
+  error suggests `pr.draft: false` rather than ralph retrying without the draft flag.
 
 ## Consequences
 
@@ -63,4 +71,4 @@ request already exists. A stored URL would go stale when the hosting provider or
 - A declined pull request keeps being reported until someone unlinks it.
 - Merging and the loop remain free of network access; the push happens only when a person asks for the pull request.
 - A branch rejected by the remote needs a person to decide how to reconcile it; ralph never overwrites remote history.
-- Adding a provider means registering a link function alongside its factory.
+- Adding a provider means registering a link function alongside its factory, as the GitHub provider does.

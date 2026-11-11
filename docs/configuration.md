@@ -145,7 +145,7 @@ commands, so their overrides take effect once ralph launches those sessions itse
 
 | Key | Default | Meaning |
 |---|---|---|
-| `pr.provider` | `bitbucket_cloud` | Pull-request host. |
+| `pr.provider` | `bitbucket_cloud` | Pull-request host: `bitbucket_cloud` or `github`. |
 | `pr.base_branch` | `main` | Branch the milestone branch is created from and merged into. |
 | `pr.remote` | `origin` | Git remote `ralph pr create` pushes the milestone's branch to. Must not be empty. |
 | `pr.draft` | `true` | Open pull requests as drafts. |
@@ -155,8 +155,11 @@ commands, so their overrides take effect once ralph launches those sessions itse
 | `pr.bitbucket_cloud.auth` | `basic` | `basic` sends the Atlassian account email and an API token; `bearer` sends the token alone, for a repository or workspace access token. See [Bitbucket Cloud](bitbucket-cloud.md#authentication). |
 | `pr.bitbucket_cloud.email_env` | `RALPH_BITBUCKET_EMAIL` | **Name** of the environment variable holding the account email, used with `basic`. Never put the email in a file. |
 | `pr.bitbucket_cloud.token_env` | `RALPH_BITBUCKET_TOKEN` | **Name** of the environment variable holding the API token, or the access token with `bearer`. Never put the token in a file. |
+| `pr.github.owner` | `""` | The user or organization that owns the repository on github.com. |
+| `pr.github.repo` | `""` | Repository name. |
+| `pr.github.token_env` | `RALPH_GITHUB_TOKEN` | **Name** of the environment variable holding the access token. `RALPH_GITHUB_TOKEN` is only the default name; set this to read the token from a variable of another name. Never put the token in a file. |
 
-See [Bitbucket Cloud](bitbucket-cloud.md) for setup, credential scopes, and a manual check.
+The `pr.bitbucket_cloud` and `pr.github` blocks are validated only when `pr.provider` selects them. See [Bitbucket Cloud](bitbucket-cloud.md) and [GitHub](github.md) for setup, credential permissions, and a manual check.
 
 ### `task_manager`
 

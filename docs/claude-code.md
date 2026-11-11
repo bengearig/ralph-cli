@@ -100,7 +100,7 @@ A change that affects only the neutral rendering needs steps 1, 4, and 5.
    [Imports](data-model.md#imports) and [ADR 25](adr/0025-import-documentation-into-ralph.md).
 
    A file that is a task list is imported differently; see [Importing task trackers](#importing-task-trackers).
-7. **Pull request.** Run `ralph pr create --milestone M-1`, after `--dry-run` shows what would be sent. It pushes the branch, adopts an open pull request that already exists or opens one on Bitbucket Cloud, and records it on the milestone; see [`ralph pr create`](cli.md#ralph-pr-create) and [Bitbucket Cloud](bitbucket-cloud.md). Use `ralph pr unlink` to open a new one after a pull request was declined.
+7. **Pull request.** Run `ralph pr create --milestone M-1`, after `--dry-run` shows what would be sent. It pushes the branch, adopts an open pull request that already exists or opens one on the configured provider (Bitbucket Cloud or GitHub), and records it on the milestone; see [`ralph pr create`](cli.md#ralph-pr-create), [Bitbucket Cloud](bitbucket-cloud.md), and [GitHub](github.md). Use `ralph pr unlink` to open a new one after a pull request was declined.
 
 At any point, `/ralph:search <question>` searches the store, reads the best matches, and answers with their IDs.
 It changes nothing. `ralph search` is the terminal equivalent.

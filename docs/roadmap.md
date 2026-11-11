@@ -6,7 +6,7 @@ This page tracks what the skeleton deliberately leaves stubbed, and the open que
 
 | Capability | Today | Next |
 |---|---|---|
-| Pull requests | `ralph pr create` pushes the branch, adopts an open pull request or opens one on Bitbucket Cloud, and records it on the milestone; `--dry-run` prints the request and the push and validates the configuration. | Link the pull request from the Jira card. |
+| Pull requests | `ralph pr create` pushes the branch, adopts an open pull request or opens one on Bitbucket Cloud or GitHub, and records it on the milestone; `--dry-run` prints the request and the push and validates the configuration. | Link the pull request from the Jira card. |
 
 ## Open questions
 
@@ -20,7 +20,7 @@ This page tracks what the skeleton deliberately leaves stubbed, and the open que
 ## Future work
 
 - More harnesses, behind the existing `harness` registry.
-- More PR providers, such as Bitbucket Data Center, GitHub, GitLab, or Azure DevOps, behind the `pr` registry.
+- More PR providers, such as Bitbucket Data Center, GitHub Enterprise Server, GitLab, or Azure DevOps, behind the `pr` registry.
 - More embedding providers, such as Voyage AI or OpenAI-compatible APIs, behind `embed.Embedder`.
 - Task dependencies beyond position ordering.
 - `ralph doctor` to check git, the harness binary, Ollama and the model, MCP registration, and provider credentials

@@ -257,7 +257,7 @@ the document is project-wide. The file's record is marked `done` with a `created
 | `ralph milestone reconcile <id> [--branch <name>] [--reopen <ids>] [--reason <text>] [--accept]` | Report how the milestone's branch differs from its record and resolve it. See [below](#ralph-milestone-reconcile). |
 | `ralph milestone merge <id> [--dry-run] [--delete-branch]` | Fast-forward the base branch to a finished milestone's branch. See [below](#ralph-milestone-merge). |
 | `ralph pr create --milestone <id> [--force] --dry-run` | Print the pull request that would be opened, the push that would happen, the drift check's result, and any provider configuration problems. Pushes nothing and calls no provider API. |
-| `ralph pr create --milestone <id> [--force]` | Push the milestone's branch, adopt or open its pull request on the configured provider, record it on the milestone, and print its link. See [below](#ralph-pr-create) and [Bitbucket Cloud](bitbucket-cloud.md). |
+| `ralph pr create --milestone <id> [--force]` | Push the milestone's branch, adopt or open its pull request on the configured provider, record it on the milestone, and print its link. See [below](#ralph-pr-create), [Bitbucket Cloud](bitbucket-cloud.md), and [GitHub](github.md). |
 | `ralph pr unlink --milestone <id>` | Forget the milestone's recorded pull request. See [below](#recorded-pull-requests). |
 
 `ralph loop` and `ralph pr create`, including their dry runs, refuse a milestone whose initiative is
