@@ -354,6 +354,57 @@ func (s *Service) failCard(ctx context.Context, kind domain.Kind, id int64, caus
 	return cause
 }
 
+// LinkMilestonePullRequest shows the milestone's recorded pull request on its
+// card. It returns a warning on failure, and "" on success or when there is
+// nothing to do. It never writes to the store. The provider is called only
+// outside transactions.
+func (s *Service) LinkMilestonePullRequest(ctx context.Context, milestoneID int64) string {
+	if s.taskManager == nil || s.inTx {
+		return ""
+	}
+	linker, ok := s.taskManager.(taskmanager.PullRequestLinker)
+	if !ok {
+		return ""
+	}
+	name := domain.FormatID(domain.KindMilestone, milestoneID)
+	provider := s.taskManager.Name()
+	m, err := s.store.GetMilestone(ctx, milestoneID)
+	if err != nil {
+		s.log.Error("loading milestone", "id", name, "error", err)
+		return fmt.Sprintf("%s card for %s pull request link not added: %v", provider, name, err)
+	}
+	pr := m.PullRequest
+	if pr.IsZero() {
+		return ""
+	}
+	card, err := s.store.GetCard(ctx, domain.KindMilestone, milestoneID, provider)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && card.Key == "") {
+		return ""
+	}
+	if err != nil {
+		s.log.Error("loading card", "id", name, "error", err)
+		return fmt.Sprintf("%s card for %s pull request link not added: %v", provider, name, err)
+	}
+	var url string
+	if s.pullRequestLink != nil {
+		url, _ = s.pullRequestLink(pr.Provider, pr.Namespace, pr.Repository, pr.Number)
+	}
+	if url == "" {
+		return "no link could be built for the pull request"
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.cardTimeout)
+	defer cancel()
+	link := taskmanager.PullRequestLink{
+		ID:    fmt.Sprintf("ralph-pr:%s:%s/%s#%d", pr.Provider, pr.Namespace, pr.Repository, pr.Number),
+		Title: fmt.Sprintf("Pull request %s#%d", pr.Repository, pr.Number),
+		URL:   url,
+	}
+	if err := linker.LinkPullRequest(ctx, card.Key, link); err != nil {
+		return fmt.Sprintf("%s card %s: pull request link not added: %v", provider, card.Key, err)
+	}
+	return ""
+}
+
 // CardsEnabled reports whether a task manager provider is configured.
 func (s *Service) CardsEnabled() bool { return s.taskManager != nil }
 
