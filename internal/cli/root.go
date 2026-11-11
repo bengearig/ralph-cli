@@ -93,6 +93,7 @@ open a pull request, and hand off to humans for review.`,
 		a.newCardsCommand(),
 		a.newConfigCommand(),
 		a.newVersionCommand(),
+		a.newUpdateCommand(),
 	)
 	return cmd
 }
