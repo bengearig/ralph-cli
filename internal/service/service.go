@@ -205,8 +205,7 @@ func requireWritable(ctx context.Context, st store.Store, kind domain.Kind, id i
 			return err
 		}
 		if !d.ArchivedAt.IsZero() {
-			what := domain.FormatID(domain.KindDocument, id)
-			return &archivedError{fmt.Sprintf("%s is archived; unarchive it first (ralph doc unarchive %s)", what, what)}
+			return documentArchivedError(d)
 		}
 		if d.InitiativeID != nil {
 			return requireWritable(ctx, st, domain.KindInitiative, *d.InitiativeID)
@@ -1179,6 +1178,103 @@ func (s *Service) UpdateDocument(ctx context.Context, id int64, p DocumentPatch)
 	v := documentView(d, true, archived)
 	v.IndexWarning = s.indexDocument(ctx, d)
 	return v, nil
+}
+
+// documentArchivedError refuses a document that is itself archived.
+func documentArchivedError(d domain.Document) error {
+	what := domain.FormatID(domain.KindDocument, d.ID)
+	return &archivedError{fmt.Sprintf("%s is archived; unarchive it first (ralph doc unarchive %s)", what, what)}
+}
+
+// requireFreeDocumentSlug refuses with ErrConflict when a document in the
+// destination scope (initiative, or project-wide when nil) already has the slug.
+func requireFreeDocumentSlug(ctx context.Context, st store.Store, d domain.Document, initiativeID *int64, slug string) error {
+	f := store.DocumentFilter{ProjectOnly: initiativeID == nil}
+	if initiativeID != nil {
+		f.InitiativeID = *initiativeID
+	}
+	docs, err := st.ListDocuments(ctx, f)
+	if err != nil {
+		return err
+	}
+	for _, other := range docs {
+		if other.Slug == slug && other.ID != d.ID {
+			return fmt.Errorf("%w: %s already uses the slug %q there; retry with a new slug (doc_promote / doc_return with slug, or --slug)",
+				store.ErrConflict, domain.FormatID(domain.KindDocument, other.ID), slug)
+		}
+	}
+	return nil
+}
+
+// PromoteDocument makes an initiative's document project-wide, remembering the
+// initiative as its origin. A non-empty slug replaces the document's slug.
+func (s *Service) PromoteDocument(ctx context.Context, id int64, slug string) (DocumentView, error) {
+	return s.moveDocument(ctx, id, slug, true)
+}
+
+// ReturnDocument moves a promoted document back to its origin initiative. A
+// non-empty slug replaces the document's slug.
+func (s *Service) ReturnDocument(ctx context.Context, id int64, slug string) (DocumentView, error) {
+	return s.moveDocument(ctx, id, slug, false)
+}
+
+func (s *Service) moveDocument(ctx context.Context, id int64, slug string, promote bool) (DocumentView, error) {
+	what := domain.FormatID(domain.KindDocument, id)
+	var out DocumentView
+	var moved domain.Document
+	err := s.InTx(ctx, func(tx *Service) error {
+		d, err := tx.store.GetDocument(ctx, id)
+		if err != nil {
+			return err
+		}
+		if slug != "" {
+			if err := domain.ValidateSlug(slug); err != nil {
+				return err
+			}
+		}
+		var dest, origin *int64
+		if promote {
+			if d.InitiativeID == nil {
+				return fmt.Errorf("%w: %s is already project-wide", domain.ErrInvalid, what)
+			}
+			origin = d.InitiativeID
+		} else {
+			if d.OriginInitiativeID == nil {
+				return fmt.Errorf("%w: %s has no origin initiative", domain.ErrInvalid, what)
+			}
+			if err := requireWritable(ctx, tx.store, domain.KindInitiative, *d.OriginInitiativeID); err != nil {
+				return err
+			}
+			dest = d.OriginInitiativeID
+		}
+		if !d.ArchivedAt.IsZero() {
+			return documentArchivedError(d)
+		}
+		use := slug
+		if use == "" {
+			use = d.Slug
+		}
+		if err := requireFreeDocumentSlug(ctx, tx.store, d, dest, use); err != nil {
+			return err
+		}
+		if err := tx.store.SetDocumentScope(ctx, id, dest, origin, slug); err != nil {
+			return err
+		}
+		if moved, err = tx.store.GetDocument(ctx, id); err != nil {
+			return err
+		}
+		archived, err := documentInitiativeArchived(ctx, tx.store, moved)
+		if err != nil {
+			return err
+		}
+		out = documentView(moved, true, archived)
+		return nil
+	})
+	if err != nil {
+		return DocumentView{}, err
+	}
+	out.IndexWarning = s.indexDocument(ctx, moved)
+	return out, nil
 }
 
 // ---- archive ----
