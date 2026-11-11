@@ -13,13 +13,29 @@ written plan. An agent can then loop over the plan, and the work reaches humans 
 
 ## Install
 
-Requires Go 1.27 or later. No cgo is needed.
+On Linux and macOS:
 
-From a checkout:
+```sh
+curl -fsSL https://raw.githubusercontent.com/bengearig/ralph-cli/main/scripts/install.sh | sh
+```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/bengearig/ralph-cli/main/scripts/install.ps1 | iex
+```
+
+The script downloads the latest release, checks it against the published checksums, and installs it. Later, run
+`ralph update` to move to a newer release. See [Installing and updating](docs/installing.md) for the options.
+
+To build from source instead, for example to work on ralph, check out the repository and run (this requires Go 1.27 or
+later; no cgo is needed):
 
 ```sh
 go install ./cmd/ralph          # installs to $(go env GOPATH)/bin
 ```
+
+A source build is not a release build, so `ralph update` will not replace it unless you pass `--force`.
 
 For semantic search, install [Ollama](https://ollama.com) and the embedding model:
 
