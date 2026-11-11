@@ -195,12 +195,14 @@ func ParseDocKind(s string) (DocKind, error) {
 type Document struct {
 	ID           int64
 	InitiativeID *int64
-	Kind         DocKind
-	Slug         string
-	Title        string
-	Body         string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// OriginInitiativeID is the initiative a project-wide document was promoted from, if any.
+	OriginInitiativeID *int64
+	Kind               DocKind
+	Slug               string
+	Title              string
+	Body               string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 	// ArchivedAt is zero when the document is not itself archived.
 	ArchivedAt time.Time
 }

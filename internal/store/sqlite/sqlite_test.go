@@ -1065,6 +1065,10 @@ func TestPermanentIDsUpgradePreservesData(t *testing.T) {
 		if strings.HasPrefix(line, "initiatives [") || strings.HasPrefix(line, "documents [") {
 			wantRows[n] = strings.TrimSuffix(line, "]") + " ]"
 		}
+		// Migration 0008 appends a NULL origin_initiative_id to documents.
+		if strings.HasPrefix(line, "documents [") {
+			wantRows[n] = strings.TrimSuffix(wantRows[n], "]") + " <nil>]"
+		}
 	}
 	wantHits := hits(old)
 	chunks := count(t, old, `SELECT COUNT(*) FROM chunks`)

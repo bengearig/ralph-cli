@@ -72,17 +72,18 @@ type NoteView struct {
 }
 
 type DocumentView struct {
-	ID           string `json:"id"`
-	InitiativeID string `json:"initiative_id,omitempty"`
-	Kind         string `json:"kind"`
-	Slug         string `json:"slug"`
-	Title        string `json:"title"`
-	Body         string `json:"body,omitempty"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
-	ArchivedAt   string `json:"archived_at,omitempty"`
-	Archived     bool   `json:"archived,omitempty"`
-	IndexWarning string `json:"index_warning,omitempty"`
+	ID                 string `json:"id"`
+	InitiativeID       string `json:"initiative_id,omitempty"`
+	OriginInitiativeID string `json:"origin_initiative_id,omitempty"`
+	Kind               string `json:"kind"`
+	Slug               string `json:"slug"`
+	Title              string `json:"title"`
+	Body               string `json:"body,omitempty"`
+	CreatedAt          string `json:"created_at"`
+	UpdatedAt          string `json:"updated_at"`
+	ArchivedAt         string `json:"archived_at,omitempty"`
+	Archived           bool   `json:"archived,omitempty"`
+	IndexWarning       string `json:"index_warning,omitempty"`
 }
 
 type SearchView struct {
@@ -198,6 +199,9 @@ func documentView(d domain.Document, withBody, initiativeArchived bool) Document
 	}
 	if d.InitiativeID != nil {
 		v.InitiativeID = domain.FormatID(domain.KindInitiative, *d.InitiativeID)
+	}
+	if d.OriginInitiativeID != nil {
+		v.OriginInitiativeID = domain.FormatID(domain.KindInitiative, *d.OriginInitiativeID)
 	}
 	if withBody {
 		v.Body = d.Body

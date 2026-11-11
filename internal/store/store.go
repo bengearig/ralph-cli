@@ -128,6 +128,9 @@ type Store interface {
 	UpdateDocument(ctx context.Context, d *domain.Document) error
 	// SetDocumentArchived sets archived_at, or clears it when at is zero. It leaves updated_at alone.
 	SetDocumentArchived(ctx context.Context, id int64, at time.Time) error
+	// SetDocumentScope sets the initiative and origin initiative (nil for project scope or no origin) and, when
+	// slug is not empty, the slug. It bumps updated_at and returns ErrConflict if (initiative, slug) is taken.
+	SetDocumentScope(ctx context.Context, id int64, initiativeID, originInitiativeID *int64, slug string) error
 	DeleteDocument(ctx context.Context, id int64) error
 
 	// GetCard returns ErrNotFound when the entity has no card row for the provider.

@@ -457,18 +457,22 @@ func (s *Store) DeleteTaskNote(ctx context.Context, id int64) error {
 
 // ---- documents ----
 
-const documentCols = `id, initiative_id, kind, slug, title, body, created_at, updated_at, archived_at`
+const documentCols = `id, initiative_id, kind, slug, title, body, created_at, updated_at, archived_at, origin_initiative_id`
 
 func scanDocument(sc scanner) (domain.Document, error) {
 	var d domain.Document
-	var initiative sql.NullInt64
+	var initiative, origin sql.NullInt64
 	var kind, created, updated, archived string
-	if err := sc.Scan(&d.ID, &initiative, &kind, &d.Slug, &d.Title, &d.Body, &created, &updated, &archived); err != nil {
+	if err := sc.Scan(&d.ID, &initiative, &kind, &d.Slug, &d.Title, &d.Body, &created, &updated, &archived, &origin); err != nil {
 		return d, err
 	}
 	if initiative.Valid {
 		v := initiative.Int64
 		d.InitiativeID = &v
+	}
+	if origin.Valid {
+		v := origin.Int64
+		d.OriginInitiativeID = &v
 	}
 	d.Kind = domain.DocKind(kind)
 	var err error
@@ -552,6 +556,18 @@ func (s *Store) UpdateDocument(ctx context.Context, d *domain.Document) error {
 	}
 	d.UpdatedAt = now
 	return nil
+}
+
+// SetDocumentScope moves a document between scopes in one statement; an empty slug keeps the current slug.
+func (s *Store) SetDocumentScope(ctx context.Context, id int64, initiativeID, originInitiativeID *int64, slug string) error {
+	what := domain.FormatID(domain.KindDocument, id)
+	res, err := s.q.ExecContext(ctx,
+		`UPDATE documents SET initiative_id = ?, origin_initiative_id = ?, slug = CASE WHEN ? = '' THEN slug ELSE ? END, updated_at = ? WHERE id = ?`,
+		nullID(initiativeID), nullID(originInitiativeID), slug, slug, formatTime(s.now()), id)
+	if err != nil {
+		return mapErr(err, "moving "+what)
+	}
+	return checkAffected(res, what)
 }
 
 func collect[T any](rows *sql.Rows, scan func(scanner) (T, error)) ([]T, error) {
