@@ -54,6 +54,33 @@ func Register(name string, f Factory) {
 	factories[name] = f
 }
 
+// LinkFunc builds a pull request's web URL from static identifiers alone.
+type LinkFunc func(namespace, repository string, number int) string
+
+var links = map[string]LinkFunc{}
+
+// RegisterLink makes a provider's link builder available under name.
+func RegisterLink(provider string, f LinkFunc) {
+	mu.Lock()
+	defer mu.Unlock()
+	if _, dup := links[provider]; dup {
+		panic("pr: duplicate link registration of " + provider)
+	}
+	links[provider] = f
+}
+
+// Link returns the web URL of a pull request; false if the provider has no
+// registered link builder.
+func Link(provider, namespace, repository string, number int) (string, bool) {
+	mu.RLock()
+	f := links[provider]
+	mu.RUnlock()
+	if f == nil {
+		return "", false
+	}
+	return f(namespace, repository, number), true
+}
+
 // New builds the configured provider.
 func New(cfg *config.Config) (Provider, error) {
 	mu.RLock()

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
@@ -21,6 +22,12 @@ func init() {
 	pr.Register(Name, func(cfg *config.Config) (pr.Provider, error) {
 		return New(cfg.PR.BitbucketCloud, os.LookupEnv), nil
 	})
+	pr.RegisterLink(Name, link)
+}
+
+func link(namespace, repository string, number int) string {
+	return fmt.Sprintf("https://bitbucket.org/%s/%s/pull-requests/%d",
+		url.PathEscape(namespace), url.PathEscape(repository), number)
 }
 
 // Provider targets one Bitbucket Cloud repository.

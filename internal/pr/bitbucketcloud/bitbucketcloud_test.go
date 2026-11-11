@@ -71,3 +71,21 @@ func TestRegisteredAndRequest(t *testing.T) {
 		}
 	}
 }
+
+func TestLink(t *testing.T) {
+	tests := []struct {
+		namespace, repository string
+		number                int
+		want                  string
+	}{
+		{"acme", "widgets", 7, "https://bitbucket.org/acme/widgets/pull-requests/7"},
+		{"ac me", "wid/gets", 12, "https://bitbucket.org/ac%20me/wid%2Fgets/pull-requests/12"},
+		{"a?b", "c#d", 1, "https://bitbucket.org/a%3Fb/c%23d/pull-requests/1"},
+	}
+	for _, tt := range tests {
+		got, ok := pr.Link(Name, tt.namespace, tt.repository, tt.number)
+		if !ok || got != tt.want {
+			t.Errorf("Link(%q, %q, %d) = %q, %v; want %q", tt.namespace, tt.repository, tt.number, got, ok, tt.want)
+		}
+	}
+}
