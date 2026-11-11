@@ -65,7 +65,7 @@ The authoritative list, with schemas, is whatever `tools/list` returns. The regi
 | `initiative_list` | All initiatives. |
 | `initiative_get` | One initiative with its brief, and its `card` when a task manager is configured. |
 | `initiative_update` | Edit title or brief; omitted fields are unchanged. |
-| `initiative_archive` / `initiative_unarchive` | Hide an initiative and everything in it and make it read-only, or undo that. Parameter `id`. Refused while a loop holds one of its milestones. |
+| `initiative_archive` / `initiative_unarchive` | Hide an initiative and everything in it and make it read-only, or undo that. Parameter `id`; `initiative_archive` also takes `promote` (an array of document IDs, `"all"`, or `"none"`), required when the initiative has documents to choose from. Refused while a loop holds one of its milestones. See [Archiving](#archiving). |
 | `initiative_delete` | Destructive. Parameters `id` and optional `force`. Cascades to milestones, tasks, notes, and documents; refused without `force` when the initiative has milestones or documents. |
 
 ### Milestones
@@ -131,6 +131,18 @@ writes, not destructive. The rules are in [Archiving](data-model.md#archiving).
 - Changing an archived item, or anything in an archived initiative, is a tool error that says to unarchive it first.
   Agents unarchive only with the user's agreement.
 - `task_next` refuses a milestone whose initiative is archived.
+- `initiative_archive` archives the initiative's documents with it, so it asks which to keep. When the initiative has documents
+  that are scoped to it and not individually archived, and `promote` is missing, the call is a tool error and changes
+  nothing. The text lists each document as `D-n  kind  "title"`, then the suggested selection (the design and decision
+  documents), then says to call again with `promote` set to those IDs, `"all"`, or `"none"`. `promote` is an array of
+  document IDs or one of the two keywords; every ID must be a listed document of that initiative. Promoting and
+  archiving are atomic: if any promotion fails, nothing is promoted or archived. A slug clash with an existing
+  project-wide document fails the whole call and names the document; call `doc_promote` for that document alone with a
+  new `slug`, then archive again. The result lists the promoted IDs as `promoted_documents`.
+- `initiative_archive` on an initiative that is already archived does nothing and is not refused, like the other archive
+  tools. A `promote` given when there is nothing to choose is ignored, except that an ID list must name listed
+  documents.
+- `initiative_unarchive` does not move documents back; `doc_return` does, one at a time.
 - A promoted document is project-wide, so `doc_list` filtered by initiative no longer includes it and it stays visible
   when its origin initiative is archived. See [Promoting documents](#promoting-documents).
 

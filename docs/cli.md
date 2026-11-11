@@ -47,7 +47,7 @@ Commit hashes recorded by the loop are shown shortened in text output and in ful
 | `ralph doc list [--initiative <id> \| --project] [--kind <k>]` / `show <id>` / `update <id> ...` | Browse and edit documents. A promoted document shows `from I-n`. |
 | `ralph doc promote <id> [--slug <slug>]` / `ralph doc return <id> [--slug <slug>]` | Make an initiative's document project-wide, remembering its origin, or send it back to that origin. See [Promoting documents](#promoting-documents). |
 | `ralph initiative delete <id>`, `milestone delete <id>`, `task delete <id>` `[--force] [--yes]`, `ralph doc delete <id>`, `ralph note delete <id>` `[--yes]` | Delete permanently. See [Deleting](#deleting). |
-| `ralph initiative archive <id>` / `unarchive <id>`, `ralph doc archive <id>` / `unarchive <id>` | Hide an item and make it read-only, or undo that. See [Archiving](#archiving). |
+| `ralph initiative archive <id> [--promote <ids\|all\|none>]` / `unarchive <id>`, `ralph doc archive <id>` / `unarchive <id>` | Hide an item and make it read-only, or undo that. Archiving an initiative that has documents needs `--promote`. See [Archiving](#archiving). |
 | `ralph status [--initiative <id>]` | Progress summary: milestones with derived status and task counts, and `waiting on M-n` for a milestone whose dependencies are not satisfied. |
 
 ### Cards
@@ -109,7 +109,7 @@ reason; delete is for items created by mistake. See [Deleting](data-model.md#del
 
 ### Archiving
 
-Archiving hides finished initiatives and documents without deleting them. See [Archiving](data-model.md#archiving)
+Archiving takes finished initiatives and documents out of view without deleting them. See [Archiving](data-model.md#archiving)
 for the rules.
 
 - `initiative archive`, `initiative unarchive`, `doc archive`, and `doc unarchive` take an ID and are idempotent.
@@ -117,6 +117,33 @@ for the rules.
 - An archived item, and everything in an archived initiative, is read-only until it is unarchived. Deletes still work.
 - `initiative list`, `milestone list`, `task list`, `doc list`, `status`, and `search` leave archived items out
   unless given `--archived`. `show` always works and prints an `archived:` line for an archived item.
+- Archiving an initiative archives its documents with it unless they are promoted first, so `initiative archive` asks which
+  documents to keep visible. See [Choosing documents to keep](#choosing-documents-to-keep).
+- Unarchiving an initiative does not move any document back. A promoted document stays project-wide until
+  `ralph doc return` puts it back.
+
+#### Choosing documents to keep
+
+An initiative's documents are hidden with it, so `ralph initiative archive <id>` refuses to run when the initiative has
+documents that are scoped to it and not individually archived, unless `--promote` says what to do with them. Promoted
+documents are project-wide and never listed, and a document that was archived on its own is already hidden and is left
+out.
+
+- `--promote D-1,D-2` promotes those documents, `--promote all` promotes every listed document, and `--promote none`
+  promotes nothing and archives them with the initiative. A keyword cannot be mixed with IDs, and every ID must be one
+  of the listed documents of that initiative. Duplicate IDs are ignored.
+- Without `--promote`, the command changes nothing and exits with code `3`. The message lists each document as
+  `D-n  kind  "title"`, then the suggested selection (the design and decision documents, or `none` when there are
+  none), then the commands to rerun with `--promote D-x,D-y`, `--promote all`, and `--promote none`.
+- The promotions and the archive are atomic: when any promotion fails, no document is promoted and the initiative is
+  not archived. A slug clash with an existing project-wide document fails the whole archive and names the document.
+  Archive-time promotion cannot rename, so promote that document alone with a new slug, `ralph doc promote <id> --slug
+  <slug>`, and archive again.
+- On success the command prints `archived I-n; promoted D-1, D-2`, or just `archived I-n` when nothing was promoted.
+  With `--json` the initiative view lists the IDs as `promoted_documents`.
+- Archiving an initiative that is already archived does nothing and is not refused, whatever `--promote` says. When
+  there are no documents to choose from, `--promote` is accepted and ignored, except that an explicit ID list must name
+  listed documents.
 
 ### Promoting documents
 

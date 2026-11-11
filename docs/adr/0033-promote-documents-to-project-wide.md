@@ -38,8 +38,26 @@ rejected: it would change a document's identity without the caller knowing.
   applied as part of the move, checked like a slug requested at `doc_create`.
 - The slug changes only as part of a move. It is not a general rename.
 
+### Archive-time choice
+
+Promoting after the fact relies on someone remembering, and a document that is archived with its initiative vanishes
+unnoticed. Archiving an initiative therefore asks which documents to keep.
+
+- `initiative_archive` and `ralph initiative archive` refuse when the initiative has documents scoped to it that are not
+  individually archived and no choice is given. The choice is `promote` (`--promote`): a list of document IDs, `all`, or
+  `none`. The refusal lists the documents, suggests the design and decision documents, and says how to rerun; the CLI
+  exits with code 3 because a person must decide. Making the choice mandatory, rather than defaulting to `none`, keeps
+  a forgotten decision from hiding documents silently.
+- The rule lives in the service, so every caller gets it. Promotions and the archive run in one transaction: a failed
+  promotion changes nothing.
+- Archive-time promotion does not take slugs. A slug clash fails the whole archive and names the document, and the
+  person promotes that document alone with a new slug (`doc_promote` / `ralph doc promote --slug`) and archives again.
+- Archiving an already archived initiative stays idempotent and is never refused.
+- Unarchiving does not move documents back; `doc_return` does, one at a time.
+
 ## Consequences
 
 - Provenance is kept, so promotion is safe to try and can be undone.
 - Existing archived initiatives can be rescued document by document.
+- Archiving an initiative with documents now needs a decision, which costs one extra step for agents and people.
 - Promoting reindexes and so needs the embedder like `doc_update`; a failure is reported as an index warning.

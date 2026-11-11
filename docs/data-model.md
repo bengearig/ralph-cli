@@ -239,7 +239,7 @@ the user before deleting and never pass `force` without explicit approval. See
 
 ## Archiving
 
-Archiving hides finished initiatives and documents without deleting them, and makes them read-only. Only initiatives
+Archiving takes finished initiatives and documents out of view without deleting them, and makes them read-only. Only initiatives
 and documents have an `archived_at` column. It is empty when the item is not archived, and otherwise holds the time
 of archiving as an RFC 3339 timestamp. Archiving does not change `updated_at`.
 
@@ -270,6 +270,10 @@ reports `archived`, and milestones and tasks report `archived`.
   while a loop holds one of its milestones. Stop the loop first. The loop and `ralph pr create` in turn refuse
   milestones of archived initiatives; see [the loop](loop.md#before-the-first-session).
 
+- **Documents.** Archiving an initiative archives its initiative-scoped documents with it, so archiving asks which to
+  promote to project-wide first; see [Archive-time choice](#archive-time-choice). Unarchiving does not move promoted
+  documents back.
+
 See [ADR 0019](adr/0019-archive-initiatives-and-documents.md).
 
 ## Promoting documents
@@ -288,6 +292,20 @@ document created project-wide has no origin.
   with another document, archived ones included, is refused with an error that names the other document. Nothing is
   renamed implicitly. An optional new slug, checked like the one `doc_create` accepts, is applied together with the
   move; it is not a general rename, and `doc_update` still does not change slugs.
+
+### Archive-time choice
+
+Archiving an initiative requires a choice about its documents. The documents that count are those scoped to the
+initiative and not individually archived, of every kind. When there are some and no choice is given, the archive is
+refused and changes nothing. The choice is a list of document IDs, all of them, or none. The suggested selection is the
+design and decision documents.
+
+- Promotions and the archive happen in one transaction, so a failed promotion leaves everything as it was. A slug clash
+  fails the whole archive and names the document; promote that document alone with a new slug, then archive again.
+- Archiving an initiative that is already archived is idempotent and never asks.
+- Unarchiving does not move documents back; return them with `doc_return` or `ralph doc return`.
+
+The surfaces are described in [the CLI](cli.md#choosing-documents-to-keep) and [the MCP server](mcp.md#archiving).
 - Both operations re-index the document, because search chunks carry the initiative.
 
 See [ADR 0033](adr/0033-promote-documents-to-project-wide.md).
