@@ -83,3 +83,6 @@ interface in `internal/taskmanager`, selected by `task_manager.provider`; see
 
 **Unplanned task.** A `PROPOSED` task created during Receive, with only a title and perhaps a one-sentence summary.
 Articulate works out its details.
+
+**Watch.** The live form of a `show` command, such as `ralph initiative watch`. It polls the database, shows the view
+again whenever it changes, and never writes. See [Watching](cli.md#watching).

@@ -46,7 +46,7 @@ flowchart TD
 | Package | Responsibility |
 |---|---|
 | `cmd/ralph` | Entry point. Maps `errs.ErrNotImplemented` to exit code 2, `errs.ErrNeedsHuman` to exit code 3, and every other error to 1. |
-| `internal/cli` | Cobra command tree. Resolves the project, loads configuration, opens the service lazily, and renders tables or `--json`. |
+| `internal/cli` | Cobra command tree. Resolves the project, loads configuration, opens the service lazily, and renders tables or `--json`. It also holds the watch engine; see [Watching](#watching). |
 | `internal/config` | The `Config` struct, built-in defaults (`defaults.yaml`, embedded), layered loading with koanf, strict decoding, validation, and per-step resolution. |
 | `internal/project` | Finds the project root (the nearest `.ralph/`) and the git work-tree root. |
 | `internal/domain` | Entities, display IDs, slugs, document kinds, and the task state machine with its guards. No I/O. |
@@ -118,6 +118,29 @@ sequenceDiagram
 3. If nothing is embedded or the query cannot be embedded, run an FTS5 `bm25` query instead and report
    `mode: keyword` with a warning.
 4. Annotate hits with entity titles.
+
+### Watching
+
+A watch is the live form of a `show` command, built in `internal/cli`. Fetching a view and rendering it are separate
+functions, so `show` calls both and prints exactly what it always did, while a watch calls the fetch on each poll.
+
+- A **snapshot** is what one poll produced: the text `show` prints (made by running the render function against a
+  buffer), the same view as one line of compact JSON, and a state used by `--until-done` (not done, done, or stuck).
+- The **engine** (`runWatch` in `watch.go`) fetches once immediately, then every interval. A change is a snapshot whose text
+  or JSON differs from the previous one, and only a change reaches the renderer. It also ticks the renderer at a short
+  fixed period so a highlight can expire. It ends on cancellation, a fatal error, a write error, or `--until-done`.
+  A transient fetch error (a busy or locked database, or a timeout) becomes a notice and the next poll retries.
+- Two **renderers** share one small interface: start, update with the previous and current snapshot, tick, notice, and
+  stop. The terminal renderer (`watch_terminal.go`) redraws in place, highlights changed lines, and draws the footer.
+  The JSON-lines renderer (`watch_json.go`) writes one flushed line per change and sends notices to standard error. The
+  terminal renderer is used when the output is a terminal and `--json` is not set.
+
+`Streams` carries what the choice needs: `OutIsTerminal` reports whether `Out` is a terminal, and `OutSize` returns its
+width and height, or `ok` false when unknown. `main` sets both; tests set them explicitly.
+
+A watch never writes to the store, the repository, or a task manager. For the user-facing behaviour see
+[Watching](cli.md#watching), and for the reasons behind it
+[ADR 35](adr/0035-watch-by-polling-and-snapshot-comparison.md).
 
 ### Concurrency
 
