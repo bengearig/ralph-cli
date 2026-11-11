@@ -491,3 +491,51 @@ func (r Repo) CompareBase(ctx context.Context, remote, branch string) (BaseStatu
 	}
 	return st, nil
 }
+
+// FastForwardBranch fast-forwards the local branch to the already fetched
+// refs/remotes/<remote>/<branch>. It never creates a merge commit, rewrites
+// history, or switches branches; a branch that is current or ahead is left as
+// it is, and a diverged one fails. The checked-out branch needs a clean work
+// tree outside Exclude.
+func (r Repo) FastForwardBranch(ctx context.Context, remote, branch string) error {
+	remoteRef := "refs/remotes/" + remote + "/" + branch
+	ok, err := r.BranchExists(ctx, branch)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("git: local branch %s does not exist", branch)
+	}
+	if ok, err = r.RefExists(ctx, remoteRef); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("git: %s does not exist; the remote branch was never fetched", remoteRef)
+	}
+	st, err := r.CompareBase(ctx, remote, branch)
+	if err != nil {
+		return err
+	}
+	switch st.State {
+	case BaseCurrent, BaseAhead:
+		return nil
+	case BaseDiverged:
+		return fmt.Errorf("git: %s and %s/%s have diverged (%d ahead, %d behind)", branch, remote, branch, st.Ahead, st.Behind)
+	}
+	current, err := r.CurrentBranch(ctx)
+	if err != nil {
+		return err
+	}
+	if current == branch {
+		dirty, err := r.Dirty(ctx)
+		if err != nil {
+			return err
+		}
+		if len(dirty) > 0 {
+			return fmt.Errorf("git: %s is checked out with uncommitted changes: %s", branch, strings.Join(dirty, ", "))
+		}
+		return r.MergeFFOnly(ctx, remoteRef)
+	}
+	_, err = r.run(ctx, "fetch", "--quiet", ".", remoteRef+":refs/heads/"+branch)
+	return err
+}

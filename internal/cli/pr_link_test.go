@@ -134,7 +134,7 @@ func TestPRCreateDryRunAndFailedPushDoNotLink(t *testing.T) {
 		t.Errorf("dry run linked: %+v", p.Links())
 	}
 	f.git("remote", "set-url", "origin", "/nonexistent/repo.git")
-	if _, _, err := f.h.run("", "pr", "create", "--milestone", "M-1"); err == nil {
+	if _, _, err := f.h.run("", "pr", "create", "--milestone", "M-1", "--force"); err == nil {
 		t.Fatal("push should fail")
 	}
 	if len(p.Links()) != 0 {
