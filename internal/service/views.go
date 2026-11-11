@@ -25,24 +25,35 @@ type InitiativeView struct {
 }
 
 type MilestoneView struct {
-	ID           string         `json:"id"`
-	InitiativeID string         `json:"initiative_id"`
-	Slug         string         `json:"slug"`
-	Title        string         `json:"title"`
-	Description  string         `json:"description"`
-	Position     int            `json:"position"`
-	Status       string         `json:"status"`
-	TaskCounts   map[string]int `json:"task_counts"`
-	DependsOn    []string       `json:"depends_on,omitempty"`
-	Branch       string         `json:"branch,omitempty"`
-	BaseCommit   string         `json:"base_commit,omitempty"`
-	HeadCommit   string         `json:"head_commit,omitempty"`
-	CreatedAt    string         `json:"created_at"`
-	UpdatedAt    string         `json:"updated_at"`
-	Archived     bool           `json:"archived,omitempty"`
-	IndexWarning string         `json:"index_warning,omitempty"`
-	CardWarning  string         `json:"card_warning,omitempty"`
-	Card         *CardView      `json:"card,omitempty"`
+	ID           string           `json:"id"`
+	InitiativeID string           `json:"initiative_id"`
+	Slug         string           `json:"slug"`
+	Title        string           `json:"title"`
+	Description  string           `json:"description"`
+	Position     int              `json:"position"`
+	Status       string           `json:"status"`
+	TaskCounts   map[string]int   `json:"task_counts"`
+	DependsOn    []string         `json:"depends_on,omitempty"`
+	Branch       string           `json:"branch,omitempty"`
+	BaseCommit   string           `json:"base_commit,omitempty"`
+	HeadCommit   string           `json:"head_commit,omitempty"`
+	CreatedAt    string           `json:"created_at"`
+	UpdatedAt    string           `json:"updated_at"`
+	Archived     bool             `json:"archived,omitempty"`
+	IndexWarning string           `json:"index_warning,omitempty"`
+	CardWarning  string           `json:"card_warning,omitempty"`
+	Card         *CardView        `json:"card,omitempty"`
+	PullRequest  *PullRequestView `json:"pull_request,omitempty"`
+}
+
+// PullRequestView is a milestone's recorded pull request; URL is empty when no
+// link builder is set or it does not know the provider.
+type PullRequestView struct {
+	Provider   string `json:"provider"`
+	Namespace  string `json:"namespace"`
+	Repository string `json:"repository"`
+	Number     int    `json:"number"`
+	URL        string `json:"url,omitempty"`
 }
 
 type TaskView struct {
@@ -137,12 +148,12 @@ func initiativeView(i domain.Initiative) InitiativeView {
 	}
 }
 
-func milestoneView(m domain.Milestone, tasks []domain.Task, archived bool) MilestoneView {
+func (s *Service) milestoneView(m domain.Milestone, tasks []domain.Task, archived bool) MilestoneView {
 	counts := map[string]int{}
 	for _, t := range tasks {
 		counts[string(t.Status)]++
 	}
-	return MilestoneView{
+	v := MilestoneView{
 		ID:           domain.FormatID(domain.KindMilestone, m.ID),
 		InitiativeID: domain.FormatID(domain.KindInitiative, m.InitiativeID),
 		Slug:         m.Slug,
@@ -158,6 +169,16 @@ func milestoneView(m domain.Milestone, tasks []domain.Task, archived bool) Miles
 		UpdatedAt:    ts(m.UpdatedAt),
 		Archived:     archived,
 	}
+	if r := m.PullRequest; !r.IsZero() {
+		pv := &PullRequestView{Provider: r.Provider, Namespace: r.Namespace, Repository: r.Repository, Number: r.Number}
+		if s.pullRequestLink != nil {
+			if u, ok := s.pullRequestLink(r.Provider, r.Namespace, r.Repository, r.Number); ok {
+				pv.URL = u
+			}
+		}
+		v.PullRequest = pv
+	}
+	return v
 }
 
 func taskView(t domain.Task, notes []domain.TaskNote, archived bool) TaskView {

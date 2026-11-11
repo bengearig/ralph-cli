@@ -37,6 +37,8 @@ type Service struct {
 	cardCanceledStatus string
 	// inTx marks a service bound to a transaction, which never calls the provider.
 	inTx bool
+	// pullRequestLink builds a pull request's web URL for views; nil leaves URLs empty.
+	pullRequestLink func(provider, namespace, repository string, number int) (string, bool)
 }
 
 // Options configures a Service.
@@ -78,6 +80,12 @@ func New(st store.Store, ix *search.Index, opts Options) *Service {
 	}
 	return &Service{store: st, index: ix, log: log, stallThreshold: opts.StallThreshold, searchLimit: limit,
 		loopLockPath: opts.LoopLockPath, taskManager: opts.TaskManager, cardClaimStale: claimStale, cardTimeout: cardTimeout, cardCanceledStatus: opts.CardCanceledStatus}
+}
+
+// SetPullRequestLink sets how views build a pull request's web URL. It must
+// not be called while the service is in use.
+func (s *Service) SetPullRequestLink(fn func(provider, namespace, repository string, number int) (string, bool)) {
+	s.pullRequestLink = fn
 }
 
 // Store exposes the underlying store for read-only orchestration such as
@@ -390,7 +398,7 @@ func (s *Service) CreateMilestone(ctx context.Context, in MilestoneInput) (Miles
 	if err != nil {
 		return MilestoneView{}, err
 	}
-	v := milestoneView(m, nil, false)
+	v := s.milestoneView(m, nil, false)
 	v.DependsOn = formatDependsOn(in.DependsOn)
 	v.IndexWarning = s.indexMilestone(ctx, m)
 	v.CardWarning = s.createCard(ctx, domain.KindMilestone, m.ID, s.cardClaimStale)
@@ -418,7 +426,7 @@ func (s *Service) GetMilestone(ctx context.Context, id int64) (MilestoneView, er
 	if err != nil {
 		return MilestoneView{}, err
 	}
-	v := milestoneView(m, tasks, archived)
+	v := s.milestoneView(m, tasks, archived)
 	v.DependsOn = formatDependsOn(deps[m.ID])
 	v.Card = cards.view(ctx, domain.KindMilestone, m.ID, cardID{domain.KindInitiative, m.InitiativeID})
 	return v, nil
@@ -460,7 +468,7 @@ func (s *Service) listMilestones(ctx context.Context, initiativeID int64, opts L
 	}
 	out := make([]MilestoneView, 0, len(ms))
 	for _, m := range ms {
-		v := milestoneView(m, byMilestone[m.ID], archived[m.InitiativeID])
+		v := s.milestoneView(m, byMilestone[m.ID], archived[m.InitiativeID])
 		v.DependsOn = formatDependsOn(deps[m.ID])
 		v.Card = cards.view(ctx, domain.KindMilestone, m.ID, cardID{domain.KindInitiative, m.InitiativeID})
 		out = append(out, v)
@@ -514,7 +522,7 @@ func (s *Service) UpdateMilestone(ctx context.Context, id int64, p MilestonePatc
 	if err != nil {
 		return MilestoneView{}, err
 	}
-	v := milestoneView(m, tasks, archived)
+	v := s.milestoneView(m, tasks, archived)
 	v.DependsOn = formatDependsOn(deps[m.ID])
 	v.IndexWarning = s.indexMilestone(ctx, m)
 	_, v.CardWarning = s.syncCard(ctx, domain.KindMilestone, m.ID, modeExisting, s.cardClaimStale)
@@ -545,6 +553,56 @@ func (s *Service) RecordMilestoneGit(ctx context.Context, milestoneID int64, g d
 		}
 		return tx.SetMilestoneGit(ctx, milestoneID, g)
 	})
+}
+
+// RecordMilestonePullRequest replaces a milestone's recorded pull request. Like
+// RecordMilestoneGit it neither reindexes nor changes updated_at.
+func (s *Service) RecordMilestonePullRequest(ctx context.Context, milestoneID int64, rec domain.PullRequestRecord) error {
+	rec.Provider = strings.TrimSpace(rec.Provider)
+	rec.Namespace = strings.TrimSpace(rec.Namespace)
+	rec.Repository = strings.TrimSpace(rec.Repository)
+	for name, v := range map[string]string{"provider": rec.Provider, "namespace": rec.Namespace, "repository": rec.Repository} {
+		if v == "" {
+			return fmt.Errorf("%w: pull request %s must not be empty", domain.ErrInvalid, name)
+		}
+	}
+	if rec.Number < 1 {
+		return fmt.Errorf("%w: pull request number must be at least 1", domain.ErrInvalid)
+	}
+	return s.store.InTx(ctx, func(tx store.Store) error {
+		m, err := tx.GetMilestone(ctx, milestoneID)
+		if err != nil {
+			return err
+		}
+		if err := requireWritable(ctx, tx, domain.KindInitiative, m.InitiativeID); err != nil {
+			return err
+		}
+		return tx.SetMilestonePullRequest(ctx, milestoneID, rec)
+	})
+}
+
+// ClearMilestonePullRequest removes a milestone's recorded pull request and
+// returns it; the record is zero when none was recorded.
+func (s *Service) ClearMilestonePullRequest(ctx context.Context, milestoneID int64) (domain.PullRequestRecord, error) {
+	var removed domain.PullRequestRecord
+	err := s.store.InTx(ctx, func(tx store.Store) error {
+		m, err := tx.GetMilestone(ctx, milestoneID)
+		if err != nil {
+			return err
+		}
+		if err := requireWritable(ctx, tx, domain.KindInitiative, m.InitiativeID); err != nil {
+			return err
+		}
+		removed = m.PullRequest
+		if removed.IsZero() {
+			return nil
+		}
+		return tx.SetMilestonePullRequest(ctx, milestoneID, domain.PullRequestRecord{})
+	})
+	if err != nil {
+		return domain.PullRequestRecord{}, err
+	}
+	return removed, nil
 }
 
 // RecordMilestoneHead updates only the recorded head of a milestone's branch.

@@ -126,10 +126,14 @@ func TestArchivedInitiativeIsReadOnly(t *testing.T) {
 		"CreateDocument": func() error {
 			return get(e.svc.CreateDocument(ctx, DocumentInput{InitiativeID: ini, Kind: domain.DocDesign, Title: "new"}))
 		},
-		"UpdateDocument":      func() error { return get(e.svc.UpdateDocument(ctx, doc, DocumentPatch{Title: &title})) },
-		"RecordMilestoneGit":  func() error { return e.svc.RecordMilestoneGit(ctx, ms, domain.MilestoneGit{Branch: "b"}) },
-		"RecordMilestoneHead": func() error { return e.svc.RecordMilestoneHead(ctx, ms, "") },
-		"RecordTaskCommit":    func() error { return e.svc.RecordTaskCommit(ctx, task, "") },
+		"UpdateDocument":     func() error { return get(e.svc.UpdateDocument(ctx, doc, DocumentPatch{Title: &title})) },
+		"RecordMilestoneGit": func() error { return e.svc.RecordMilestoneGit(ctx, ms, domain.MilestoneGit{Branch: "b"}) },
+		"RecordMilestonePullRequest": func() error {
+			return e.svc.RecordMilestonePullRequest(ctx, ms, domain.PullRequestRecord{Provider: "p", Namespace: "n", Repository: "r", Number: 1})
+		},
+		"ClearMilestonePullRequest": func() error { _, err := e.svc.ClearMilestonePullRequest(ctx, ms); return err },
+		"RecordMilestoneHead":       func() error { return e.svc.RecordMilestoneHead(ctx, ms, "") },
+		"RecordTaskCommit":          func() error { return e.svc.RecordTaskCommit(ctx, task, "") },
 	}
 	snap := func() string {
 		i, _ := e.svc.GetInitiative(ctx, ini)

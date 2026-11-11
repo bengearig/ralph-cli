@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/bengearig/ralph/internal/config"
+	"github.com/bengearig/ralph/internal/pr"
 	"github.com/bengearig/ralph/internal/project"
 	"github.com/bengearig/ralph/internal/service"
 )
@@ -116,6 +117,7 @@ func (a *app) service(ctx context.Context) (*service.Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	svc.SetPullRequestLink(pr.Link)
 	a.closers = append(a.closers, closeFn)
 	a.svc = svc
 	return svc, nil
