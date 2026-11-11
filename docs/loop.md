@@ -331,6 +331,9 @@ before git is touched. Two rules are not negotiable:
 Merging is opt-in because ralph's principle is that agents propose and people merge; see
 [ADR 29](adr/0029-looping-an-initiative.md).
 
+Neither the loop nor a merge pushes anything: `--merge` changes the local base branch only. The branch is pushed by
+[`ralph pr create`](cli.md#ralph-pr-create), which is the one command that talks to a remote.
+
 **`--force`** has the same meaning as for one milestone: unmerged dependencies do not hold a milestone back.
 
 **`--dry-run`** prints the table of milestones and the first decision, and changes nothing. The columns are `ID`,

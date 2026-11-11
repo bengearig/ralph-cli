@@ -256,8 +256,8 @@ the document is project-wide. The file's record is marked `done` with a `created
 | `ralph loop --initiative <id> [--merge] [--force]` | Run the initiative's next ready milestone, then stop for review; with `--merge`, fast-forward each finished milestone into the base branch and carry on until the initiative is complete or something needs a person. `--dry-run` prints the ordered milestones and the next step. Exactly one of `--milestone` and `--initiative` is required, and `--merge` needs `--initiative`. See [Looping an initiative](loop.md#looping-an-initiative). |
 | `ralph milestone reconcile <id> [--branch <name>] [--reopen <ids>] [--reason <text>] [--accept]` | Report how the milestone's branch differs from its record and resolve it. See [below](#ralph-milestone-reconcile). |
 | `ralph milestone merge <id> [--dry-run] [--delete-branch]` | Fast-forward the base branch to a finished milestone's branch. See [below](#ralph-milestone-merge). |
-| `ralph pr create --milestone <id> [--force] --dry-run` | Print the pull request that would be opened, the drift check's result, and any provider configuration problems. |
-| `ralph pr create --milestone <id> [--force]` | Open the pull request for the milestone's branch on the configured provider and print its link. The branch must already be pushed. See [Bitbucket Cloud](bitbucket-cloud.md). |
+| `ralph pr create --milestone <id> [--force] --dry-run` | Print the pull request that would be opened, the push that would happen, the drift check's result, and any provider configuration problems. Pushes nothing and calls no provider API. |
+| `ralph pr create --milestone <id> [--force]` | Push the milestone's branch, adopt or open its pull request on the configured provider, record it on the milestone, and print its link. See [below](#ralph-pr-create) and [Bitbucket Cloud](bitbucket-cloud.md). |
 | `ralph pr unlink --milestone <id>` | Forget the milestone's recorded pull request. See [below](#recorded-pull-requests). |
 
 `ralph loop` and `ralph pr create`, including their dry runs, refuse a milestone whose initiative is
@@ -267,8 +267,8 @@ the document is project-wide. The file's record is marked `done` with a `created
 
 A milestone can record the pull request opened for it: the provider name, namespace, repository, and number. The
 record never contains a URL; links are built from it when shown, by a static function per provider that needs no
-configuration, token, or network, so a record keeps its link after `pr.provider` changes. `ralph pr create` does not
-record anything yet (milestone M-32 adds that), so a milestone has a record only once something writes one.
+configuration, token, or network, so a record keeps its link after `pr.provider` changes. `ralph pr create` writes the
+record once the provider has confirmed the pull request.
 
 `ralph milestone show` prints a `pull request:` line after `branch:` when a record exists: the URL, or
 `<provider> <namespace>/<repository>#<number>` when no link can be built for the provider. `ralph status` adds a `PR`
@@ -277,21 +277,78 @@ column, with the same value or `-`, to a milestone table only when one of its mi
 `namespace`, `repository`, `number`, and `url` (omitted when no link can be built).
 
 `ralph pr unlink --milestone <id>` clears the record so a new pull request can be opened, for example after the old
-one was declined. It prints `unlinked <link>`, or `nothing to unlink` when there is no record, and exits 0 either way.
+one was declined or closed, since `ralph pr create` keeps reporting a recorded pull request until it is unlinked. It prints `unlinked <link>`, or `nothing to unlink` when there is no record, and exits 0 either way.
 It changes nothing on the hosting service and has no MCP counterpart. It is refused for a milestone in an archived
 initiative.
 
-`ralph pr create` takes its source branch from the milestone's recorded branch, the one the loop worked on, and
-derives it from `loop.branch_template` only when none is recorded.
+### `ralph pr create`
 
-Before it calls the provider, `ralph pr create` runs the drift check (see
+```sh
+ralph pr create --milestone <id> [--force] [--dry-run]
+```
+
+`ralph pr create` takes its source branch from the milestone's recorded branch, the one the loop worked on, and
+derives it from `loop.branch_template` only when none is recorded. The destination is `pr.base_branch`.
+
+The checks run first, in this order, and each refuses with exit code `3`: the milestone's initiative must not be
+archived, the branch must be exactly as recorded, and the milestones it depends on must be merged (`--force` skips only
+the dependency check). Then:
+
+1. **Already recorded.** If the milestone records a pull request, it prints `exists <link>` and does nothing else: no
+   push, no provider call. Use `ralph pr unlink` to open another.
+2. **Push.** It pushes the milestone's branch to the `pr.remote` remote, whichever branch is checked out, and sets
+   upstream tracking. The push is plain and never forced: a rejected push is never retried with force. A failed push
+   (a missing remote, a rejection because the remote has commits the branch lacks, or an authentication failure)
+   exits with code `3`, shows git's message, and opens nothing.
+3. **Adopt.** It asks the provider for an open pull request from the branch into `pr.base_branch`. If there is one, it
+   is recorded and printed as `adopted <link>`; nothing is created or changed on the provider. A pull request from the
+   same branch into a different branch is not adopted. Among several matches the most recently updated is used.
+4. **Open.** Otherwise it creates the pull request, records it, and prints `opened <link>`.
+
+The record is written only after the provider confirms the pull request. If writing it fails, the command prints the
+link, exits `1`, and says that rerunning adopts the pull request. Rerunning after any failure is safe: pushing again
+changes nothing when the remote is up to date, and the provider is asked for an existing pull request before one is
+created. A milestone that is not `DONE` gets a `warning:` on standard error but still proceeds, since a draft of
+unfinished work is useful.
+
+Only `ralph pr create` pushes. `ralph milestone merge` and the loop push nothing.
+
+The title is `M-n: Title`. When a task manager is configured and the milestone has a card with a key, the title is
+prefixed with it, `[KEY] M-n: Title`, like the commit subjects. Only the recorded card is used: no provider call is
+made and nothing warns when there is no key.
+
+With `--json` the result is `{"outcome": "opened" | "adopted" | "exists", "pushed": <bool>, "remote": "<name>",
+"pull_request": {provider, namespace, repository, number, url}}`. `pushed` is false when the remote was already up to
+date, and for `exists`.
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | The pull request was opened, adopted, or already recorded. |
+| `3` | The branch has drifted, a dependency is unmerged, or the push failed: a person is needed. |
+| `1` | Anything else, such as a provider error or a failure to record the pull request. |
+
+Before it pushes or calls the provider, `ralph pr create` runs the drift check (see
 [Drift and reconcile](loop.md#drift-and-reconcile)). Unless the branch is exactly as recorded (`unchanged`), it
 refuses with exit code `3`, naming the state and saying `run: ralph milestone reconcile <M-n>`; a merged branch is
 reported as already merged into the base branch. If the check itself fails, for example because there is no git
-repository or `pr.base_branch` doesn't exist, `pr create` fails with that error. `--dry-run` never refuses: it adds a
-`drift:` line with the state and its summary, followed by the task table when the branch has drifted, and reports a
-failed check as a warning. With `--json`, the dry run includes the report as `drift`, or the failure as
-`drift_error`.
+repository or `pr.base_branch` doesn't exist, `pr create` fails with that error.
+
+`--dry-run` never refuses, pushes nothing, and calls no provider API; it validates the provider's configuration and
+reports problems as warnings. It prints:
+
+```
+provider: bitbucket-cloud
+title:    [KEY] M-n: Title
+branches: ralph/branch → main
+drift:    unchanged (...)
+draft:    false
+push:     origin ralph/branch (not pushed in a dry run)
+```
+
+When the milestone records a pull request it adds `pull request: <link> (already recorded; nothing would be pushed or
+opened)`. When the branch has drifted, the `drift:` line is followed by the task table, and a failed check is a warning.
+After a blank line comes the pull request description. With `--json` the dry run includes `push` (`remote` and
+`branch`), `pull_request` when one is recorded, and the drift report as `drift`, or the failure as `drift_error`.
 
 ### Milestone dependencies
 
@@ -384,7 +441,8 @@ The checks run first, in this order, and change nothing. The first one that fail
 
 Only then does it switch to the base branch and run `git merge --ff-only`. If that fails, it returns to where it
 started and reports the error. On success the **base branch stays checked out**, as after a merge by hand. It never
-creates a merge commit, never pushes or touches a remote, and never force-deletes a branch. It records nothing: a
+creates a merge commit, never pushes or touches a remote (only [`ralph pr create`](#ralph-pr-create) pushes), and never
+force-deletes a branch. It records nothing: a
 merged milestone is recognised by the drift check from the repository itself.
 
 ```text

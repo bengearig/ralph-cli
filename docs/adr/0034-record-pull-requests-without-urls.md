@@ -23,7 +23,8 @@ request already exists. A stored URL would go stale when the hosting provider or
 - `ralph pr unlink` clears the record so a new pull request can be opened, for example after one was declined. It is
   CLI-only and changes nothing on the hosting service.
 - The record is not checked against the hosting service: nothing verifies that the pull request is still open.
-- `ralph pr create` does not record anything yet; recording comes with the milestone that pushes the branch.
+- `ralph pr create` records the pull request once the provider confirms it; see the decisions on pushing, adopting,
+  and titles below.
 - The Bitbucket Cloud provider authenticates with `basic` by default: the Atlassian account email and an API token,
   because Bitbucket app passwords no longer work. `bearer` sends the token alone, for repository or workspace access
   tokens. Environment variable names are configuration; the credentials are read when a request is made and never
@@ -35,8 +36,26 @@ request already exists. A stored URL would go stale when the hosting provider or
   command can record it without asking the provider's configuration. Every call is a single attempt bounded by
   `pr.timeout`.
 
+- `ralph pr create` pushes the milestone's branch to `pr.remote` (default `origin`) with a plain, tracked push of
+  that branch only. The push is never forced, with neither `--force`, `--force-with-lease`, nor a `+` refspec, and it
+  works whichever branch is checked out. A missing remote, a rejected push, or an authentication failure exits with
+  code 3 and opens nothing. It is the only command that pushes: `ralph milestone merge` and the loop still push
+  nothing, which clarifies [ADR 27](0027-merge-milestones-locally-with-fast-forward-only.md) and
+  [ADR 29](0029-looping-an-initiative.md), whose statements about pushing concern merging.
+- The flow is: stop with `exists` when a pull request is already recorded, otherwise push, then adopt an open pull
+  request from the branch into `pr.base_branch` if the provider has one, otherwise create one. The result is recorded
+  only after the provider confirms it. If recording fails, the link is shown with an error and rerunning adopts the
+  pull request; rerunning after any failure is safe because pushing again is a no-op and the provider is asked first.
+- When a task manager is configured and the milestone's card has a key, the title is prefixed with it, as in
+  `[KEY] M-n: Title`, in the style of commit subjects. Only the recorded card is read, so there is no provider call
+  and no warning when the key is missing.
+- `--dry-run` pushes nothing and calls no provider API. It prints the remote and branch that would be pushed, and the
+  recorded pull request when there is one.
+
 ## Consequences
 
 - Links survive a provider change and can be corrected in one place.
 - A declined pull request keeps being reported until someone unlinks it.
+- Merging and the loop remain free of network access; the push happens only when a person asks for the pull request.
+- A branch rejected by the remote needs a person to decide how to reconcile it; ralph never overwrites remote history.
 - Adding a provider means registering a link function alongside its factory.

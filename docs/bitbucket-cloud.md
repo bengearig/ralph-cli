@@ -103,9 +103,10 @@ Each request is bounded by `pr.timeout`. Responses are capped in size, and a bod
 Reviewers, labels, closing the source branch, updating or merging a pull request, further result pages, and Bitbucket
 Data Center are not handled.
 
-The branch must already be on the remote: until milestone M-32 lands, ralph does not push it. M-32 also makes
-`ralph pr create` push the branch, adopt an open pull request that already exists, and record the pull request on the
-milestone.
+`ralph pr create` pushes the milestone's branch to `pr.remote` itself, so the branch does not have to be pushed by
+hand. The push is plain and never forced. Before creating anything it asks Bitbucket for an open pull request from the
+branch into `pr.base_branch`: if one exists, it is adopted and recorded instead of creating a duplicate, and a pull
+request from the same branch into a different branch is not adopted. See [`ralph pr create`](cli.md#ralph-pr-create).
 
 ## Errors
 
@@ -116,7 +117,7 @@ A failed call returns an error that begins `bitbucket_cloud: <method> <path>:` a
 | 401 | `authentication failed (401)`; names `pr.bitbucket_cloud.auth` and the credential settings. | The auth mode, the email and token variables, and that the token has not expired. |
 | 403 | `permission denied (403)`; the credential lacks pull request write access. | The credential's [scopes](#credential-scopes). |
 | 404 | `repository <workspace>/<repo_slug> not found or not accessible (404)`. | `pr.bitbucket_cloud.workspace` and `repo_slug`, and that the credential can see the repository. |
-| 400 | `bad request (400)` with the API's message and field errors, then a hint to check that the source branch has been pushed. | That the branch is on the remote, and that the destination branch exists. |
+| 400 | `bad request (400)` with the API's message and field errors, then a hint to check that the source branch has been pushed. | That the destination branch exists, and that the push to `pr.remote` reached the repository configured here. |
 | 429 | `rate limited (429)`, with `Retry-After` when Bitbucket sends it. | Wait and run again. |
 | other | The status code and text, with the API's message when there is one. | The message. |
 | none | A timeout or network failure, wrapped with the method and path. | The network and `pr.timeout`. |
@@ -130,23 +131,24 @@ Automated tests use a fake server, so check once against a real repository befor
 scratch repository, because the last step opens a pull request.
 
 1. Export the credential and set `workspace`, `repo_slug`, and `pr.base_branch`. Run `ralph config validate`.
-2. Push the milestone's branch to the remote, for example `git push -u origin <branch>`. Creation does not push it.
+2. Check that `pr.remote` names the remote of the repository you configured. `ralph pr create` pushes the branch there.
 3. Print what would be sent:
 
    ```sh
    ralph pr create --milestone M-1 --dry-run
    ```
 
-   It prints the provider, the title, the branches, the drift check's result, and the body. A configuration problem,
-   such as a missing environment variable, is printed as a warning. The dry run sends nothing and needs no network.
+   It prints the provider, the title, the branches, the drift check's result, the push that would happen, and the body. A configuration problem,
+   such as a missing environment variable, is printed as a warning. The dry run pushes nothing, sends nothing, and needs no network.
 4. Open the pull request for real:
 
    ```sh
    ralph pr create --milestone M-1
    ```
 
-   It prints `opened <url>` on success. Open the link and confirm the title, the description, the source and
+   It pushes the branch and prints `opened <url>` on success. Open the link and confirm the title, the description, the source and
    destination branches, and that the pull request is a draft when `pr.draft` is true.
-5. Do not run the command a second time against the same branch: until M-32 lands nothing is recorded or adopted, so
-   Bitbucket answers the duplicate with a `400` error.
+5. Run the command a second time. It prints `exists <url>` and does nothing else, because the pull request is
+   recorded. Run `ralph pr unlink --milestone M-1`, then `ralph pr create --milestone M-1` again: it prints
+   `adopted <url>` for the same pull request, since it is still open.
 6. Decline the scratch pull request in Bitbucket.

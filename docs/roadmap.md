@@ -6,7 +6,7 @@ This page tracks what the skeleton deliberately leaves stubbed, and the open que
 
 | Capability | Today | Next |
 |---|---|---|
-| Pull requests | `ralph pr create` opens the pull request on Bitbucket Cloud for a branch that is already pushed, and `--dry-run` prints the request and validates the configuration. The provider can find an open pull request, but the command does not use it yet. | Push the branch, adopt an existing open pull request, and record the pull request on the milestone (milestone M-32). |
+| Pull requests | `ralph pr create` pushes the branch, adopts an open pull request or opens one on Bitbucket Cloud, and records it on the milestone; `--dry-run` prints the request and the push and validates the configuration. | Link the pull request from the Jira card. |
 
 ## Open questions
 
