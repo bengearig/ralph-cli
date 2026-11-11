@@ -165,6 +165,69 @@ its origin, shown as `from I-n` by `doc show` and `doc list`, and `ralph doc ret
   `--slug <slug>` to apply a new slug as part of the move. `--slug` is not a general rename: it only takes effect
   as part of a promote or return.
 
+## Watching
+
+A watch is the live form of a `show` command: it prints the same view, keeps running, and shows it again whenever it
+changes. It is read-only. It learns of changes by polling the database, so it sees changes made by a loop, an agent's
+MCP server, or another CLI process. `ralph initiative watch <id>` follows an initiative the way `ralph initiative show`
+prints it.
+
+| Flag | Meaning |
+|---|---|
+| `--interval <duration>` | How often to poll for changes. The default is `1s` and the minimum is `100ms`; a smaller value is an error. |
+| `--until-done` | End the watch when the initiative is finished: it has at least one milestone, every milestone is done or cancelled, and at least one is done. It ends with exit code `3` instead when a task is blocked. Without the flag the watch runs until interrupted. |
+
+Watches also take the global `--json`, `--project-dir`, and `--config` flags.
+
+### Output
+
+On a terminal, the view is redrawn in place without clearing the screen, so it does not flicker. The lines that
+changed are highlighted for a few seconds (in reverse video, or in bold when `NO_COLOR` is set). Rows that only moved
+because another row was inserted are not highlighted, and nothing is highlighted on the first draw. A footer line
+under the view shows the interval and the time of the last update:
+
+```
+watching - every 1s - updated 14:03:07 - Ctrl-C to exit
+```
+
+A view taller than the terminal shows its first lines, and the footer says how many more lines are hidden. A line wider
+than the terminal is clipped rather than wrapped. The size is read at each draw, so resizing the terminal redraws the
+view. The cursor is hidden while the watch runs and restored on exit, leaving the last view on screen.
+
+When the output is not a terminal, or with `--json`, the watch writes one compact JSON document per line, with no
+escape sequences and no footer. The document has the same data as `show --json`. The first is written immediately and
+one more for each change. Warnings and notices go to standard error, never to standard output.
+
+```sh
+$ ralph initiative watch I-1 --json
+{"id":"I-1","slug":"demo","title":"Demo","brief":"x","created_at":"2026-11-11T17:31:24Z","updated_at":"2026-11-11T17:31:24Z","status":{"id":"I-1","title":"Demo","task_counts":{"CANCELLED":1,"DONE":1},"milestones":[{"id":"M-1","initiative_id":"I-1","slug":"first","title":"First","description":"","position":1,"status":"DONE","task_counts":{"CANCELLED":1,"DONE":1},"created_at":"2026-11-11T17:31:29Z","updated_at":"2026-11-11T17:31:29Z"}],"documents":0}}
+```
+
+Each later change adds another line of the same shape.
+
+To wait for an initiative from a script, use `--until-done`:
+
+```sh
+ralph initiative watch I-8 --until-done && ./deploy.sh
+```
+
+The command exits `0` once the initiative is finished, so the next command runs only then. Without a terminal it writes
+one JSON line per change meanwhile; redirect it to `/dev/null` to discard them.
+
+### Exit codes and errors
+
+| Exit code | When |
+|---|---|
+| `0` | The initiative is finished (with `--until-done`), or the output was closed. |
+| `3` | The initiative is stuck: a task is blocked (with `--until-done`). |
+| `130` | Interrupted by Ctrl-C or SIGTERM. The terminal is restored and nothing is printed. |
+| `1` | An error, including a bad `--interval` and the initiative no longer existing. Starting a watch on an initiative that does not exist gives the same error as `show`. |
+
+A poll that fails because the database is busy or locked, or because the poll timed out, is not an error. The footer
+shows `waiting: <reason>` in place of the update time (on standard error as a notice without a terminal), and the
+watch tries again at the next poll. An archived initiative is still watched. See
+[ADR 35](adr/0035-watch-by-polling-and-snapshot-comparison.md).
+
 ## Search
 
 | Command | Purpose |
