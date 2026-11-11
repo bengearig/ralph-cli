@@ -93,6 +93,24 @@ parents are set when the card is created and are not changed afterward.
 Only cards that already exist, or whose creation was attempted and failed, are touched. An edit never creates a card
 for work that predates Jira; see [Syncing existing work](#syncing-existing-work).
 
+## Pull request links
+
+When `ralph pr create` ends with a recorded pull request (`opened`, `adopted`, or `exists`), ralph adds a remote link
+to the milestone's card, titled `Pull request <repo>#<n>` with the relationship `pull request`. Only the milestone's
+card is linked; the initiative and its tasks keep no link, and `ralph pr unlink` does not remove one. A milestone
+without a card key, or a configuration without a task manager, is skipped silently.
+
+The link carries a stable `globalId` built from the pull request's provider, namespace, repository, and number, so Jira
+updates the existing link instead of adding a second one. That makes the call safe to repeat: rerunning
+`ralph pr create` after a failed link (the outcome is then `exists`) tries again. A failure is only a warning, such as
+`jira card AIN-3604: pull request link not added: ...`, on standard error; the command's outcome and exit code do not
+change. See [`ralph pr create`](cli.md#ralph-pr-create).
+
+Creating a remote link needs the Jira user to be allowed to see and link the issue. Atlassian's documentation for the
+remote issue link endpoint names the exact project permissions, but that page could not be read when this was written,
+so the permission name is not confirmed here; check the "Add or update remote issue link" entry in the Jira Cloud REST
+API reference. A missing permission surfaces as the `pull request link not added` warning.
+
 ## Status
 
 A card follows the status of its resource, so a board in Jira shows where the work stands.

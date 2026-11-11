@@ -318,8 +318,14 @@ prefixed with it, `[KEY] M-n: Title`, like the commit subjects. Only the recorde
 made and nothing warns when there is no key.
 
 With `--json` the result is `{"outcome": "opened" | "adopted" | "exists", "pushed": <bool>, "remote": "<name>",
-"pull_request": {provider, namespace, repository, number, url}}`. `pushed` is false when the remote was already up to
-date, and for `exists`.
+"pull_request": {provider, namespace, repository, number, url}, "card_warning": "<text>"}`. `pushed` is false when the
+remote was already up to date, and for `exists`. `card_warning` is omitted unless linking the card failed.
+
+After the outcome is printed, a milestone whose card has a key gets a remote link to the pull request (see
+[Pull request links](jira.md#pull-request-links)). This happens for `opened`, `adopted`, and `exists`, so rerunning
+retries a failed link. A failure prints `warning: jira card <key>: pull request link not added: <cause>` on standard
+error, or sets `card_warning` with `--json`; it never changes the outcome or the exit code. Nothing is printed when
+there is no card or no task manager. `--dry-run` links nothing, and a failed push never reaches the link.
 
 | Exit code | Meaning |
 | --- | --- |

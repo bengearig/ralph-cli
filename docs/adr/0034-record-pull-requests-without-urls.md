@@ -49,6 +49,11 @@ request already exists. A stored URL would go stale when the hosting provider or
 - When a task manager is configured and the milestone's card has a key, the title is prefixed with it, as in
   `[KEY] M-n: Title`, in the style of commit subjects. Only the recorded card is read, so there is no provider call
   and no warning when the key is missing.
+- After `ralph pr create` reaches `opened`, `adopted`, or `exists`, it links the pull request on the milestone's card
+  through the optional `PullRequestLinker` task manager interface. The link has a stable identifier, so it is
+  idempotent and rerunning the command retries a failed link. A failure is a warning (and `card_warning` with
+  `--json`) and never changes the outcome or exit code. Only the milestone's card is linked, `--dry-run` links
+  nothing, and `ralph pr unlink` removes no link. See [Pull request links](../jira.md#pull-request-links).
 - `--dry-run` pushes nothing and calls no provider API. It prints the remote and branch that would be pushed, and the
   recorded pull request when there is one.
 

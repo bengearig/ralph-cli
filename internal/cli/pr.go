@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -188,7 +189,7 @@ merged; --force skips that check, and --dry-run reports it as warnings.`,
 				return a.printf("\n%s", req.Body)
 			}
 			if recorded != nil {
-				return a.reportPullRequest("exists", recorded, git.PushResult{})
+				return a.reportAndLinkPullRequest(cmd.Context(), svc, mID, "exists", recorded, git.PushResult{})
 			}
 			repo, err := loop.ResolveRepo(cmd.Context(), p.Root)
 			if err != nil {
@@ -220,7 +221,7 @@ merged; --force skips that check, and --dry-run reports it as warnings.`,
 				}
 				return fmt.Errorf("the pull request exists (%s) but could not be recorded; rerunning pr create adopts it: %w", pullRequestLine(*view), err)
 			}
-			return a.reportPullRequest(outcome, view, pushed)
+			return a.reportAndLinkPullRequest(cmd.Context(), svc, mID, outcome, view, pushed)
 		},
 	}
 	create.Flags().StringVar(&milestone, "milestone", "", "milestone ID, e.g. M-1 (required)")
@@ -280,15 +281,35 @@ type pushPlan struct {
 	Branch string `json:"branch"`
 }
 
+// reportAndLinkPullRequest prints the outcome, then links the recorded pull
+// request on the milestone's card. A link failure is only a warning.
+func (a *app) reportAndLinkPullRequest(ctx context.Context, svc *service.Service, mID int64, outcome string, view *service.PullRequestView, pushed git.PushResult) error {
+	if a.jsonOut {
+		warning := svc.LinkMilestonePullRequest(ctx, mID)
+		if warning != "" {
+			a.warn(warning)
+		}
+		return a.reportPullRequest(outcome, view, pushed, warning)
+	}
+	if err := a.reportPullRequest(outcome, view, pushed, ""); err != nil {
+		return err
+	}
+	if warning := svc.LinkMilestonePullRequest(ctx, mID); warning != "" {
+		a.warn(warning)
+	}
+	return nil
+}
+
 // reportPullRequest prints a pull request command's outcome.
-func (a *app) reportPullRequest(outcome string, view *service.PullRequestView, pushed git.PushResult) error {
+func (a *app) reportPullRequest(outcome string, view *service.PullRequestView, pushed git.PushResult, cardWarning string) error {
 	if a.jsonOut {
 		return a.writeJSON(struct {
 			Outcome     string                   `json:"outcome"`
 			Pushed      bool                     `json:"pushed"`
 			Remote      string                   `json:"remote"`
 			PullRequest *service.PullRequestView `json:"pull_request"`
-		}{outcome, pushed.Pushed, pushed.Remote, view})
+			CardWarning string                   `json:"card_warning,omitempty"`
+		}{outcome, pushed.Pushed, pushed.Remote, view, cardWarning})
 	}
 	return a.printf("%s %s\n", outcome, pullRequestLine(*view))
 }
