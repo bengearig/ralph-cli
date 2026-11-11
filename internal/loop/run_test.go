@@ -885,6 +885,78 @@ func TestRunAdoptsCommitsAheadOfRecordedHead(t *testing.T) {
 	}
 }
 
+func newUnstartedEnv(t *testing.T) *runEnv {
+	t.Helper()
+	e := newRunEnv(t, "a")
+	base := gitCmd(t, e.root, "rev-parse", "HEAD")
+	gitCmd(t, e.root, "branch", "ralph/oidc-login")
+	if err := e.svc.RecordMilestoneGit(context.Background(), e.mID, domain.MilestoneGit{Branch: "ralph/oidc-login", BaseCommit: base, HeadCommit: base}); err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
+func TestRunRerecordsUnstartedBranchMovedToBase(t *testing.T) {
+	e := newUnstartedEnv(t)
+	e.commitFile(t, "main-moves-on.txt")
+	tip := gitCmd(t, e.root, "rev-parse", "HEAD")
+	gitCmd(t, e.root, "branch", "--force", "ralph/oidc-login", "main")
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+	out, err := e.run(t, context.Background(), h)
+	if err != nil || out.StopReason != StopCompleted || h.calls != 1 {
+		t.Fatalf("out = %+v, err = %v\n%s", out, err, e.out.String())
+	}
+	want := "! M-1 branch ralph/oidc-login was moved to " + tip[:10] + ", which is in main; recording it as the base\n"
+	if !strings.Contains(e.out.String(), want) {
+		t.Errorf("feed lacks %q:\n%s", want, e.out.String())
+	}
+	if strings.Contains(e.out.String(), "beyond the recorded head") {
+		t.Errorf("feed has the ahead warning:\n%s", e.out.String())
+	}
+	if m := e.milestone(t); m.Branch != "ralph/oidc-login" || m.BaseCommit != tip {
+		t.Errorf("record = %q base %q, want ralph/oidc-login base %q", m.Branch, m.BaseCommit, tip)
+	}
+}
+
+func TestRunRerecordsMovedBranchBeforeAnySession(t *testing.T) {
+	e := newUnstartedEnv(t)
+	e.commitFile(t, "main-moves-on.txt")
+	tip := gitCmd(t, e.root, "rev-parse", "HEAD")
+	gitCmd(t, e.root, "branch", "--force", "ralph/oidc-login", "main")
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) {
+		if m := e.milestone(t); m.BaseCommit != tip || m.HeadCommit != tip {
+			t.Errorf("during the session base %q head %q, want %q", m.BaseCommit, m.HeadCommit, tip)
+		}
+		return e.complete(id)
+	}}
+	if _, err := e.run(t, context.Background(), h); err != nil {
+		t.Fatalf("%v\n%s", err, e.out.String())
+	}
+}
+
+func TestRunUnstartedBranchWithOwnCommitRecordsHeadOnly(t *testing.T) {
+	e := newUnstartedEnv(t)
+	record := e.milestone(t)
+	gitCmd(t, e.root, "switch", "--quiet", "ralph/oidc-login")
+	e.commitFile(t, "manual.txt")
+	tip := gitCmd(t, e.root, "rev-parse", "HEAD")
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) {
+		if got := e.milestone(t).HeadCommit; got != tip {
+			t.Errorf("recorded head during the session = %q, want %q", got, tip)
+		}
+		return e.complete(id)
+	}}
+	if _, err := e.run(t, context.Background(), h); err != nil {
+		t.Fatalf("%v\n%s", err, e.out.String())
+	}
+	if !strings.Contains(e.out.String(), "beyond the recorded head") || strings.Contains(e.out.String(), "recording it as the base") {
+		t.Errorf("feed:\n%s", e.out.String())
+	}
+	if m := e.milestone(t); m.BaseCommit != record.BaseCommit {
+		t.Errorf("base = %q, want unchanged %q", m.BaseCommit, record.BaseCommit)
+	}
+}
+
 func TestRunResumesUnchangedBranch(t *testing.T) {
 	e := newRecordedEnv(t)
 	record := e.milestone(t)

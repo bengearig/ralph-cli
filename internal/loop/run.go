@@ -375,6 +375,16 @@ func (r Runner) checkDrift(ctx context.Context, milestoneID int64, f feed) error
 	case drift.StateUnchanged, drift.StateUnrecorded:
 		return nil
 	case drift.StateAhead:
+		if report.Unstarted && report.ProposedBase == report.Tip {
+			g := domain.MilestoneGit{Branch: report.Recorded.Branch, BaseCommit: report.Tip, HeadCommit: report.Tip}
+			f.printf("! %s branch %s was moved to %s, which is in %s; recording it as the base\n",
+				report.Milestone, g.Branch, report.Tip[:min(len(report.Tip), 10)],
+				strings.TrimPrefix(strings.TrimPrefix(report.BaseRef, "refs/heads/"), "refs/remotes/"))
+			if err := r.Service.RecordMilestoneGit(ctx, milestoneID, g); err != nil {
+				return fmt.Errorf("recording the milestone base and head: %w", err)
+			}
+			return nil
+		}
 		f.printf("! %s branch has %d commit(s) beyond the recorded head:\n", report.Milestone, len(report.ExtraCommits))
 		for _, c := range report.ExtraCommits {
 			f.printf("  %s %s\n", c.Hash[:min(len(c.Hash), 12)], c.Subject)
