@@ -72,6 +72,28 @@ func (o watchOptions) validate() error {
 	return nil
 }
 
+type listWatch struct {
+	Watch    bool
+	Interval time.Duration
+}
+
+func addListWatchFlags(cmd *cobra.Command) *listWatch {
+	w := &listWatch{}
+	cmd.Flags().BoolVarP(&w.Watch, "watch", "w", false, "poll and show the output again whenever it changes")
+	cmd.Flags().DurationVar(&w.Interval, "interval", time.Second, "how often to poll for changes with --watch (minimum 100ms)")
+	return w
+}
+
+func (w *listWatch) check(cmd *cobra.Command) error {
+	if !w.Watch {
+		if cmd.Flags().Changed("interval") {
+			return errors.New("--interval requires --watch")
+		}
+		return nil
+	}
+	return watchOptions{Interval: w.Interval}.validate()
+}
+
 type stuckError struct{}
 
 func (stuckError) Error() string { return "stopped: needs a person" }
