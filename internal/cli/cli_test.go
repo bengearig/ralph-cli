@@ -813,6 +813,7 @@ type fakeProvider struct {
 	createError error
 	onCreate    func()
 	finds       int
+	onFind      func()
 	findArgs    [2]string
 	createReq   pr.Request
 }
@@ -833,12 +834,16 @@ func (f *fakeProvider) Create(_ context.Context, req pr.Request) (pr.PullRequest
 
 func (f *fakeProvider) FindOpen(_ context.Context, source, destination string) (pr.PullRequest, bool, error) {
 	f.finds++
+	if f.onFind != nil {
+		f.onFind()
+	}
 	f.findArgs = [2]string{source, destination}
 	return f.found, f.foundOK, f.findError
 }
 
 func TestPRCreateDriftGate(t *testing.T) {
 	h, git, commit := newGitTestEnv(t)
+	addBareRemote(t, git, "origin")
 	base := git("rev-parse", "HEAD")
 	h.ok("initiative", "create", "--title", "SSO")
 	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Login")

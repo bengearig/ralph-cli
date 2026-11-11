@@ -8,6 +8,7 @@ import (
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/drift"
 	"github.com/bengearig/ralph/internal/errs"
+	"github.com/bengearig/ralph/internal/git"
 	"github.com/bengearig/ralph/internal/loop"
 	"github.com/bengearig/ralph/internal/pr"
 	"github.com/bengearig/ralph/internal/service"
@@ -29,18 +30,19 @@ func (a *app) newPRCommand() *cobra.Command {
 	create := &cobra.Command{
 		Use:   "create",
 		Short: "Open the pull request for a milestone's branch",
-		Long: `Opens the pull request for the milestone's branch, which must already be pushed,
-and records it on the milestone.
+		Long: `Pushes the milestone's branch to pr.remote (never forced), opens the pull
+request for it, and records it on the milestone.
 
 If the milestone already records a pull request, pr create prints "exists" and
 the link and does nothing else; use ralph pr unlink to open another. Otherwise
-it asks the provider for an open pull request from the branch into
+it pushes the branch (a failed push exits with code 3 and opens nothing), then
+asks the provider for an open pull request from the branch into
 pr.base_branch: if there is one it is recorded and printed as "adopted", and if
 not a new one is created, recorded, and printed as "opened". Rerunning after a
 failure is safe.
 
---dry-run calls no provider API and shows the request that would be sent, plus
-the recorded pull request when there is one.
+--dry-run pushes nothing, calls no provider API, and shows the request that
+would be sent, plus the recorded pull request when there is one.
 
 The milestone's branch must match its recorded git state: otherwise pr create
 refuses (exit code 3) and points at ralph milestone reconcile. --dry-run
@@ -122,6 +124,7 @@ merged; --force skips that check, and --dry-run reports it as warnings.`,
 			if err != nil {
 				return err
 			}
+			remote := l.Config.PR.Remote
 			var recorded *service.PullRequestView
 			if m.PullRequest != nil {
 				v := *m.PullRequest
@@ -152,8 +155,9 @@ merged; --force skips that check, and --dry-run reports it as warnings.`,
 						Drift      *drift.Report            `json:"drift"`
 						DriftError string                   `json:"drift_error,omitempty"`
 						DepWarns   []string                 `json:"dependency_warnings,omitempty"`
+						Push       pushPlan                 `json:"push"`
 						PR         *service.PullRequestView `json:"pull_request,omitempty"`
-					}{provider.Name(), req, validation, driftReport, driftError, depWarnings, recorded})
+					}{provider.Name(), req, validation, driftReport, driftError, depWarnings, pushPlan{remote, branch}, recorded})
 				}
 				if validation != "" {
 					a.warn("provider is not ready:\n" + validation)
@@ -167,8 +171,8 @@ merged; --force skips that check, and --dry-run reports it as warnings.`,
 				} else {
 					driftLine = fmt.Sprintf("%s (%s)", report.State, report.Summary())
 				}
-				if err := a.printf("provider: %s\ntitle:    %s\nbranches: %s → %s\ndrift:    %s\ndraft:    %t\n",
-					provider.Name(), req.Title, req.SourceBranch, req.DestinationBranch, driftLine, req.Draft); err != nil {
+				if err := a.printf("provider: %s\ntitle:    %s\nbranches: %s → %s\ndrift:    %s\ndraft:    %t\npush:     %s %s (not pushed in a dry run)\n",
+					provider.Name(), req.Title, req.SourceBranch, req.DestinationBranch, driftLine, req.Draft, remote, branch); err != nil {
 					return err
 				}
 				if recorded != nil {
@@ -184,7 +188,15 @@ merged; --force skips that check, and --dry-run reports it as warnings.`,
 				return a.printf("\n%s", req.Body)
 			}
 			if recorded != nil {
-				return a.reportPullRequest("exists", recorded)
+				return a.reportPullRequest("exists", recorded, git.PushResult{})
+			}
+			repo, err := loop.ResolveRepo(cmd.Context(), p.Root)
+			if err != nil {
+				return err
+			}
+			pushed, err := repo.Push(cmd.Context(), remote, branch)
+			if err != nil {
+				return fmt.Errorf("%w: pushing %s to %s failed: %s; fix the push, then rerun: ralph pr create --milestone %s", errs.ErrNeedsHuman, branch, remote, err, m.ID)
 			}
 			found, ok, err := provider.FindOpen(cmd.Context(), branch, l.Config.PR.BaseBranch)
 			if err != nil {
@@ -208,7 +220,7 @@ merged; --force skips that check, and --dry-run reports it as warnings.`,
 				}
 				return fmt.Errorf("the pull request exists (%s) but could not be recorded; rerunning pr create adopts it: %w", pullRequestLine(*view), err)
 			}
-			return a.reportPullRequest(outcome, view)
+			return a.reportPullRequest(outcome, view, pushed)
 		},
 	}
 	create.Flags().StringVar(&milestone, "milestone", "", "milestone ID, e.g. M-1 (required)")
@@ -263,15 +275,20 @@ on the hosting service and needs no provider, token, or network.`,
 	return cmd
 }
 
+type pushPlan struct {
+	Remote string `json:"remote"`
+	Branch string `json:"branch"`
+}
+
 // reportPullRequest prints a pull request command's outcome.
-func (a *app) reportPullRequest(outcome string, view *service.PullRequestView) error {
+func (a *app) reportPullRequest(outcome string, view *service.PullRequestView, pushed git.PushResult) error {
 	if a.jsonOut {
 		return a.writeJSON(struct {
 			Outcome     string                   `json:"outcome"`
 			Pushed      bool                     `json:"pushed"`
 			Remote      string                   `json:"remote"`
 			PullRequest *service.PullRequestView `json:"pull_request"`
-		}{outcome, false, "", view})
+		}{outcome, pushed.Pushed, pushed.Remote, view})
 	}
 	return a.printf("%s %s\n", outcome, pullRequestLine(*view))
 }

@@ -120,6 +120,7 @@ func TestMilestoneHelpMentionsDependsOn(t *testing.T) {
 
 func TestLoopAndPRCreateEnforceDependencies(t *testing.T) {
 	h, git, commit := newGitTestEnv(t)
+	addBareRemote(t, git, "origin")
 	bin := filepath.Join(t.TempDir(), "claude")
 	script := "#!/bin/sh\ncat >/dev/null\n" +
 		"printf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"mcp_servers\":[{\"name\":\"ralph\",\"status\":\"connected\"}]}'\n" +
