@@ -25,4 +25,4 @@ This page tracks what the skeleton deliberately leaves stubbed, and the open que
 - Task dependencies beyond position ordering.
 - `ralph doctor` to check git, the harness binary, Ollama and the model, MCP registration, and provider credentials
   in one place.
-- Developer tooling (Makefile, linters, CI, release builds) once the skeleton settles.
+- Developer tooling (Makefile, linters, CI) once the skeleton settles.
