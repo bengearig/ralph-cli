@@ -58,6 +58,9 @@ func TestDefaults(t *testing.T) {
 		j.IssueTypes != (JiraIssueTypes{Initiative: "Epic", Milestone: "Task", Task: "Sub-task"}) {
 		t.Errorf("jira defaults = %+v", j)
 	}
+	if b := cfg.PR.BitbucketCloud; cfg.PR.Timeout != 30*time.Second || b.Auth != "basic" || b.EmailEnv != "RALPH_BITBUCKET_EMAIL" || b.TokenEnv != "RALPH_BITBUCKET_TOKEN" {
+		t.Errorf("pr defaults = %+v", cfg.PR)
+	}
 	if cfg.Import.MaxFileBytes != 1048576 {
 		t.Errorf("import.max_file_bytes = %d", cfg.Import.MaxFileBytes)
 	}
@@ -217,6 +220,9 @@ func TestLayerPrecedence(t *testing.T) {
 			"RALPH_LOOP__COMMIT_TRAILER=false",
 			"RALPH_LOOP__COMMIT_CARD_TRAILER=true",
 			"RALPH_BITBUCKET_TOKEN=secret",
+			"RALPH_BITBUCKET_EMAIL=me@example.com",
+			"RALPH_PR__BITBUCKET_CLOUD__AUTH=bearer",
+			"RALPH_PR__TIMEOUT=5s",
 			"OTHER=1",
 		},
 		Flags: fs,
@@ -242,6 +248,12 @@ func TestLayerPrecedence(t *testing.T) {
 	}
 	if got := strings.Join(c.Harness.ClaudeCode.ExtraArgs, " "); got != "--verbose --debug" {
 		t.Errorf("env slice: extra_args = %q", got)
+	}
+	if c.PR.BitbucketCloud.Auth != "bearer" || c.PR.Timeout != 5*time.Second {
+		t.Errorf("env overrides: pr = %+v", c.PR)
+	}
+	if c.PR.BitbucketCloud.EmailEnv != "RALPH_BITBUCKET_EMAIL" || c.PR.BitbucketCloud.TokenEnv != "RALPH_BITBUCKET_TOKEN" {
+		t.Errorf("named env vars must not enter the config: %+v", c.PR.BitbucketCloud)
 	}
 	if c.PR.Draft {
 		t.Error("env bool: pr.draft should be false")
@@ -452,6 +464,56 @@ func TestPaths(t *testing.T) {
 	}
 	if got := cfg.ProjectName("/src/widgets"); got != "widgets" {
 		t.Errorf("project name = %q", got)
+	}
+}
+
+func TestValidatePR(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{"valid basic", func(c *Config) {}, ""},
+		{"bearer without email_env", func(c *Config) {
+			c.PR.BitbucketCloud.Auth = "bearer"
+			c.PR.BitbucketCloud.EmailEnv = ""
+		}, ""},
+		{"zero timeout", func(c *Config) { c.PR.Timeout = 0 }, "pr.timeout:"},
+		{"negative timeout", func(c *Config) { c.PR.Timeout = -time.Second }, "pr.timeout:"},
+		{"unknown auth", func(c *Config) { c.PR.BitbucketCloud.Auth = "oauth" }, "pr.bitbucket_cloud.auth:"},
+		{"empty auth", func(c *Config) { c.PR.BitbucketCloud.Auth = "" }, "pr.bitbucket_cloud.auth:"},
+		{"empty token_env", func(c *Config) { c.PR.BitbucketCloud.TokenEnv = " " }, "pr.bitbucket_cloud.token_env:"},
+		{"bearer empty token_env", func(c *Config) {
+			c.PR.BitbucketCloud.Auth = "bearer"
+			c.PR.BitbucketCloud.TokenEnv = ""
+		}, "pr.bitbucket_cloud.token_env:"},
+		{"basic empty email_env", func(c *Config) { c.PR.BitbucketCloud.EmailEnv = "" }, "pr.bitbucket_cloud.email_env:"},
+		{"other provider skips section", func(c *Config) {
+			c.PR.Provider = "github"
+			c.PR.BitbucketCloud = BitbucketCloudConfig{}
+		}, "pr.provider:"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := Defaults()
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.mutate(cfg)
+			err = cfg.Validate()
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want %q in %v", tc.want, err)
+			}
+			if tc.name == "other provider skips section" && strings.Contains(err.Error(), "pr.bitbucket_cloud") {
+				t.Errorf("bitbucket settings validated for another provider: %v", err)
+			}
+		})
 	}
 }
 

@@ -26,6 +26,9 @@ const (
 
 	PRBitbucketCloud = "bitbucket_cloud"
 
+	BitbucketAuthBasic  = "basic"
+	BitbucketAuthBearer = "bearer"
+
 	TaskManagerNone = "none"
 	TaskManagerJira = "jira"
 )
@@ -33,12 +36,13 @@ const (
 var jiraDurationRE = regexp.MustCompile(`^[0-9]+[wdhm]( [0-9]+[wdhm])*$`)
 
 var (
-	knownHarnesses    = []string{HarnessClaudeCode}
-	knownEmbeddings   = []string{EmbeddingsOllama, EmbeddingsNone}
-	knownPRProviders  = []string{PRBitbucketCloud}
-	knownTaskManagers = []string{TaskManagerNone, TaskManagerJira}
-	knownLogLevels    = []string{"debug", "info", "warn", "error"}
-	knownLogFormats   = []string{"text", "json"}
+	knownHarnesses      = []string{HarnessClaudeCode}
+	knownEmbeddings     = []string{EmbeddingsOllama, EmbeddingsNone}
+	knownPRProviders    = []string{PRBitbucketCloud}
+	knownBitbucketAuths = []string{BitbucketAuthBasic, BitbucketAuthBearer}
+	knownTaskManagers   = []string{TaskManagerNone, TaskManagerJira}
+	knownLogLevels      = []string{"debug", "info", "warn", "error"}
+	knownLogFormats     = []string{"text", "json"}
 )
 
 // Step is a phase of the RALPH method that can run on its own harness.
@@ -154,12 +158,15 @@ type PRConfig struct {
 	Provider       string               `koanf:"provider"`
 	BaseBranch     string               `koanf:"base_branch"`
 	Draft          bool                 `koanf:"draft"`
+	Timeout        time.Duration        `koanf:"timeout"`
 	BitbucketCloud BitbucketCloudConfig `koanf:"bitbucket_cloud"`
 }
 
 type BitbucketCloudConfig struct {
 	Workspace string `koanf:"workspace"`
 	RepoSlug  string `koanf:"repo_slug"`
+	Auth      string `koanf:"auth"`
+	EmailEnv  string `koanf:"email_env"`
 	TokenEnv  string `koanf:"token_env"`
 }
 
@@ -349,8 +356,18 @@ func (c *Config) Validate() error {
 	if strings.TrimSpace(c.PR.BaseBranch) == "" {
 		bad("pr.base_branch", "must not be empty")
 	}
-	if c.PR.Provider == PRBitbucketCloud && strings.TrimSpace(c.PR.BitbucketCloud.TokenEnv) == "" {
-		bad("pr.bitbucket_cloud.token_env", "must name an environment variable")
+	if c.PR.Timeout <= 0 {
+		bad("pr.timeout", "must be positive")
+	}
+	if c.PR.Provider == PRBitbucketCloud {
+		b := c.PR.BitbucketCloud
+		oneOf("pr.bitbucket_cloud.auth", b.Auth, knownBitbucketAuths)
+		if b.Auth == BitbucketAuthBasic && strings.TrimSpace(b.EmailEnv) == "" {
+			bad("pr.bitbucket_cloud.email_env", "must name an environment variable")
+		}
+		if strings.TrimSpace(b.TokenEnv) == "" {
+			bad("pr.bitbucket_cloud.token_env", "must name an environment variable")
+		}
 	}
 
 	oneOf("task_manager.provider", c.TaskManager.Provider, knownTaskManagers)

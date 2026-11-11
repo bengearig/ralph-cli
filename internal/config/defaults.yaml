@@ -110,9 +110,17 @@ pr:
   provider: bitbucket_cloud
   base_branch: main
   draft: true
+  # Per-request timeout for pull request provider calls.
+  timeout: 30s
   bitbucket_cloud:
     workspace: ""
     repo_slug: ""
+    # basic | bearer. basic sends the account email and an API token; bearer
+    # sends the token alone, as for a repository or workspace access token.
+    auth: basic
+    # Name of the environment variable holding the account email, used with
+    # basic auth. Never put the email itself in a config file.
+    email_env: RALPH_BITBUCKET_EMAIL
     # Name of the environment variable holding the API token. Never put the
     # token itself in a config file.
     token_env: RALPH_BITBUCKET_TOKEN
