@@ -575,3 +575,141 @@ func TestResetHard(t *testing.T) {
 		t.Errorf("working tree not clean: %s", st)
 	}
 }
+
+// newRemote creates a bare repository and registers it as origin of r.
+func newRemote(t *testing.T, r Repo) Repo {
+	t.Helper()
+	bare := Repo{Dir: t.TempDir()}
+	mustRun(t, bare, "init", "--quiet", "--bare", "--initial-branch=main")
+	mustRun(t, r, "remote", "add", "origin", bare.Dir)
+	return bare
+}
+
+func TestPushNewBranchSetsUpstream(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	bare := newRemote(t, r)
+	if err := r.CreateBranch(ctx, "ralph/x", "main"); err != nil {
+		t.Fatal(err)
+	}
+	addCommit(t, r, "x.txt")
+	res, err := r.Push(ctx, "origin", "ralph/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Pushed || res.Remote != "origin" || res.Branch != "ralph/x" {
+		t.Errorf("result = %+v", res)
+	}
+	if got, want := mustRun(t, bare, "rev-parse", "refs/heads/ralph/x"), mustRun(t, r, "rev-parse", "HEAD"); got != want {
+		t.Errorf("remote tip = %s, want %s", got, want)
+	}
+	if got := mustRun(t, r, "config", "branch.ralph/x.remote"); got != "origin" {
+		t.Errorf("branch remote = %q", got)
+	}
+	if got := mustRun(t, r, "config", "branch.ralph/x.merge"); got != "refs/heads/ralph/x" {
+		t.Errorf("branch merge = %q", got)
+	}
+}
+
+func TestPushAgain(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	bare := newRemote(t, r)
+	if err := r.CreateBranch(ctx, "ralph/x", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Push(ctx, "origin", "ralph/x"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := r.Push(ctx, "origin", "ralph/x")
+	if err != nil || res.Pushed {
+		t.Fatalf("second push = %+v, %v; want Pushed false", res, err)
+	}
+	addCommit(t, r, "more.txt")
+	res, err = r.Push(ctx, "origin", "ralph/x")
+	if err != nil || !res.Pushed {
+		t.Fatalf("push after commit = %+v, %v; want Pushed true", res, err)
+	}
+	if got, want := mustRun(t, bare, "rev-parse", "refs/heads/ralph/x"), mustRun(t, r, "rev-parse", "HEAD"); got != want {
+		t.Errorf("remote tip = %s, want %s", got, want)
+	}
+}
+
+func TestPushWhileAnotherBranchIsCheckedOut(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	bare := newRemote(t, r)
+	if err := r.CreateBranch(ctx, "ralph/x", "main"); err != nil {
+		t.Fatal(err)
+	}
+	addCommit(t, r, "x.txt")
+	if err := r.Switch(ctx, "main"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := r.Push(ctx, "origin", "ralph/x")
+	if err != nil || !res.Pushed {
+		t.Fatalf("push = %+v, %v", res, err)
+	}
+	if got, want := mustRun(t, bare, "rev-parse", "refs/heads/ralph/x"), mustRun(t, r, "rev-parse", "ralph/x"); got != want {
+		t.Errorf("remote tip = %s, want %s", got, want)
+	}
+	if ok, _ := bare.RefExists(ctx, "refs/heads/main"); ok {
+		t.Error("main should not have been pushed")
+	}
+}
+
+func TestPushDivergedIsRejectedNotForced(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	bare := newRemote(t, r)
+	if err := r.CreateBranch(ctx, "ralph/x", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Push(ctx, "origin", "ralph/x"); err != nil {
+		t.Fatal(err)
+	}
+	other := Repo{Dir: t.TempDir()}
+	mustRun(t, other, "clone", "--quiet", bare.Dir, other.Dir+"/w")
+	clone := Repo{Dir: other.Dir + "/w"}
+	mustRun(t, clone, "switch", "--quiet", "ralph/x")
+	commitFile(t, clone, "remote.txt", "remote\n", "remote commit")
+	mustRun(t, clone, "push", "--quiet", "origin", "HEAD:refs/heads/ralph/x")
+	remoteTip := mustRun(t, bare, "rev-parse", "refs/heads/ralph/x")
+
+	addCommit(t, r, "local.txt")
+	res, err := r.Push(ctx, "origin", "ralph/x")
+	var ge *Error
+	if !errors.As(err, &ge) {
+		t.Fatalf("err = %v, want *Error", err)
+	}
+	if res.Pushed {
+		t.Error("Pushed should be false on failure")
+	}
+	if !strings.Contains(err.Error(), "rejected") {
+		t.Errorf("error should carry git's rejection: %v", err)
+	}
+	if got := mustRun(t, bare, "rev-parse", "refs/heads/ralph/x"); got != remoteTip {
+		t.Errorf("remote tip changed to %s from %s", got, remoteTip)
+	}
+}
+
+func TestPushMissingRemote(t *testing.T) {
+	r := newRepo(t)
+	_, err := r.Push(context.Background(), "nowhere", "main")
+	var ge *Error
+	if !errors.As(err, &ge) || !strings.Contains(err.Error(), "nowhere") {
+		t.Fatalf("err = %v, want *Error mentioning the remote", err)
+	}
+}
+
+func TestPushRejectsEmptyArguments(t *testing.T) {
+	// A directory that is not a repository would make any git run fail with *Error.
+	r := Repo{Dir: t.TempDir()}
+	for _, tc := range []struct{ remote, branch string }{{"", "main"}, {"origin", ""}} {
+		_, err := r.Push(context.Background(), tc.remote, tc.branch)
+		var ge *Error
+		if err == nil || errors.As(err, &ge) {
+			t.Errorf("Push(%q, %q) = %v, want a plain error", tc.remote, tc.branch, err)
+		}
+	}
+}

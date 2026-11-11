@@ -339,3 +339,49 @@ func (r Repo) ListFiles(ctx context.Context, pathspec string) ([]string, error) 
 	}
 	return files, nil
 }
+
+// PushResult is the outcome of Push.
+type PushResult struct {
+	// Pushed is false when the remote branch was already up to date.
+	Pushed         bool
+	Remote, Branch string
+}
+
+// Push pushes the local branch to the same-named branch on remote and sets it
+// as the upstream, whichever branch is checked out. It never forces: a remote
+// that has diverged fails with git's rejection as a *Error.
+func (r Repo) Push(ctx context.Context, remote, branch string) (PushResult, error) {
+	if remote == "" {
+		return PushResult{}, errors.New("git: push needs a remote")
+	}
+	if branch == "" {
+		return PushResult{}, errors.New("git: push needs a branch")
+	}
+	ref := "refs/heads/" + branch
+	args := []string{"push", "--porcelain", "--set-upstream", remote, ref + ":" + ref}
+	out, err := r.runRaw(ctx, args...)
+	if err != nil {
+		return PushResult{}, err
+	}
+	res := PushResult{Remote: remote, Branch: branch}
+	found := false
+	for _, line := range strings.Split(out, "\n") {
+		// Ref lines are "<flag>\t<from>:<to>\t<summary>"; the flag may be a space.
+		parts := strings.Split(line, "\t")
+		if len(parts) < 3 || len(parts[0]) != 1 || !strings.Contains(parts[1], ":") {
+			continue
+		}
+		switch parts[0][0] {
+		case '=':
+			found = true
+		case ' ', '*':
+			found, res.Pushed = true, true
+		default:
+			return PushResult{}, &Error{Args: args, Msg: "unexpected push status: " + strings.TrimSpace(line), Err: errors.New("unexpected push status")}
+		}
+	}
+	if !found {
+		return PushResult{}, &Error{Args: args, Msg: "unrecognized push output: " + strings.TrimSpace(out), Err: errors.New("unrecognized push output")}
+	}
+	return res, nil
+}
