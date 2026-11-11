@@ -258,9 +258,28 @@ the document is project-wide. The file's record is marked `done` with a `created
 | `ralph milestone merge <id> [--dry-run] [--delete-branch]` | Fast-forward the base branch to a finished milestone's branch. See [below](#ralph-milestone-merge). |
 | `ralph pr create --milestone <id> [--force] --dry-run` | Print the pull request that would be opened, the drift check's result, and any provider configuration problems. |
 | `ralph pr create --milestone <id>` | Open the pull request. *Not implemented yet (exit code 2).* |
+| `ralph pr unlink --milestone <id>` | Forget the milestone's recorded pull request. See [below](#recorded-pull-requests). |
 
 `ralph loop` and `ralph pr create`, including their dry runs, refuse a milestone whose initiative is
 [archived](#archiving).
+
+### Recorded pull requests
+
+A milestone can record the pull request opened for it: the provider name, namespace, repository, and number. The
+record never contains a URL; links are built from it when shown, by a static function per provider that needs no
+configuration, token, or network, so a record keeps its link after `pr.provider` changes. `ralph pr create` does not
+record anything yet, so a milestone has a record only once something writes one.
+
+`ralph milestone show` prints a `pull request:` line after `branch:` when a record exists: the URL, or
+`<provider> <namespace>/<repository>#<number>` when no link can be built for the provider. `ralph status` adds a `PR`
+column, with the same value or `-`, to a milestone table only when one of its milestones has a record;
+`ralph milestone list` is unchanged. With `--json`, the milestone view carries a `pull_request` object with `provider`,
+`namespace`, `repository`, `number`, and `url` (omitted when no link can be built).
+
+`ralph pr unlink --milestone <id>` clears the record so a new pull request can be opened, for example after the old
+one was declined. It prints `unlinked <link>`, or `nothing to unlink` when there is no record, and exits 0 either way.
+It changes nothing on the hosting service and has no MCP counterpart. It is refused for a milestone in an archived
+initiative.
 
 `ralph pr create` takes its source branch from the milestone's recorded branch, the one the loop worked on, and
 derives it from `loop.branch_template` only when none is recorded.

@@ -1672,3 +1672,60 @@ func TestPRUnlink(t *testing.T) {
 		t.Errorf("archived err = %v; want ErrArchived", err)
 	}
 }
+
+func TestPullRequestDisplay(t *testing.T) {
+	h := newTestEnv(t, true)
+	h.ok("initiative", "create", "--title", "Customer SSO")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Callback")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Logout")
+	record := func(id int64, rec domain.PullRequestRecord) {
+		cfg, err := config.Defaults()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.Embeddings.Provider = config.EmbeddingsNone
+		svc, closeFn, err := service.Open(context.Background(), cfg, h.dir, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer closeFn()
+		if err := svc.RecordMilestonePullRequest(context.Background(), id, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if out := h.ok("milestone", "show", "M-1"); strings.Contains(out, "pull request:") {
+		t.Errorf("show without record = %q", out)
+	}
+	if out := h.ok("status"); strings.Contains(out, "PR") {
+		t.Errorf("status without record has PR column: %q", out)
+	}
+
+	record(1, domain.PullRequestRecord{Provider: "bitbucket_cloud", Namespace: "acme", Repository: "app", Number: 7})
+	if out := h.ok("milestone", "show", "M-1"); !strings.Contains(out, "pull request: https://bitbucket.org/acme/app/pull-requests/7\n") {
+		t.Errorf("show = %q", out)
+	}
+	if out := h.ok("milestone", "show", "M-2"); strings.Contains(out, "pull request:") {
+		t.Errorf("show M-2 = %q", out)
+	}
+	out := h.ok("status")
+	if !strings.Contains(out, "PR") || !strings.Contains(out, "https://bitbucket.org/acme/app/pull-requests/7") {
+		t.Errorf("status = %q", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "M-2") && !strings.HasSuffix(strings.TrimSpace(line), "-") {
+			t.Errorf("M-2 row lacks '-': %q", line)
+		}
+	}
+	if out := h.ok("milestone", "list"); strings.Contains(out, "PR") {
+		t.Errorf("milestone list changed: %q", out)
+	}
+	if out := h.ok("--json", "status"); !strings.Contains(out, `"pull_request"`) {
+		t.Errorf("status json = %q", out)
+	}
+
+	record(1, domain.PullRequestRecord{Provider: "other", Namespace: "ns", Repository: "repo", Number: 3})
+	if out := h.ok("milestone", "show", "M-1"); !strings.Contains(out, "pull request: other ns/repo#3\n") {
+		t.Errorf("no-url show = %q", out)
+	}
+}

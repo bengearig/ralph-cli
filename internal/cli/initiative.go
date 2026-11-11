@@ -170,15 +170,31 @@ func (a *app) printMilestoneTable(ms []service.MilestoneView, waiting map[string
 	}
 	rows := make([][]string, 0, len(ms))
 	cards := make([]*service.CardView, 0, len(ms))
+	withPR := false
+	for _, m := range ms {
+		withPR = withPR || m.PullRequest != nil
+	}
 	for _, m := range ms {
 		status := m.Status
 		if w := waiting[m.ID]; len(w) > 0 {
 			status += "  waiting on " + strings.Join(w, ", ")
 		}
-		rows = append(rows, []string{m.ID, status, m.Title, service.FormatCounts(m.TaskCounts)})
+		row := []string{m.ID, status, m.Title, service.FormatCounts(m.TaskCounts)}
+		if withPR {
+			link := "-"
+			if m.PullRequest != nil {
+				link = pullRequestLine(*m.PullRequest)
+			}
+			row = append(row, link)
+		}
+		rows = append(rows, row)
 		cards = append(cards, m.Card)
 	}
-	header, rows := a.withCard([]string{"MILESTONE", "STATUS", "TITLE", "TASKS"}, rows, cards)
+	columns := []string{"MILESTONE", "STATUS", "TITLE", "TASKS"}
+	if withPR {
+		columns = append(columns, "PR")
+	}
+	header, rows := a.withCard(columns, rows, cards)
 	return a.writeTable(header, rows)
 }
 

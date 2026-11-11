@@ -210,10 +210,7 @@ on the hosting service and needs no provider, token, or network.`,
 			if view == nil {
 				return a.printf("nothing to unlink\n")
 			}
-			if view.URL != "" {
-				return a.printf("unlinked %s\n", view.URL)
-			}
-			return a.printf("unlinked %s %s/%s#%d\n", view.Provider, view.Namespace, view.Repository, view.Number)
+			return a.printf("unlinked %s\n", pullRequestLine(*view))
 		},
 	}
 	unlink.Flags().StringVar(&unlinkMilestone, "milestone", "", "milestone ID, e.g. M-1 (required)")

@@ -146,6 +146,15 @@ func branchLine(m service.MilestoneView) string {
 	return m.Branch + " (" + strings.Join(commits, ", ") + ")"
 }
 
+// pullRequestLine renders a recorded pull request as its URL, or as
+// provider namespace/repository#number when no URL can be built.
+func pullRequestLine(p service.PullRequestView) string {
+	if p.URL != "" {
+		return p.URL
+	}
+	return fmt.Sprintf("%s %s/%s#%d", p.Provider, p.Namespace, p.Repository, p.Number)
+}
+
 // archivedLine is the show-output line for archived state, empty when nothing
 // is archived. at is the item's own archived_at; initiative is named when only
 // that initiative is archived.

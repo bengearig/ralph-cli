@@ -144,6 +144,11 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 					return err
 				}
 			}
+			if m.PullRequest != nil {
+				if err := a.printf("pull request: %s\n", pullRequestLine(*m.PullRequest)); err != nil {
+					return err
+				}
+			}
 			if len(m.DependsOn) > 0 {
 				if err := a.printf("depends on: %s\n", dependsOnLine(m.DependsOn, findings)); err != nil {
 					return err

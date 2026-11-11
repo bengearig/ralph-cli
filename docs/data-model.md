@@ -49,6 +49,19 @@ The loop records the milestone's git state as it works (see [Git records](#git-r
 | `base_commit` | The commit the branch started from: the base branch's tip when the loop created it, or its merge base with `pr.base_branch` when the loop adopted an existing branch. Stays empty if an adopted branch has no base branch or no history in common with it. |
 | `head_commit` | The branch tip as the loop last left it, updated after every iteration. The loop also moves it to the tip when it resumes on a branch with commits added on top, and `ralph milestone reconcile --accept` sets it to the tip it accepts. |
 
+The milestone also records the pull request opened for it, in four columns:
+
+| Column | Meaning |
+|---|---|
+| `pr_provider` | The `pr.provider` name the pull request was opened with, such as `bitbucket_cloud`. |
+| `pr_namespace` | The workspace, organization, or owner the repository belongs to. |
+| `pr_repository` | The repository name. |
+| `pr_number` | The pull request number. A record exists when it is greater than zero. |
+
+The URL is never stored. It is built when shown by a static per-provider function, so a record outlives a change of
+`pr.provider`. Writing or clearing the record does not change `updated_at`, like the git fields. Deleting the
+milestone deletes the record. `ralph pr create` does not write it yet.
+
 ### Milestone dependencies
 
 The `milestone_dependencies` table records that a milestone waits on others, possibly in other initiatives, and
