@@ -172,5 +172,52 @@ merged; --force skips that check, and --dry-run reports it as warnings.`,
 	create.Flags().BoolVar(&dryRun, "dry-run", false, "print the request without sending it")
 	_ = create.MarkFlagRequired("milestone")
 	cmd.AddCommand(create)
+
+	var unlinkMilestone string
+	unlink := &cobra.Command{
+		Use:   "unlink",
+		Short: "Forget a milestone's recorded pull request",
+		Long: `Clears the pull request recorded for a milestone, so pr create can open a new
+one, for example after the old one was declined or closed. It changes nothing
+on the hosting service and needs no provider, token, or network.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			mID, err := parseIDArg(domain.KindMilestone, unlinkMilestone)
+			if err != nil {
+				return err
+			}
+			svc, err := a.service(cmd.Context())
+			if err != nil {
+				return err
+			}
+			removed, err := svc.ClearMilestonePullRequest(cmd.Context(), mID)
+			if err != nil {
+				return err
+			}
+			var view *service.PullRequestView
+			if !removed.IsZero() {
+				view = &service.PullRequestView{Provider: removed.Provider, Namespace: removed.Namespace, Repository: removed.Repository, Number: removed.Number}
+				if u, ok := pr.Link(removed.Provider, removed.Namespace, removed.Repository, removed.Number); ok {
+					view.URL = u
+				}
+			}
+			if a.jsonOut {
+				return a.writeJSON(struct {
+					Milestone string                   `json:"milestone"`
+					Unlinked  *service.PullRequestView `json:"unlinked"`
+				}{domain.FormatID(domain.KindMilestone, mID), view})
+			}
+			if view == nil {
+				return a.printf("nothing to unlink\n")
+			}
+			if view.URL != "" {
+				return a.printf("unlinked %s\n", view.URL)
+			}
+			return a.printf("unlinked %s %s/%s#%d\n", view.Provider, view.Namespace, view.Repository, view.Number)
+		},
+	}
+	unlink.Flags().StringVar(&unlinkMilestone, "milestone", "", "milestone ID, e.g. M-1 (required)")
+	_ = unlink.MarkFlagRequired("milestone")
+	cmd.AddCommand(unlink)
 	return cmd
 }

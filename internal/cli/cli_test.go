@@ -20,6 +20,7 @@ import (
 	"github.com/bengearig/ralph/internal/pr"
 	"github.com/bengearig/ralph/internal/project"
 	"github.com/bengearig/ralph/internal/service"
+	"github.com/bengearig/ralph/internal/store"
 )
 
 // testEnv runs ralph commands against a temporary project with embeddings
@@ -1585,5 +1586,89 @@ func TestInitiativeArchivePromoteChoice(t *testing.T) {
 	h.ok("initiative", "create", "--title", "Bare")
 	if got := h.ok("initiative", "archive", "I-1"); got != "archived I-1\n" {
 		t.Errorf("no documents = %q", got)
+	}
+}
+
+func TestPRUnlink(t *testing.T) {
+	h := newTestEnv(t, true)
+	t.Setenv("RALPH_PR__PROVIDER", "bitbucket_cloud")
+	h.ok("initiative", "create", "--title", "Customer SSO")
+	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Callback")
+	withService := func(f func(svc *service.Service)) {
+		cfg, err := config.Defaults()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.Embeddings.Provider = config.EmbeddingsNone
+		svc, closeFn, err := service.Open(context.Background(), cfg, h.dir, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer closeFn()
+		svc.SetPullRequestLink(pr.Link)
+		f(svc)
+	}
+	record := func(rec domain.PullRequestRecord) {
+		withService(func(svc *service.Service) {
+			if err := svc.RecordMilestonePullRequest(context.Background(), 1, rec); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	bb := domain.PullRequestRecord{Provider: "bitbucket_cloud", Namespace: "acme", Repository: "app", Number: 7}
+	const url = "https://bitbucket.org/acme/app/pull-requests/7"
+
+	record(bb)
+	if out := h.ok("pr", "unlink", "--milestone", "M-1"); out != "unlinked "+url+"\n" {
+		t.Errorf("unlink = %q", out)
+	}
+	var shown struct {
+		PullRequest *service.PullRequestView `json:"pull_request"`
+	}
+	h.json(&shown, "milestone", "show", "M-1")
+	if shown.PullRequest != nil {
+		t.Errorf("pull request still recorded: %+v", shown.PullRequest)
+	}
+	if out := h.ok("milestone", "show", "M-1"); strings.Contains(out, "pull request:") {
+		t.Errorf("milestone show still has a pull request line:\n%s", out)
+	}
+	if out := h.ok("pr", "unlink", "--milestone", "M-1"); out != "nothing to unlink\n" {
+		t.Errorf("second unlink = %q", out)
+	}
+
+	record(bb)
+	var res struct {
+		Milestone string                   `json:"milestone"`
+		Unlinked  *service.PullRequestView `json:"unlinked"`
+	}
+	h.json(&res, "pr", "unlink", "--milestone", "M-1")
+	want := service.PullRequestView{Provider: "bitbucket_cloud", Namespace: "acme", Repository: "app", Number: 7, URL: url}
+	if res.Milestone != "M-1" || res.Unlinked == nil || *res.Unlinked != want {
+		t.Errorf("json = %+v", res)
+	}
+	if out := h.ok("--json", "pr", "unlink", "--milestone", "M-1"); !strings.Contains(out, `"unlinked": null`) {
+		t.Errorf("second json = %q", out)
+	}
+
+	record(domain.PullRequestRecord{Provider: "other", Namespace: "ns", Repository: "repo", Number: 3})
+	if out := h.ok("pr", "unlink", "--milestone", "M-1"); out != "unlinked other ns/repo#3\n" {
+		t.Errorf("no-url unlink = %q", out)
+	}
+
+	if _, _, err := h.run("", "pr", "unlink"); err == nil {
+		t.Error("missing --milestone: want error")
+	}
+	if _, _, err := h.run("", "pr", "unlink", "--milestone", "M-9"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("unknown milestone err = %v; want not found", err)
+	}
+
+	record(bb)
+	withService(func(svc *service.Service) {
+		if _, err := svc.ArchiveInitiative(context.Background(), 1, service.DocumentChoice{}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if _, _, err := h.run("", "pr", "unlink", "--milestone", "M-1"); !errors.Is(err, service.ErrArchived) {
+		t.Errorf("archived err = %v; want ErrArchived", err)
 	}
 }
