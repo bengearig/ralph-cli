@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -33,8 +35,17 @@ func (r Repo) runRaw(ctx context.Context, args ...string) (string, error) {
 
 // runInput executes git with stdin and returns stdout unmodified.
 func (r Repo) runInput(ctx context.Context, stdin io.Reader, args ...string) (string, error) {
+	return r.runInputEnv(ctx, stdin, nil, args...)
+}
+
+// runInputEnv is runInput with extra KEY=value entries added to the inherited
+// environment.
+func (r Repo) runInputEnv(ctx context.Context, stdin io.Reader, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = r.Dir
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	cmd.Stdin = stdin
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -384,4 +395,147 @@ func (r Repo) Push(ctx context.Context, remote, branch string) (PushResult, erro
 		return PushResult{}, &Error{Args: args, Msg: "unrecognized push output: " + strings.TrimSpace(out), Err: errors.New("unrecognized push output")}
 	}
 	return res, nil
+}
+
+// FetchBranch updates refs/remotes/<remote>/<branch> from the remote and
+// nothing else: no other remote-tracking branch, tag, local branch, HEAD,
+// index, or work tree. It never prompts for credentials and has no deadline
+// beyond ctx. A remote that is unknown, unreachable, or lacks the branch fails
+// with git's *Error.
+func (r Repo) FetchBranch(ctx context.Context, remote, branch string) error {
+	if remote == "" {
+		return errors.New("git: fetch needs a remote")
+	}
+	if branch == "" {
+		return errors.New("git: fetch needs a branch")
+	}
+	refspec := "+refs/heads/" + branch + ":refs/remotes/" + remote + "/" + branch
+	_, err := r.runInputEnv(ctx, nil, []string{"GIT_TERMINAL_PROMPT=0"}, "fetch", "--quiet", "--no-tags", "--", remote, refspec)
+	return err
+}
+
+// BaseState is how a local branch relates to its remote-tracking branch.
+type BaseState string
+
+const (
+	BaseCurrent  BaseState = "current"
+	BaseBehind   BaseState = "behind"
+	BaseAhead    BaseState = "ahead"
+	BaseDiverged BaseState = "diverged"
+)
+
+// BaseStatus is the result of CompareBase.
+type BaseStatus struct {
+	State BaseState
+	// Local and Remote are full commit hashes.
+	Local, Remote string
+	// Behind is the number of commits the remote has that the local branch
+	// lacks; Ahead is the number the local branch has beyond the remote.
+	Behind, Ahead int
+}
+
+// ErrNoLocalBase is returned by CompareBase when the local branch is missing.
+var ErrNoLocalBase = errors.New("local branch does not exist")
+
+// CompareBase compares refs/heads/<branch> with refs/remotes/<remote>/<branch>
+// without fetching.
+func (r Repo) CompareBase(ctx context.Context, remote, branch string) (BaseStatus, error) {
+	localRef := "refs/heads/" + branch
+	remoteRef := "refs/remotes/" + remote + "/" + branch
+	ok, err := r.RefExists(ctx, localRef)
+	if err != nil {
+		return BaseStatus{}, err
+	}
+	if !ok {
+		return BaseStatus{}, fmt.Errorf("%w: %s", ErrNoLocalBase, localRef)
+	}
+	ok, err = r.RefExists(ctx, remoteRef)
+	if err != nil {
+		return BaseStatus{}, err
+	}
+	if !ok {
+		return BaseStatus{}, fmt.Errorf("git: %s does not exist; the remote branch was never fetched", remoteRef)
+	}
+	local, err := r.RevParse(ctx, localRef)
+	if err != nil {
+		return BaseStatus{}, err
+	}
+	remoteHash, err := r.RevParse(ctx, remoteRef)
+	if err != nil {
+		return BaseStatus{}, err
+	}
+	out, err := r.run(ctx, "rev-list", "--left-right", "--count", local+"..."+remoteHash)
+	if err != nil {
+		return BaseStatus{}, err
+	}
+	fields := strings.Fields(out)
+	if len(fields) != 2 {
+		return BaseStatus{}, fmt.Errorf("git: unexpected rev-list output %q", out)
+	}
+	st := BaseStatus{Local: local, Remote: remoteHash}
+	if st.Ahead, err = strconv.Atoi(fields[0]); err != nil {
+		return BaseStatus{}, fmt.Errorf("git: unexpected rev-list output %q", out)
+	}
+	if st.Behind, err = strconv.Atoi(fields[1]); err != nil {
+		return BaseStatus{}, fmt.Errorf("git: unexpected rev-list output %q", out)
+	}
+	switch {
+	case st.Ahead == 0 && st.Behind == 0:
+		st.State = BaseCurrent
+	case st.Ahead == 0:
+		st.State = BaseBehind
+	case st.Behind == 0:
+		st.State = BaseAhead
+	default:
+		st.State = BaseDiverged
+	}
+	return st, nil
+}
+
+// FastForwardBranch fast-forwards the local branch to the already fetched
+// refs/remotes/<remote>/<branch>. It never creates a merge commit, rewrites
+// history, or switches branches; a branch that is current or ahead is left as
+// it is, and a diverged one fails. The checked-out branch needs a clean work
+// tree outside Exclude.
+func (r Repo) FastForwardBranch(ctx context.Context, remote, branch string) error {
+	remoteRef := "refs/remotes/" + remote + "/" + branch
+	ok, err := r.BranchExists(ctx, branch)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("git: local branch %s does not exist", branch)
+	}
+	if ok, err = r.RefExists(ctx, remoteRef); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("git: %s does not exist; the remote branch was never fetched", remoteRef)
+	}
+	st, err := r.CompareBase(ctx, remote, branch)
+	if err != nil {
+		return err
+	}
+	switch st.State {
+	case BaseCurrent, BaseAhead:
+		return nil
+	case BaseDiverged:
+		return fmt.Errorf("git: %s and %s/%s have diverged (%d ahead, %d behind)", branch, remote, branch, st.Ahead, st.Behind)
+	}
+	current, err := r.CurrentBranch(ctx)
+	if err != nil {
+		return err
+	}
+	if current == branch {
+		dirty, err := r.Dirty(ctx)
+		if err != nil {
+			return err
+		}
+		if len(dirty) > 0 {
+			return fmt.Errorf("git: %s is checked out with uncommitted changes: %s", branch, strings.Join(dirty, ", "))
+		}
+		return r.MergeFFOnly(ctx, remoteRef)
+	}
+	_, err = r.run(ctx, "fetch", "--quiet", ".", remoteRef+":refs/heads/"+branch)
+	return err
 }

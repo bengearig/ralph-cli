@@ -11,6 +11,7 @@ import (
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/drift"
 	"github.com/bengearig/ralph/internal/git"
+	"github.com/bengearig/ralph/internal/loop"
 	"github.com/bengearig/ralph/internal/service"
 )
 
@@ -291,4 +292,35 @@ func TestMilestoneGetWaitingOn(t *testing.T) {
 		t.Fatalf("after merge: %+v", g)
 	}
 
+}
+
+func TestMilestoneGetWaitingOnStaleBase(t *testing.T) {
+	e := newRebasedMilestone(t)
+	ctx := context.Background()
+	two, err := e.svc.CreateMilestone(ctx, service.MilestoneInput{InitiativeID: 1, Title: "After login", DependsOn: []int64{e.mID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	old := gitCmd(t, e.root, "rev-parse", "main")
+	gitCmd(t, e.root, "merge", "--quiet", "--no-ff", "-m", "Merge", driftBranch)
+	gitCmd(t, e.root, "update-ref", "refs/remotes/origin/main", "HEAD")
+	gitCmd(t, e.root, "reset", "--quiet", "--hard", old)
+	opts := e.options()
+	inner := opts.DriftInput
+	opts.DriftInput = func(ctx context.Context, id int64) (drift.Input, error) {
+		in, err := inner(ctx, id)
+		in.BaseRemote = "origin"
+		return in, err
+	}
+	cs := connectService(t, e.svc, opts)
+
+	var g struct {
+		WaitingOn []loop.DependencyFinding `json:"waiting_on"`
+	}
+	mustOK(t, cs, "milestone_get", map[string]any{"id": two.ID}, &g)
+	if len(g.WaitingOn) != 1 || g.WaitingOn[0].State != loop.DependencyBaseStale ||
+		g.WaitingOn[0].Reason != "is merged into origin/main, but local main is behind" || g.WaitingOn[0].Fix != "git pull --ff-only origin main" {
+		t.Fatalf("waiting_on = %+v", g.WaitingOn)
+	}
 }

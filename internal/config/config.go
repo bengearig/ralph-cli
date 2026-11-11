@@ -27,6 +27,9 @@ const (
 	PRBitbucketCloud = "bitbucket_cloud"
 	PRGitHub         = "github"
 
+	StaleBaseRefuse = "refuse"
+	StaleBaseSync   = "sync"
+
 	BitbucketAuthBasic  = "basic"
 	BitbucketAuthBearer = "bearer"
 
@@ -40,6 +43,7 @@ var (
 	knownHarnesses      = []string{HarnessClaudeCode}
 	knownEmbeddings     = []string{EmbeddingsOllama, EmbeddingsNone}
 	knownPRProviders    = []string{PRBitbucketCloud, PRGitHub}
+	knownStaleBases     = []string{StaleBaseRefuse, StaleBaseSync}
 	knownBitbucketAuths = []string{BitbucketAuthBasic, BitbucketAuthBearer}
 	knownTaskManagers   = []string{TaskManagerNone, TaskManagerJira}
 	knownLogLevels      = []string{"debug", "info", "warn", "error"}
@@ -159,6 +163,7 @@ type PRConfig struct {
 	Provider       string               `koanf:"provider"`
 	BaseBranch     string               `koanf:"base_branch"`
 	Remote         string               `koanf:"remote"`
+	StaleBase      string               `koanf:"stale_base"`
 	Draft          bool                 `koanf:"draft"`
 	Timeout        time.Duration        `koanf:"timeout"`
 	BitbucketCloud BitbucketCloudConfig `koanf:"bitbucket_cloud"`
@@ -368,6 +373,7 @@ func (c *Config) Validate() error {
 	if strings.TrimSpace(c.PR.Remote) == "" {
 		bad("pr.remote", "must not be empty")
 	}
+	oneOf("pr.stale_base", c.PR.StaleBase, knownStaleBases)
 	if c.PR.Timeout <= 0 {
 		bad("pr.timeout", "must be positive")
 	}

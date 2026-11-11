@@ -305,8 +305,7 @@ func (t *tools) waitingOn(ctx context.Context, m service.MilestoneView) []loop.D
 	if len(m.DependsOn) == 0 || m.Status == service.MilestoneDone || m.Status == service.MilestoneCancelled {
 		return nil
 	}
-	own, err := t.driftInput(ctx, m.ID)
-	if err != nil {
+	if _, err := t.driftInput(ctx, m.ID); err != nil {
 		return nil
 	}
 	var fs []loop.DependencyFinding
@@ -319,12 +318,8 @@ func (t *tools) waitingOn(ctx context.Context, m service.MilestoneView) []loop.D
 		if err != nil {
 			return nil
 		}
-		f, err := loop.ClassifyDependency(ctx, dm, own.BaseBranch, func(ctx context.Context) (drift.Report, error) {
-			din, err := t.driftInput(ctx, ref)
-			if err != nil {
-				return drift.Report{}, err
-			}
-			return drift.Check(ctx, din)
+		f, err := loop.ClassifyDependency(ctx, dm, func(ctx context.Context) (drift.Input, error) {
+			return t.driftInput(ctx, ref)
 		})
 		if err != nil {
 			return nil

@@ -171,6 +171,31 @@ flowchart TD
    `--dry-run` records nothing, and does not fast-forward.
 5. **Ignored paths.** Changes under `.ralph/` are never counted, staged, or stashed.
 
+### The staleness guard
+
+After a pull request is merged on the host, the local `pr.base_branch` is stale until someone pulls. `ralph loop` and
+`ralph pr create` therefore fetch `pr.remote`'s copy of the base branch before they start, ahead of the dependency check
+and before any branch is created. Only the base branch is fetched, into its remote-tracking ref, and git never prompts
+for credentials. `ralph milestone merge`, the read-only views, and the dependency check never fetch. The local base
+branch is then compared with the fetched one (see [ADR 39](adr/0039-fetch-the-base-branch-and-refuse-a-stale-one.md)):
+
+| State | Result |
+|---|---|
+| Current, or ahead | Proceeds. |
+| Behind | Refuses with exit code `3`, naming `git pull --ff-only`. With `pr.stale_base: sync`, fast-forwards the base branch and proceeds. |
+| Diverged | Refuses with exit code `3`, whatever `pr.stale_base` is. |
+
+`sync` fast-forwards only, never creates a merge commit, and needs a clean work tree; when it cannot, the command refuses
+as under `refuse`. A failed fetch (no such remote, unreachable, or no base branch there) refuses with exit code `3` too,
+because an unknown remote state is treated as unsafe. A repository with no reachable `pr.remote` needs `--force`.
+
+`--force` skips the guard, and so the fetch. `--dry-run` fetches, then reports a stale base or a failed fetch as a
+`warning:` line instead of refusing; it never fast-forwards, even under `sync`.
+
+The read-only views use the remote-tracking ref as the last fetch left it. A dependency that is merged into it but not
+into the local base branch is reported as `base_stale` rather than unmerged, with `git pull --ff-only <remote> <base>`
+as the fix; it is still not satisfied.
+
 ### Milestone dependencies
 
 A milestone can record the milestones it depends on (see [Milestone dependencies](data-model.md#milestone-dependencies)).
@@ -332,7 +357,8 @@ Merging is opt-in because ralph's principle is that agents propose and people me
 [ADR 29](adr/0029-looping-an-initiative.md).
 
 Neither the loop nor a merge pushes anything: `--merge` changes the local base branch only. The branch is pushed by
-[`ralph pr create`](cli.md#ralph-pr-create), which is the one command that talks to a remote.
+[`ralph pr create`](cli.md#ralph-pr-create). The loop and `ralph pr create` also fetch the base branch (see
+[The staleness guard](#the-staleness-guard)); a merge never talks to a remote.
 
 **`--force`** has the same meaning as for one milestone: unmerged dependencies do not hold a milestone back.
 

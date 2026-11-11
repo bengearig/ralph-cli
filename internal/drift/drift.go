@@ -57,6 +57,12 @@ type Input struct {
 	MilestoneID int64
 	// BaseBranch is pr.base_branch.
 	BaseBranch string
+	// BaseRemote is pr.remote. Check ignores it; dependency checks use it to
+	// find the remote-tracking ref of the base branch.
+	BaseRemote string
+	// BaseRef, when set, replaces the local base ref as the ref merged-ness is
+	// judged against. It must resolve to a commit.
+	BaseRef string
 	// TemplateBranch is the template-derived branch name, used when the
 	// milestone has no recorded branch.
 	TemplateBranch string
@@ -213,7 +219,16 @@ func check(ctx context.Context, in Input, branch string) (Report, error) {
 	if r.Branch == "" {
 		return Report{}, fmt.Errorf("%w: %s has no recorded branch and no template branch was given", domain.ErrInvalid, m.ID)
 	}
-	if r.BaseRef, err = baseRef(ctx, in.Repo, in.BaseBranch); err != nil {
+	if in.BaseRef != "" {
+		ok, err := in.Repo.RefExists(ctx, in.BaseRef)
+		if err != nil {
+			return Report{}, err
+		}
+		if !ok {
+			return Report{}, fmt.Errorf("%w: base ref %q does not resolve to a commit", domain.ErrInvalid, in.BaseRef)
+		}
+		r.BaseRef = in.BaseRef
+	} else if r.BaseRef, err = baseRef(ctx, in.Repo, in.BaseBranch); err != nil {
 		return Report{}, err
 	}
 

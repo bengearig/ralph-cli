@@ -192,3 +192,51 @@ func TestPlanDependencies(t *testing.T) {
 		t.Errorf("satisfied: %v %v", plan.Warnings, err)
 	}
 }
+
+func TestDependencyCheckStaleBase(t *testing.T) {
+	e := newRunEnv(t, "a")
+	bare := t.TempDir()
+	gitCmd(t, bare, "init", "--quiet", "--bare", "--initial-branch=main")
+	gitCmd(t, e.root, "remote", "add", "origin", bare)
+	gitCmd(t, e.root, "push", "--quiet", "origin", "main")
+	oldMain := gitCmd(t, e.root, "rev-parse", "main")
+
+	local := e.depMilestone(t, "Local", doneSteps...)
+	e.depBranch(t, local, "ralph/local")
+	gitCmd(t, e.root, "merge", "--quiet", "--no-ff", "-m", "Merge local", "ralph/local")
+	remoteOnly := e.depMilestone(t, "Remote only", doneSteps...)
+	e.depBranch(t, remoteOnly, "ralph/remote-only")
+	nowhere := e.depMilestone(t, "Nowhere", doneSteps...)
+	e.depBranch(t, nowhere, "ralph/nowhere")
+	e.dependOn(t, local, remoteOnly, nowhere)
+
+	gitCmd(t, e.root, "merge", "--quiet", "--no-ff", "-m", "Merge remote only", "ralph/remote-only")
+	gitCmd(t, e.root, "push", "--quiet", "origin", "main")
+	gitCmd(t, e.root, "reset", "--quiet", "--hard", oldMain)
+	gitCmd(t, e.root, "merge", "--quiet", "--no-ff", "-m", "Merge local again", "ralph/local")
+	trackedBefore := gitCmd(t, e.root, "rev-parse", "refs/remotes/origin/main")
+
+	fs := e.check(t)
+	if len(fs) != 3 || fs[0].State != DependencySatisfied || !fs[0].Satisfied {
+		t.Fatalf("findings = %+v", fs)
+	}
+	stale := fs[1]
+	if stale.State != DependencyBaseStale || stale.Satisfied || stale.Reason != "is merged into origin/main, but local main is behind" || stale.Fix != "git pull --ff-only origin main" {
+		t.Errorf("stale finding = %+v", stale)
+	}
+	if strings.Contains(stale.Message("M-1"), "ralph milestone merge") {
+		t.Errorf("message = %q", stale.Message("M-1"))
+	}
+	if fs[2].State != DependencyNotMerged || fs[2].Fix != "ralph milestone merge M-4" {
+		t.Errorf("nowhere finding = %+v", fs[2])
+	}
+	if got := gitCmd(t, e.root, "rev-parse", "refs/remotes/origin/main"); got != trackedBefore {
+		t.Errorf("remote-tracking ref moved: %s -> %s", trackedBefore, got)
+	}
+
+	gitCmd(t, e.root, "update-ref", "-d", "refs/remotes/origin/main")
+	fs = e.check(t)
+	if fs[1].State != DependencyNotMerged || fs[1].Fix != "ralph milestone merge M-3" {
+		t.Errorf("without remote-tracking ref = %+v", fs[1])
+	}
+}

@@ -346,6 +346,7 @@ func TestValidateReportsAllProblems(t *testing.T) {
 	cfg.PR.Provider = "gitlab"
 	cfg.PR.BaseBranch = " "
 	cfg.PR.Remote = " "
+	cfg.PR.StaleBase = "rebase"
 	cfg.Harness.ClaudeCode.MaxBudgetUSD = -1
 	cfg.Loop.CommitTemplate = "{{.Task"
 
@@ -356,7 +357,7 @@ func TestValidateReportsAllProblems(t *testing.T) {
 	for _, key := range []string{
 		"log.level", "embeddings.provider", "embeddings.timeout", "embeddings.chunk.overlap_chars",
 		"search.limit", "import.max_file_bytes", "steps.loop.harness", "loop.stall_threshold", "loop.branch_template",
-		"pr.provider", "pr.base_branch", "pr.remote", "harness.claude_code.max_budget_usd", "loop.commit_template",
+		"pr.provider", "pr.base_branch", "pr.remote", "pr.stale_base", "harness.claude_code.max_budget_usd", "loop.commit_template",
 	} {
 		if !strings.Contains(err.Error(), key+":") {
 			t.Errorf("missing problem for %s in:\n%v", key, err)
@@ -728,5 +729,49 @@ func TestPRRemote(t *testing.T) {
 	}
 	if got := EnvVar("pr.remote"); got != "RALPH_PR__REMOTE" {
 		t.Errorf("EnvVar = %q", got)
+	}
+}
+
+func TestPRStaleBase(t *testing.T) {
+	cfg, err := Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PR.StaleBase != StaleBaseRefuse {
+		t.Errorf("default pr.stale_base = %q, want refuse", cfg.PR.StaleBase)
+	}
+
+	for _, v := range []string{StaleBaseRefuse, StaleBaseSync} {
+		cfg.PR.StaleBase = v
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("%q should validate: %v", v, err)
+		}
+	}
+	for _, v := range []string{"rebase", ""} {
+		cfg.PR.StaleBase = v
+		cfg.PR.Provider = "gitlab"
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatalf("%q should fail validation", v)
+		}
+		for _, want := range []string{"pr.stale_base:", "refuse, sync", "pr.provider:"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%q: missing %q in:\n%v", v, want, err)
+			}
+		}
+	}
+
+	project := writeFile(t, t.TempDir(), "p.yaml", "pr:\n  stale_base: sync\n")
+	l, err := Load(Sources{ProjectFile: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Config.PR.StaleBase != StaleBaseSync {
+		t.Errorf("project pr.stale_base = %q, want sync", l.Config.PR.StaleBase)
+	}
+
+	typo := writeFile(t, t.TempDir(), "typo.yaml", "pr:\n  stale_bse: sync\n")
+	if _, err := Load(Sources{ProjectFile: typo}); err == nil {
+		t.Error("unknown key under pr should fail strict decoding")
 	}
 }

@@ -29,6 +29,7 @@ func addBareRemote(t *testing.T, git func(args ...string) string, name string) s
 		t.Fatalf("git init --bare: %v\n%s", err, out)
 	}
 	git("remote", "add", name, dir)
+	git("push", "--quiet", name, "main")
 	return dir
 }
 
@@ -293,7 +294,7 @@ func TestPRCreateFailedPushExitsThreeAndCallsNoProvider(t *testing.T) {
 		{"unreachable", "unreachable", "does not appear to be a git repository"},
 	} {
 		t.Setenv("RALPH_PR__REMOTE", c.remote)
-		_, _, err := f.h.run("", "pr", "create", "--milestone", "M-1")
+		_, _, err := f.h.run("", "pr", "create", "--milestone", "M-1", "--force")
 		if !errors.Is(err, errs.ErrNeedsHuman) || !strings.Contains(err.Error(), c.want) ||
 			!strings.Contains(err.Error(), "fix the push, then rerun: ralph pr create --milestone M-1") {
 			t.Errorf("%s: err = %v", c.name, err)

@@ -389,6 +389,11 @@ the document is project-wide. The file's record is marked `done` with a `created
 `ralph loop` and `ralph pr create`, including their dry runs, refuse a milestone whose initiative is
 [archived](#archiving).
 
+Both also fetch `pr.base_branch` from `pr.remote` before they start and refuse with exit code `3` when the local base
+branch is behind or diverged, or the fetch fails. `pr.stale_base: sync` fast-forwards a behind base instead. `--force`
+skips this stale-base check as well as the dependency check, and `--dry-run` fetches and reports it as a warning. See
+[The staleness guard](loop.md#the-staleness-guard).
+
 ### Recorded pull requests
 
 A milestone can record the pull request opened for it: the provider name, namespace, repository, and number. The
@@ -416,9 +421,10 @@ ralph pr create --milestone <id> [--force] [--dry-run]
 `ralph pr create` takes its source branch from the milestone's recorded branch, the one the loop worked on, and
 derives it from `loop.branch_template` only when none is recorded. The destination is `pr.base_branch`.
 
-The checks run first, in this order, and each refuses with exit code `3`: the milestone's initiative must not be
-archived, the branch must be exactly as recorded, and the milestones it depends on must be merged (`--force` skips only
-the dependency check). Then:
+The checks run first, and each refuses with exit code `3`: the milestone's initiative must not be archived, the
+local base branch must not be stale after fetching `pr.base_branch` from `pr.remote` (see
+[The staleness guard](loop.md#the-staleness-guard)), the branch must be exactly as recorded, and the milestones it
+depends on must be merged. `--force` skips only the stale-base check and the dependency check. Then:
 
 1. **Already recorded.** If the milestone records a pull request, it prints `exists <link>` and does nothing else: no
    push, no provider call. Use `ralph pr unlink` to open another.

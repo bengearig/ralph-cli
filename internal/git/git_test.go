@@ -3,6 +3,7 @@ package git
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newRepo creates a repository with one commit on main and an isolated
@@ -711,5 +713,411 @@ func TestPushRejectsEmptyArguments(t *testing.T) {
 		if err == nil || errors.As(err, &ge) {
 			t.Errorf("Push(%q, %q) = %v, want a plain error", tc.remote, tc.branch, err)
 		}
+	}
+}
+
+// pushedRepo returns a repository with main pushed to a new origin.
+func pushedRepo(t *testing.T) (Repo, Repo) {
+	t.Helper()
+	r := newRepo(t)
+	bare := newRemote(t, r)
+	mustRun(t, r, "push", "--quiet", "origin", "main")
+	return r, bare
+}
+
+// advanceRemote adds n commits to branch on the bare remote through a scratch clone.
+func advanceRemote(t *testing.T, bare Repo, branch string, n int) string {
+	t.Helper()
+	clone := Repo{Dir: t.TempDir()}
+	mustRun(t, clone, "clone", "--quiet", bare.Dir, ".")
+	if branch != "main" {
+		if _, err := clone.run(context.Background(), "rev-parse", "--verify", "--quiet", "origin/"+branch); err == nil {
+			mustRun(t, clone, "checkout", "--quiet", "-B", branch, "origin/"+branch)
+		} else {
+			mustRun(t, clone, "checkout", "--quiet", "-B", branch)
+		}
+	}
+	var tip string
+	for i := 0; i < n; i++ {
+		tip = commitFile(t, clone, fmt.Sprintf("remote-%d.txt", i), filepath.Base(clone.Dir)+"\n", "remote commit")
+	}
+	mustRun(t, clone, "push", "--quiet", "origin", branch)
+	return tip
+}
+
+func TestFetchBranchUpdatesOnlyRemoteTrackingRef(t *testing.T) {
+	ctx := context.Background()
+	r, bare := pushedRepo(t)
+	if _, err := r.run(ctx, "fetch", "--quiet", "origin"); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, r, "switch", "--quiet", "-c", "feature")
+	commitFile(t, r, "f.txt", "f\n", "feature work")
+	write(t, r.Dir, "README.md", "dirty\n")
+	write(t, r.Dir, "untracked.txt", "u\n")
+	mustRun(t, r, "add", "untracked.txt")
+	mainBefore := mustRun(t, r, "rev-parse", "main")
+	headBefore := mustRun(t, r, "rev-parse", "HEAD")
+	statusBefore := mustRun(t, r, "status", "--porcelain")
+	tip := advanceRemote(t, bare, "main", 2)
+	if err := r.FetchBranch(ctx, "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRun(t, r, "rev-parse", "refs/remotes/origin/main"); got != tip {
+		t.Errorf("origin/main = %s, want %s", got, tip)
+	}
+	if got := mustRun(t, r, "rev-parse", "main"); got != mainBefore {
+		t.Errorf("local main moved to %s", got)
+	}
+	if got := mustRun(t, r, "rev-parse", "HEAD"); got != headBefore {
+		t.Errorf("HEAD moved to %s", got)
+	}
+	if got := mustRun(t, r, "symbolic-ref", "--short", "HEAD"); got != "feature" {
+		t.Errorf("checked-out branch = %s", got)
+	}
+	if got := mustRun(t, r, "status", "--porcelain"); got != statusBefore {
+		t.Errorf("status changed: %q, was %q", got, statusBefore)
+	}
+	if b, _ := os.ReadFile(filepath.Join(r.Dir, "README.md")); string(b) != "dirty\n" {
+		t.Errorf("work tree file changed: %q", b)
+	}
+}
+
+func TestFetchBranchLeavesOtherBranchesAndTags(t *testing.T) {
+	ctx := context.Background()
+	r, bare := pushedRepo(t)
+	advanceRemote(t, bare, "other", 1)
+	if err := r.FetchBranch(ctx, "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	otherTip := advanceRemote(t, bare, "other", 1)
+	mustRun(t, bare, "tag", "v1", "main")
+	tip := advanceRemote(t, bare, "main", 1)
+	if err := r.FetchBranch(ctx, "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRun(t, r, "rev-parse", "refs/remotes/origin/main"); got != tip {
+		t.Errorf("origin/main = %s, want %s", got, tip)
+	}
+	if ok, _ := r.RefExists(ctx, "refs/remotes/origin/other"); ok {
+		t.Error("origin/other should not have been fetched")
+	}
+	if err := r.FetchBranch(ctx, "origin", "other"); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRun(t, r, "rev-parse", "refs/remotes/origin/other"); got != otherTip {
+		t.Errorf("origin/other = %s, want %s", got, otherTip)
+	}
+	if out := mustRun(t, r, "tag", "--list"); out != "" {
+		t.Errorf("tags fetched: %q", out)
+	}
+}
+
+func TestFetchBranchWithoutConfiguredRefspec(t *testing.T) {
+	r, bare := pushedRepo(t)
+	mustRun(t, r, "config", "--unset-all", "remote.origin.fetch")
+	tip := advanceRemote(t, bare, "main", 1)
+	if err := r.FetchBranch(context.Background(), "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRun(t, r, "rev-parse", "refs/remotes/origin/main"); got != tip {
+		t.Errorf("origin/main = %s, want %s", got, tip)
+	}
+}
+
+func TestFetchBranchAfterForceMove(t *testing.T) {
+	ctx := context.Background()
+	r, bare := pushedRepo(t)
+	advanceRemote(t, bare, "main", 2)
+	if err := r.FetchBranch(ctx, "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	first := mustRun(t, bare, "rev-parse", "main~2")
+	mustRun(t, bare, "update-ref", "refs/heads/main", first)
+	other := Repo{Dir: t.TempDir()}
+	mustRun(t, other, "clone", "--quiet", bare.Dir, ".")
+	tip := commitFile(t, other, "rewrite.txt", "x\n", "rewritten")
+	mustRun(t, other, "push", "--quiet", "origin", "main")
+	if err := r.FetchBranch(ctx, "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRun(t, r, "rev-parse", "refs/remotes/origin/main"); got != tip {
+		t.Errorf("origin/main = %s, want %s", got, tip)
+	}
+	mustRun(t, bare, "update-ref", "refs/heads/main", first)
+	if err := r.FetchBranch(ctx, "origin", "main"); err != nil {
+		t.Fatalf("non-fast-forward fetch: %v", err)
+	}
+	if got := mustRun(t, r, "rev-parse", "refs/remotes/origin/main"); got != first {
+		t.Errorf("origin/main = %s, want %s", got, first)
+	}
+}
+
+func TestFetchBranchFailures(t *testing.T) {
+	r, _ := pushedRepo(t)
+	notRepo := t.TempDir()
+	mustRun(t, r, "remote", "add", "broken", notRepo)
+	for name, tc := range map[string]struct{ remote, branch string }{
+		"unknown remote": {"nowhere", "main"},
+		"not a repo":     {"broken", "main"},
+		"missing branch": {"origin", "absent"},
+	} {
+		err := r.FetchBranch(context.Background(), tc.remote, tc.branch)
+		var ge *Error
+		if !errors.As(err, &ge) {
+			t.Errorf("%s: err = %v, want *Error", name, err)
+		}
+	}
+}
+
+func TestFetchBranchRejectsEmptyArguments(t *testing.T) {
+	r := Repo{Dir: t.TempDir()}
+	for _, tc := range []struct{ remote, branch string }{{"", "main"}, {"origin", ""}} {
+		err := r.FetchBranch(context.Background(), tc.remote, tc.branch)
+		var ge *Error
+		if err == nil || errors.As(err, &ge) {
+			t.Errorf("FetchBranch(%q, %q) = %v, want a plain error", tc.remote, tc.branch, err)
+		}
+	}
+}
+
+func TestFetchBranchCancelledContext(t *testing.T) {
+	r, _ := pushedRepo(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	if err := r.FetchBranch(ctx, "origin", "main"); err == nil {
+		t.Error("want an error for a cancelled context")
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Error("cancelled fetch did not return promptly")
+	}
+}
+
+func TestFetchBranchDisablesTerminalPromptOnlyForFetch(t *testing.T) {
+	r, _ := pushedRepo(t)
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shimDir := t.TempDir()
+	log := filepath.Join(shimDir, "env.log")
+	script := "#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"${GIT_TERMINAL_PROMPT-unset}\" >> " + log + "\nexec " + realGit + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(shimDir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GIT_TERMINAL_PROMPT", "")
+	os.Unsetenv("GIT_TERMINAL_PROMPT")
+	ctx := context.Background()
+	if err := r.FetchBranch(ctx, "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, r, "status", "--porcelain")
+	b, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if !slices.Contains(lines, "fetch 0") {
+		t.Errorf("fetch did not get GIT_TERMINAL_PROMPT=0: %q", lines)
+	}
+	if !slices.Contains(lines, "status unset") {
+		t.Errorf("status env was altered: %q", lines)
+	}
+}
+
+func TestCompareBase(t *testing.T) {
+	ctx := context.Background()
+	r, bare := pushedRepo(t)
+	fetch := func() {
+		t.Helper()
+		if err := r.FetchBranch(ctx, "origin", "main"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(want BaseState, behind, ahead int) BaseStatus {
+		t.Helper()
+		st, err := r.CompareBase(ctx, "origin", "main")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.State != want || st.Behind != behind || st.Ahead != ahead {
+			t.Errorf("status = %+v, want %s behind %d ahead %d", st, want, behind, ahead)
+		}
+		if wl := mustRun(t, r, "rev-parse", "refs/heads/main"); st.Local != wl {
+			t.Errorf("Local = %s, want %s", st.Local, wl)
+		}
+		if wr := mustRun(t, r, "rev-parse", "refs/remotes/origin/main"); st.Remote != wr {
+			t.Errorf("Remote = %s, want %s", st.Remote, wr)
+		}
+		return st
+	}
+	fetch()
+	if st := check(BaseCurrent, 0, 0); len(st.Local) != 40 {
+		t.Errorf("Local is not a full hash: %q", st.Local)
+	}
+	advanceRemote(t, bare, "main", 3)
+	fetch()
+	check(BaseBehind, 3, 0)
+	mustRun(t, r, "merge", "--quiet", "--ff-only", "origin/main")
+	commitFile(t, r, "local1.txt", "l\n", "local 1")
+	commitFile(t, r, "local2.txt", "l\n", "local 2")
+	check(BaseAhead, 0, 2)
+	advanceRemote(t, bare, "main", 1)
+	fetch()
+	check(BaseDiverged, 1, 2)
+}
+
+func TestCompareBaseMissingRefs(t *testing.T) {
+	ctx := context.Background()
+	r, _ := pushedRepo(t)
+	if _, err := r.CompareBase(ctx, "origin", "absent"); !errors.Is(err, ErrNoLocalBase) {
+		t.Errorf("missing local: err = %v, want ErrNoLocalBase", err)
+	}
+	mustRun(t, r, "branch", "local-only")
+	_, err := r.CompareBase(ctx, "origin", "local-only")
+	if err == nil || errors.Is(err, ErrNoLocalBase) || !strings.Contains(err.Error(), "never fetched") {
+		t.Errorf("missing remote-tracking ref: err = %v", err)
+	}
+}
+
+// ffFixture returns a pushed repo whose origin/main is n commits ahead of
+// local main, with a feature branch checked out when onFeature is set.
+func ffFixture(t *testing.T, n int, onFeature bool) (Repo, Repo, string) {
+	t.Helper()
+	r, bare := pushedRepo(t)
+	tip := advanceRemote(t, bare, "main", n)
+	if err := r.FetchBranch(context.Background(), "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if onFeature {
+		mustRun(t, r, "switch", "--quiet", "-c", "feature")
+	}
+	return r, bare, tip
+}
+
+func TestFastForwardBranchNotCheckedOut(t *testing.T) {
+	r, _, tip := ffFixture(t, 2, true)
+	write(t, r.Dir, "README.md", "dirty\n")
+	headBefore := mustRun(t, r, "rev-parse", "HEAD")
+	statusBefore := mustRun(t, r, "status", "--porcelain")
+	if err := r.FastForwardBranch(context.Background(), "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRun(t, r, "rev-parse", "main"); got != tip {
+		t.Errorf("main = %s, want %s", got, tip)
+	}
+	if got := mustRun(t, r, "rev-parse", "HEAD"); got != headBefore {
+		t.Errorf("HEAD moved to %s", got)
+	}
+	if got := mustRun(t, r, "symbolic-ref", "--short", "HEAD"); got != "feature" {
+		t.Errorf("checked-out branch = %s", got)
+	}
+	if got := mustRun(t, r, "status", "--porcelain"); got != statusBefore {
+		t.Errorf("status changed: %q, was %q", got, statusBefore)
+	}
+}
+
+func TestFastForwardBranchCheckedOutClean(t *testing.T) {
+	r, _, tip := ffFixture(t, 2, false)
+	if err := r.FastForwardBranch(context.Background(), "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRun(t, r, "rev-parse", "HEAD"); got != tip {
+		t.Errorf("HEAD = %s, want %s", got, tip)
+	}
+	if _, err := os.Stat(filepath.Join(r.Dir, "remote-0.txt")); err != nil {
+		t.Errorf("work tree not updated: %v", err)
+	}
+}
+
+func TestFastForwardBranchCheckedOutDirty(t *testing.T) {
+	r, _, _ := ffFixture(t, 1, false)
+	write(t, r.Dir, "wip.txt", "wip\n")
+	before := mustRun(t, r, "rev-parse", "main")
+	err := r.FastForwardBranch(context.Background(), "origin", "main")
+	if err == nil || !strings.Contains(err.Error(), "wip.txt") {
+		t.Fatalf("err = %v, want a refusal naming wip.txt", err)
+	}
+	if got := mustRun(t, r, "rev-parse", "main"); got != before {
+		t.Errorf("main moved to %s", got)
+	}
+	if b, _ := os.ReadFile(filepath.Join(r.Dir, "wip.txt")); string(b) != "wip\n" {
+		t.Errorf("work tree file changed: %q", b)
+	}
+}
+
+func TestFastForwardBranchIgnoresExcludedChanges(t *testing.T) {
+	r, _, tip := ffFixture(t, 1, false)
+	r.Exclude = ".ralph"
+	write(t, r.Dir, ".ralph/state.txt", "x\n")
+	if err := r.FastForwardBranch(context.Background(), "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRun(t, r, "rev-parse", "main"); got != tip {
+		t.Errorf("main = %s, want %s", got, tip)
+	}
+}
+
+func TestFastForwardBranchDiverged(t *testing.T) {
+	for _, checkedOut := range []bool{true, false} {
+		r, _, _ := ffFixture(t, 1, !checkedOut)
+		mustRun(t, r, "switch", "--quiet", "main")
+		commitFile(t, r, "local.txt", "l\n", "local commit")
+		if !checkedOut {
+			mustRun(t, r, "switch", "--quiet", "feature")
+		}
+		before := mustRun(t, r, "rev-parse", "main")
+		if err := r.FastForwardBranch(context.Background(), "origin", "main"); err == nil {
+			t.Errorf("checkedOut=%t: want an error for a diverged branch", checkedOut)
+		}
+		if got := mustRun(t, r, "rev-parse", "main"); got != before {
+			t.Errorf("checkedOut=%t: main moved to %s", checkedOut, got)
+		}
+	}
+}
+
+func TestFastForwardBranchCheckedOutInAnotherWorktree(t *testing.T) {
+	r, _, _ := ffFixture(t, 1, true)
+	wt := filepath.Join(t.TempDir(), "wt")
+	mustRun(t, r, "worktree", "add", "--quiet", wt, "main")
+	before := mustRun(t, r, "rev-parse", "main")
+	err := r.FastForwardBranch(context.Background(), "origin", "main")
+	var ge *Error
+	if !errors.As(err, &ge) {
+		t.Fatalf("err = %v, want *Error", err)
+	}
+	if got := mustRun(t, r, "rev-parse", "main"); got != before {
+		t.Errorf("main moved to %s", got)
+	}
+}
+
+func TestFastForwardBranchCurrentAndAhead(t *testing.T) {
+	ctx := context.Background()
+	r, _ := pushedRepo(t)
+	if err := r.FastForwardBranch(ctx, "origin", "main"); err != nil {
+		t.Fatalf("current: %v", err)
+	}
+	commitFile(t, r, "ahead.txt", "a\n", "ahead")
+	before := mustRun(t, r, "rev-parse", "main")
+	if err := r.FastForwardBranch(ctx, "origin", "main"); err != nil {
+		t.Fatalf("ahead: %v", err)
+	}
+	if got := mustRun(t, r, "rev-parse", "main"); got != before {
+		t.Errorf("main moved to %s", got)
+	}
+}
+
+func TestFastForwardBranchMissingRefs(t *testing.T) {
+	ctx := context.Background()
+	r, _ := pushedRepo(t)
+	mustRun(t, r, "update-ref", "-d", "refs/remotes/origin/main")
+	if err := r.FastForwardBranch(ctx, "origin", "main"); err == nil {
+		t.Error("want an error when the remote-tracking ref is missing")
+	}
+	mustRun(t, r, "fetch", "--quiet", "origin")
+	if err := r.FastForwardBranch(ctx, "origin", "absent"); err == nil {
+		t.Error("want an error when the local branch is missing")
 	}
 }

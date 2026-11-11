@@ -188,6 +188,7 @@ func DriftInput(ctx context.Context, svc *service.Service, cfg *config.Config, r
 		Repo:           repo,
 		MilestoneID:    milestoneID,
 		BaseBranch:     cfg.PR.BaseBranch,
+		BaseRemote:     cfg.PR.Remote,
 		TemplateBranch: branch,
 		Subjects:       subjects,
 	}, nil

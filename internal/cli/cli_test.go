@@ -277,6 +277,10 @@ func TestLoopCommand(t *testing.T) {
 	h.ok("init", "--no-harness")
 	run("add", ".")
 	run("commit", "--quiet", "-m", "initial")
+	bare := filepath.Join(t.TempDir(), "origin.git")
+	run("init", "--quiet", "--bare", bare)
+	run("remote", "add", "origin", bare)
+	run("push", "--quiet", "origin", "main")
 
 	// A claude stand-in that connects to ralph but never sets a status, so
 	// every session counts as a failed iteration.
@@ -999,7 +1003,7 @@ func TestPRCreateDriftGate(t *testing.T) {
 
 	// A failing drift check fails pr create but only warns in a dry run.
 	t.Setenv("RALPH_PR__BASE_BRANCH", "nope")
-	_, _, err = h.run("", "pr", "create", "--milestone", "M-1")
+	_, _, err = h.run("", "pr", "create", "--milestone", "M-1", "--force")
 	if err == nil || errors.Is(err, errs.ErrNeedsHuman) || !strings.Contains(err.Error(), "pr.base_branch") {
 		t.Errorf("missing base branch: err = %v, want the drift check's error", err)
 	}

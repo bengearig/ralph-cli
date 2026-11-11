@@ -43,6 +43,9 @@ that still needs ralph milestone merge.
 The loop refuses (exit code 3) while a milestone this one depends on is not
 merged; --force skips that check, and --dry-run reports it as warnings.
 
+The base branch is fetched first, and the loop refuses (exit code 3) when the
+local base is behind or diverged; --force skips that.
+
 With --merge (only with --initiative) the loop carries on through the
 initiative: it merges each finished milestone into the base branch
 (fast-forward only) and runs the next, until the initiative is complete or
@@ -68,7 +71,7 @@ something needs a person. A milestone that is not DONE is never merged, and
 	cmd.Flags().StringVar(&milestone, "milestone", "", "milestone ID, e.g. M-1")
 	cmd.Flags().StringVar(&initiative, "initiative", "", "initiative ID, e.g. I-1: run its next ready milestone")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the plan without running anything")
-	cmd.Flags().BoolVar(&force, "force", false, "ignore unmerged milestone dependencies")
+	cmd.Flags().BoolVar(&force, "force", false, "ignore unmerged milestone dependencies and the stale-base check")
 	cmd.Flags().BoolVar(&merge, "merge", false, "merge each finished milestone into the base branch and continue")
 	cmd.Flags().BoolVar(&showPrompt, "show-prompt", false, "with --dry-run, include the first iteration's prompt")
 	cmd.MarkFlagsOneRequired("milestone", "initiative")
@@ -107,6 +110,20 @@ func (a *app) printPlan(plan loop.Plan, showPrompt bool) error {
 
 type loopOptions struct {
 	dryRun, showPrompt, force, merge bool
+	baseChecked                      bool
+}
+
+// guardBase runs the stale-base guard and prints its notices. In a dry run the
+// would-refuse warnings are returned for the caller to report.
+func (a *app) guardBase(ctx context.Context, cfg *config.Config, root string, force, dryRun bool) ([]string, error) {
+	res, err := loop.EnsureFreshBase(ctx, cfg, root, loop.BaseGuardOptions{Force: force, DryRun: dryRun})
+	if err != nil {
+		return nil, err
+	}
+	for _, n := range res.Notices {
+		a.warn(n)
+	}
+	return res.Warnings, nil
 }
 
 func (a *app) loopMilestone(ctx context.Context, mID int64, opts loopOptions) (loop.Outcome, error) {
@@ -122,10 +139,17 @@ func (a *app) loopMilestone(ctx context.Context, mID int64, opts loopOptions) (l
 	if err != nil {
 		return loop.Outcome{}, err
 	}
+	var baseWarnings []string
+	if !opts.baseChecked {
+		if baseWarnings, err = a.guardBase(ctx, l.Config, p.Root, opts.force, opts.dryRun); err != nil {
+			return loop.Outcome{}, err
+		}
+	}
 	plan, err := loop.Planner{Service: svc, Config: l.Config, Root: p.Root, Force: opts.force, WarnOnly: opts.dryRun}.Plan(ctx, mID)
 	if err != nil {
 		return loop.Outcome{}, err
 	}
+	plan.Warnings = append(baseWarnings, plan.Warnings...)
 	if opts.dryRun {
 		if a.jsonOut {
 			return loop.Outcome{}, a.writeJSON(plan)
@@ -196,6 +220,10 @@ func (a *app) loopInitiative(ctx context.Context, initiative string, opts loopOp
 		return err
 	}
 	iRef := domain.FormatID(domain.KindInitiative, iID)
+	baseWarnings, err := a.guardBase(ctx, l.Config, p.Root, opts.force, opts.dryRun)
+	if err != nil {
+		return err
+	}
 	entries, err := chainOverview(ctx, svc, l.Config, p.Root, iID, opts.force)
 	if err != nil {
 		return err
@@ -206,6 +234,9 @@ func (a *app) loopInitiative(ctx context.Context, initiative string, opts loopOp
 	step := loop.NextStep(entries, opts.merge)
 	next := newChainNext(step)
 	if opts.dryRun {
+		for _, w := range baseWarnings {
+			a.warn(w)
+		}
 		if a.jsonOut {
 			return a.writeJSON(struct {
 				Initiative string            `json:"initiative"`
@@ -250,6 +281,7 @@ func (a *app) loopInitiative(ctx context.Context, initiative string, opts loopOp
 	if err != nil {
 		return err
 	}
+	opts.baseChecked = true
 	out, err := a.loopMilestone(ctx, mID, opts)
 	if err == nil && out.StopReason == loop.StopCompleted && !a.jsonOut {
 		return a.printf("%s is DONE; review it, then merge: ralph milestone merge %s; run ralph loop --initiative %s again for the next one\n", next.Milestone, next.Milestone, iRef)

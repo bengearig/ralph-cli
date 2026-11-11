@@ -97,6 +97,10 @@ merged; --force skips that check, and --dry-run reports it as warnings.`,
 			if !dryRun && m.Status != service.MilestoneDone {
 				a.warn("milestone " + m.ID + " is " + m.Status + ", not DONE")
 			}
+			baseWarnings, err := a.guardBase(cmd.Context(), l.Config, p.Root, force, dryRun)
+			if err != nil {
+				return err
+			}
 			var report drift.Report
 			in, driftErr := loop.DriftInput(cmd.Context(), svc, l.Config, p.Root, mID)
 			if driftErr == nil {
@@ -156,13 +160,17 @@ merged; --force skips that check, and --dry-run reports it as warnings.`,
 						Validation string                   `json:"validation_errors,omitempty"`
 						Drift      *drift.Report            `json:"drift"`
 						DriftError string                   `json:"drift_error,omitempty"`
+						BaseWarns  []string                 `json:"base_warnings,omitempty"`
 						DepWarns   []string                 `json:"dependency_warnings,omitempty"`
 						Push       pushPlan                 `json:"push"`
 						PR         *service.PullRequestView `json:"pull_request,omitempty"`
-					}{provider.Name(), req, validation, driftReport, driftError, depWarnings, pushPlan{remote, branch}, recorded})
+					}{provider.Name(), req, validation, driftReport, driftError, baseWarnings, depWarnings, pushPlan{remote, branch}, recorded})
 				}
 				if validation != "" {
 					a.warn("provider is not ready:\n" + validation)
+				}
+				for _, w := range baseWarnings {
+					a.warn(w)
 				}
 				for _, w := range depWarnings {
 					a.warn(w)
@@ -226,7 +234,7 @@ merged; --force skips that check, and --dry-run reports it as warnings.`,
 		},
 	}
 	create.Flags().StringVar(&milestone, "milestone", "", "milestone ID, e.g. M-1 (required)")
-	create.Flags().BoolVar(&force, "force", false, "ignore unmerged milestone dependencies")
+	create.Flags().BoolVar(&force, "force", false, "ignore unmerged milestone dependencies and the stale-base check")
 	create.Flags().BoolVar(&dryRun, "dry-run", false, "print the request without sending it")
 	_ = create.MarkFlagRequired("milestone")
 	cmd.AddCommand(create)

@@ -59,6 +59,7 @@ func useChainHarness(t *testing.T, c *chainHarness) {
 func chainFixture(t *testing.T) (*testEnv, func(args ...string) string) {
 	t.Helper()
 	h, git, commit := newGitTestEnv(t)
+	addBareRemote(t, git, "origin")
 	if err := os.WriteFile(filepath.Join(h.dir, ".gitignore"), []byte("xdg/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
