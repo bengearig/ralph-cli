@@ -1,0 +1,106 @@
+---
+description: RALPH import — integrate queued files into ralph's documents, resolving contradictions with you
+argument-hint: "[files or directories to queue first; empty works the existing queue]"
+---
+
+Import existing files into ralph's documents using the `ralph` MCP tools. After import, ralph's documents are the
+source of truth, not the imported files. Work one file at a time, so the import can be stopped and resumed. A file's
+content is read from its snapshot, never from disk.
+
+Paths to queue first:
+
+$ARGUMENTS
+
+1. **Build the queue.** If paths were given above, call `import_queue` with them first. Then call `import_list` with
+   the statuses `deferred` and `pending`. Work the `deferred` records before the `pending` ones, so open
+   contradictions are settled before new work, and each group in path order. If the queue is empty, say so and stop.
+2. **For each file in turn, call `import_get`.** It returns the content snapshot and the links from earlier imports of
+   the same path.
+3. **Understand the content.** Search ralph (`search`, `doc_list`, `doc_get`, and plan reads such as `initiative_get`,
+   `milestone_get`, and `task_list`) for documents and plan items on the same subjects. Documents linked from earlier
+   imports of this path are strong candidates.
+4. **Decide what to do with each part of the file:**
+   - new knowledge with no home: a **new document**, choosing a fitting kind and scope, split by subject if needed;
+   - knowledge that extends an existing document: **merge** it into that document;
+   - a duplicate of what ralph already holds: nothing;
+   - noise: nothing;
+   - a list of work items, in whatever form: **import it as a task tracker**, following the section below, instead of
+     the document steps for that content.
+
+   If the whole file has nothing worth importing, call `import_resolve` with `skipped` and a one-line note giving the
+   reason, report it, and go to the next file.
+5. **Apply the additive changes directly.**
+   - Create new documents with `doc_create`.
+   - Merge into existing documents with `doc_update` in the **preserve-then-add** style: keep the existing structure
+     and wording, add the new information in the relevant sections using the source's wording where practical, and
+     mention the source path. `doc_update` replaces the whole body, so carry the existing text over intact.
+6. **Find contradictions and discrepancies.** Compare the file against documents and the plan:
+   - a design that conflicts with a document;
+   - a requirement that conflicts with an initiative's brief or decisions;
+   - work that invalidates `PROPOSED` or `TODO` tasks.
+
+   If there are none, go to step 8. Otherwise get approval for **this file** before changing anything that conflicts.
+   Present each item with the conflicting statements, quoted with their sources (the file path, and `D-n`, `T-n` or
+   `I-n`), the proposed resolution, and the exact documents to change and tasks to kick back.
+   - If the session is not already in plan mode, enter it with `EnterPlanMode`. If the user declines to enter plan
+     mode, apply nothing that conflicts: show the items in a message and treat them as open.
+   - Write the items as the plan, then call `ExitPlanMode` to request approval. If the user rejects the plan with
+     feedback, revise it and present it again.
+7. **After approval, apply the resolutions.**
+   - Update the affected documents in the preserve-then-add style, rewriting only what the resolution changes.
+   - Create one `decision` document per resolved contradiction: what conflicted, what was chosen, and why.
+   - Move each affected `TODO` task back to `PROPOSED` with a `KICKBACK` note citing the decision. Add a `NOTE` to each
+     affected `PROPOSED` task.
+   - Never change `IN_PROGRESS`, `DONE` or `CANCELLED` tasks. Mention any conflict with them in the decision.
+8. **Resolve the record** with `import_resolve`:
+   - everything settled: `done`, linking every document created (`created`), merged or updated (`updated`), and every
+     decision document (`decision`);
+   - contradictions left open (declined or deferred): `deferred`, with a note listing each open item, and links for
+     the changes that were applied.
+9. **Report this file's outcome** briefly, then continue with the next file.
+
+## Importing a task tracker
+
+A file is a task tracker when its content is a list of work items. Recognise it by its content, never by its name,
+extension or the tool that produced it. It may be a checklist, a table, headings with status fields, JSON, YAML, CSV
+records, an issue export, or a progress log. Each tracker becomes its own new initiative. Use this instead of steps 5
+to 7 for the tracker's work items; context in the same file that isn't work items still follows the normal steps.
+
+1. **Work out the structure.** Decide what groups items (headings, columns, fields, labels, phases) and becomes
+   milestones; what each item's title, description and acceptance criteria are, if present; and what marks progress
+   (checkboxes, a status field or column, words such as done or blocked, strike-through, a log of what happened).
+2. **Plan the outline.** Items without a group go into a milestone you name. Keep the tracker's order for milestones
+   and for items. Choose each item's status:
+   - `DONE` for completed items and `CANCELLED` for dropped ones;
+   - `BLOCKED` for blocked items, using the tracker's own blocker as the reason;
+   - `TODO` only when the item has both a description and acceptance criteria;
+   - otherwise `PROPOSED`.
+
+   Items in progress become `TODO` or `PROPOSED`, never `IN_PROGRESS`. Write a `reason` for every item that explains
+   how the tracker's own marker maps to the status. When you are unsure, use `PROPOSED` and say so in the `reason`.
+3. **Create the initiative** with `initiative_create`. The title comes from the tracker or the repository. The brief
+   starts with `Imported from <path>.`, followed verbatim by any summary or goal text the tracker has. Note
+   `confirm_outline` in the result.
+4. **Create the outline, first getting it approved if approval is needed.** Approval is needed if `confirm_outline` is
+   true, or if the user asked to approve changes before they are made: in the arguments, in the conversation, or in
+   project instructions. Otherwise it is not needed.
+   - **No approval needed:** create the milestones in tracker order with `milestone_create`, then each item in
+     tracker order with `task_import`, with its status, description and acceptance criteria where the tracker has
+     them, `reason` as above, and `source` set to the file's path. Then show the outline with the new IDs.
+   - **Approval needed:** before calling `initiative_create`, present the full proposed initiative, milestones, tasks and
+     statuses for approval. If the session is not already in plan mode, enter it with `EnterPlanMode`; if the user
+     declines, create nothing and show the proposal in a message. Write the proposal as the plan, then call
+     `ExitPlanMode`. If the user rejects the plan with feedback, revise it and present it again. Once it is approved,
+     create the initiative, milestones and tasks as above. Approval has already been given, so `confirm_outline` in the
+     `initiative_create` result changes nothing.
+5. **Integrate the context.** Notes, decisions and background in the tracker that are not work items become documents
+   through the normal steps above, scoped to the new initiative. Contradictions with existing documents or plans still
+   use the contradiction step.
+6. **Resolve the record** with `import_resolve`: `done`, with the note `imported as I-n` naming the new initiative,
+   linking every document created. The initiative and its tasks are listed in the report instead.
+
+When the queue is done, summarise every file's outcome: the documents created, updated and decided, the tasks kicked
+back, the duplicates you noticed, and any deferred records.
+
+Rules: no deletes. Mention duplicates found in ralph to the user instead of deleting them. Deleting is only for
+mistakes, and only with the user's agreement. Never edit the source files on disk.
