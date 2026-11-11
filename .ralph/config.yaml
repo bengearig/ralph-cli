@@ -88,17 +88,14 @@
   # Path to a custom iteration prompt template; empty uses the built-in one.
 #   prompt_template: ""
 
-# pr:
-  # bitbucket_cloud
-#   provider: bitbucket_cloud
-#   base_branch: main
-#   draft: true
-#   bitbucket_cloud:
-#     workspace: ""
-#     repo_slug: ""
-    # Name of the environment variable holding the API token. Never put the
-    # token itself in a config file.
-#     token_env: RALPH_BITBUCKET_TOKEN
+pr:
+  provider: github
+  base_branch: main
+  draft: false
+  github:
+    owner: bengearig
+    repo: ralph-cli
+    token_env: RALPH_GITHUB_TOKEN_FOR_RALPH_CLI
 
 task_manager:
   provider: jira
