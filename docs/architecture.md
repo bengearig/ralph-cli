@@ -70,6 +70,8 @@ flowchart TD
 | `internal/taskmanager/fake` | A test provider that records its calls and can be told to fail. |
 | `internal/errs` | Sentinel errors shared across packages. |
 | `internal/version` | Build version, from `-ldflags` or the Go toolchain's VCS stamp. |
+| `internal/release` | The GitHub release client for `ralph update`: finds the latest stable release, a release by tag, or the newest including pre-releases; picks the archive for the running platform; downloads it while computing its SHA-256; parses and checks `checksums.txt`; and extracts the single binary. It also compares versions by semantic version. It talks to the GitHub REST API anonymously, and its base URL is replaceable for tests. See [Installing and updating](installing.md) and [ADR 38](adr/0038-install-from-github-releases-and-update-in-place.md). |
+| `internal/selfupdate` | Replaces the running executable: stages the new binary beside it, keeps its permission bits, and renames it into place, or on Windows renames the old file aside first. It never escalates privileges and leaves no staged file behind on failure. Used by `ralph update` in `cli`. |
 
 ## Design rules
 

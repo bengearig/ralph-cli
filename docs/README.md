@@ -20,6 +20,7 @@
 - [Jira](jira.md): setting up the Jira Cloud provider, what its cards look like, and how to check it by hand.
 - [GitHub](github.md): setting up the GitHub pull request provider, its token and permissions, and how to check it by hand.
 - [Bitbucket Cloud](bitbucket-cloud.md): setting up the Bitbucket Cloud pull request provider, its credentials, and how to check it by hand.
+- [Installing and updating](installing.md): the install scripts, `ralph update`, and what each does and refuses.
 - [Releasing](releasing.md): how to cut a release from a version tag, and the names and contents of the release assets.
 - [Roadmap](roadmap.md): what is stubbed and what comes next.
 
@@ -40,5 +41,6 @@ provider, [ADR 22](adr/0022-create-cards-when-resources-are-created.md) records 
 [ADR 34](adr/0034-record-pull-requests-without-urls.md) records how a milestone's pull request is recorded without a URL, and how the Bitbucket Cloud and GitHub providers authenticate and adopt pull requests, and
 [ADR 35](adr/0035-watch-by-polling-and-snapshot-comparison.md) records how watching works, and
 [ADR 36](adr/0036-watch-milestones-tasks-and-the-overview.md) records how milestones, tasks, and the overview are watched, and
-[ADR 37](adr/0037-release-from-version-tags-with-checksummed-archives.md) records how releases are made from version tags. Add a new
+[ADR 37](adr/0037-release-from-version-tags-with-checksummed-archives.md) records how releases are made from version tags, and
+[ADR 38](adr/0038-install-from-github-releases-and-update-in-place.md) records how ralph is installed from releases and updated in place. Add a new
 record rather than editing an accepted one; mark the old record superseded.

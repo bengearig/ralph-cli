@@ -27,6 +27,20 @@ Commit hashes recorded by the loop are shown shortened in text output and in ful
 | `ralph init [--force] [--no-harness] [--ralph-command <cmd>]` | Create `.ralph/` (config template and database), git-ignore the database, and install the harness integration. Run it from anywhere in a git repository; it uses the work-tree root. Safe to rerun. See [Claude Code integration](claude-code.md). |
 | `ralph config show\|path\|validate\|steps` | Inspect configuration. See [Configuration](configuration.md). |
 | `ralph version` | Print the version. |
+| `ralph update [--check] [--version <tag>] [--pre] [--force]` | Replace the program with the latest release. See [`ralph update`](#ralph-update). |
+
+### `ralph update`
+
+`ralph update` replaces the running program with the newest stable release. It works anywhere, with or without a
+project. It is not `ralph init`, which refreshes a project's integration files. See
+[Installing and updating](installing.md#updating-with-ralph-update) for the details.
+
+| Flag | Meaning |
+|---|---|
+| `--check` | Report the latest version without installing. |
+| `--force` | Reinstall the same version, or replace a non-release build. |
+| `--pre` | Consider pre-releases when picking the newest release. |
+| `--version <tag>` | Install this release tag, a downgrade or pre-release included. |
 
 ## Store
 
