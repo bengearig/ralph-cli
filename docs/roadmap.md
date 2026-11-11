@@ -6,7 +6,7 @@ This page tracks what the skeleton deliberately leaves stubbed, and the open que
 
 | Capability | Today | Next |
 |---|---|---|
-| Pull requests | `ralph pr create --dry-run` prints the request and validates the Bitbucket Cloud configuration; creation exits with code 2. | Call the Bitbucket Cloud REST API 2.0 (`POST /repositories/{workspace}/{repo_slug}/pullrequests`) and push the branch first. |
+| Pull requests | `ralph pr create` opens the pull request on Bitbucket Cloud for a branch that is already pushed, and `--dry-run` prints the request and validates the configuration. The provider can find an open pull request, but the command does not use it yet. | Push the branch, adopt an existing open pull request, and record the pull request on the milestone (milestone M-32). |
 
 ## Open questions
 

@@ -12,7 +12,7 @@ Every command accepts these global flags:
 IDs can be given in display form (`T-12`, case-insensitive) or as bare numbers (`12`). Commands that take text
 accept `--<field>-file <path>` or `--file <path>`; `-` reads stdin.
 
-Exit codes: `0` success, `1` error, `2` the requested capability is not implemented yet, `3` a person is needed: the
+Exit codes: `0` success, `1` error, `2` the requested capability exists only as a stub, `3` a person is needed: the
 loop stopped because remaining tasks need one, or a milestone's branch has drifted from its record.
 
 Commit hashes recorded by the loop are shown shortened in text output and in full with `--json`. See
@@ -257,7 +257,7 @@ the document is project-wide. The file's record is marked `done` with a `created
 | `ralph milestone reconcile <id> [--branch <name>] [--reopen <ids>] [--reason <text>] [--accept]` | Report how the milestone's branch differs from its record and resolve it. See [below](#ralph-milestone-reconcile). |
 | `ralph milestone merge <id> [--dry-run] [--delete-branch]` | Fast-forward the base branch to a finished milestone's branch. See [below](#ralph-milestone-merge). |
 | `ralph pr create --milestone <id> [--force] --dry-run` | Print the pull request that would be opened, the drift check's result, and any provider configuration problems. |
-| `ralph pr create --milestone <id>` | Open the pull request. *Not implemented yet (exit code 2).* |
+| `ralph pr create --milestone <id> [--force]` | Open the pull request for the milestone's branch on the configured provider and print its link. The branch must already be pushed. See [Bitbucket Cloud](bitbucket-cloud.md). |
 | `ralph pr unlink --milestone <id>` | Forget the milestone's recorded pull request. See [below](#recorded-pull-requests). |
 
 `ralph loop` and `ralph pr create`, including their dry runs, refuse a milestone whose initiative is
@@ -268,7 +268,7 @@ the document is project-wide. The file's record is marked `done` with a `created
 A milestone can record the pull request opened for it: the provider name, namespace, repository, and number. The
 record never contains a URL; links are built from it when shown, by a static function per provider that needs no
 configuration, token, or network, so a record keeps its link after `pr.provider` changes. `ralph pr create` does not
-record anything yet, so a milestone has a record only once something writes one.
+record anything yet (milestone M-32 adds that), so a milestone has a record only once something writes one.
 
 `ralph milestone show` prints a `pull request:` line after `branch:` when a record exists: the URL, or
 `<provider> <namespace>/<repository>#<number>` when no link can be built for the provider. `ralph status` adds a `PR`

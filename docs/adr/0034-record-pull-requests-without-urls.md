@@ -23,7 +23,17 @@ request already exists. A stored URL would go stale when the hosting provider or
 - `ralph pr unlink` clears the record so a new pull request can be opened, for example after one was declined. It is
   CLI-only and changes nothing on the hosting service.
 - The record is not checked against the hosting service: nothing verifies that the pull request is still open.
-- `ralph pr create` does not record anything yet; recording comes with its implementation.
+- `ralph pr create` does not record anything yet; recording comes with the milestone that pushes the branch.
+- The Bitbucket Cloud provider authenticates with `basic` by default: the Atlassian account email and an API token,
+  because Bitbucket app passwords no longer work. `bearer` sends the token alone, for repository or workspace access
+  tokens. Environment variable names are configuration; the credentials are read when a request is made and never
+  stored.
+- Adopting an existing pull request requires an open pull request whose source is the milestone's branch and whose
+  destination equals `pr.base_branch`. A pull request from the same branch into another branch is not adopted, so the
+  pull request the milestone needs can still be opened. Among several matches the most recently updated is used.
+- The provider interface gains `FindOpen`, and a `PullRequest` carries namespace, repository, and number, so the
+  command can record it without asking the provider's configuration. Every call is a single attempt bounded by
+  `pr.timeout`.
 
 ## Consequences
 

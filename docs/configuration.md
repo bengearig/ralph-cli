@@ -148,9 +148,14 @@ commands, so their overrides take effect once ralph launches those sessions itse
 | `pr.provider` | `bitbucket_cloud` | Pull-request host. |
 | `pr.base_branch` | `main` | Branch the milestone branch is created from and merged into. |
 | `pr.draft` | `true` | Open pull requests as drafts. |
+| `pr.timeout` | `30s` | Per-request timeout for every pull request provider call. Must be positive. |
 | `pr.bitbucket_cloud.workspace` | `""` | Bitbucket workspace ID. |
 | `pr.bitbucket_cloud.repo_slug` | `""` | Repository slug. |
-| `pr.bitbucket_cloud.token_env` | `RALPH_BITBUCKET_TOKEN` | **Name** of the environment variable holding the API token. Never put the token in a file. |
+| `pr.bitbucket_cloud.auth` | `basic` | `basic` sends the Atlassian account email and an API token; `bearer` sends the token alone, for a repository or workspace access token. See [Bitbucket Cloud](bitbucket-cloud.md#authentication). |
+| `pr.bitbucket_cloud.email_env` | `RALPH_BITBUCKET_EMAIL` | **Name** of the environment variable holding the account email, used with `basic`. Never put the email in a file. |
+| `pr.bitbucket_cloud.token_env` | `RALPH_BITBUCKET_TOKEN` | **Name** of the environment variable holding the API token, or the access token with `bearer`. Never put the token in a file. |
+
+See [Bitbucket Cloud](bitbucket-cloud.md) for setup, credential scopes, and a manual check.
 
 ### `task_manager`
 

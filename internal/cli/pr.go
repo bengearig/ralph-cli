@@ -29,8 +29,9 @@ func (a *app) newPRCommand() *cobra.Command {
 	create := &cobra.Command{
 		Use:   "create",
 		Short: "Open the pull request for a milestone's branch",
-		Long: `Opens the pull request for the milestone's branch, which must already be pushed;
---dry-run shows the request that would be sent.
+		Long: `Opens the pull request for the milestone's branch, which must already be pushed
+(a later release will push it and record the pull request); --dry-run shows the
+request that would be sent.
 
 The milestone's branch must match its recorded git state: otherwise pr create
 refuses (exit code 3) and points at ralph milestone reconcile. --dry-run

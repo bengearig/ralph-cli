@@ -7,7 +7,7 @@
 ## Context
 
 A milestone becomes a branch and, in the end, a pull request that a person reviews and merges on the hosting service.
-Pull request creation is not implemented yet, and some work never goes through a hosting service at all. For those
+Pull request creation did not exist when this was decided, and some work never goes through a hosting service at all. For those
 milestones the merge into the base branch is done by hand: switch, merge, maybe delete the branch. Done by hand it is
 easy to merge a milestone that is unfinished, whose branch no longer matches ralph's record, or while a loop is
 switching branches underneath. It is also easy to create a merge commit nobody wanted.

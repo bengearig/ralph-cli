@@ -18,6 +18,7 @@
 - [Claude Code integration](claude-code.md): what `ralph init` installs and how to use it.
 - [The loop](loop.md): how the loop plans, runs, and stops, and how branch drift is detected and reconciled.
 - [Jira](jira.md): setting up the Jira Cloud provider, what its cards look like, and how to check it by hand.
+- [Bitbucket Cloud](bitbucket-cloud.md): setting up the Bitbucket Cloud pull request provider, its credentials, and how to check it by hand.
 - [Roadmap](roadmap.md): what is stubbed and what comes next.
 
 ## Decisions
@@ -34,5 +35,5 @@ provider, [ADR 22](adr/0022-create-cards-when-resources-are-created.md) records 
 [ADR 31](adr/0031-serve-workflows-to-any-harness.md) records how workflows are served to any harness, and
 [ADR 32](adr/0032-unstarted-milestone-branches.md) records how unstarted milestone branches are reported and kept current, and
 [ADR 33](adr/0033-promote-documents-to-project-wide.md) records promoting documents to project-wide, and
-[ADR 34](adr/0034-record-pull-requests-without-urls.md) records how a milestone's pull request is recorded without a URL. Add a new
+[ADR 34](adr/0034-record-pull-requests-without-urls.md) records how a milestone's pull request is recorded without a URL, and how the Bitbucket Cloud provider authenticates and adopts pull requests. Add a new
 record rather than editing an accepted one; mark the old record superseded.
