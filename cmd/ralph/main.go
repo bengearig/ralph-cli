@@ -18,21 +18,38 @@ const (
 	exitError          = 1
 	exitNotImplemented = 2
 	exitNeedsHuman     = 3
+	exitInterrupted    = 130
 )
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	err := cli.Execute(ctx, cli.Streams{In: os.Stdin, Out: os.Stdout, Err: os.Stderr, IsTerminal: isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd())}, os.Args[1:])
+	err := cli.Execute(ctx, cli.Streams{
+		In:            os.Stdin,
+		Out:           os.Stdout,
+		Err:           os.Stderr,
+		IsTerminal:    isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd()),
+		OutIsTerminal: isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd()),
+		OutSize:       stdoutSize,
+	}, os.Args[1:])
 	stop()
-	if err == nil {
-		return
+	code, print := exitCode(err)
+	if print {
+		fmt.Fprintln(os.Stderr, "ralph:", err)
 	}
-	fmt.Fprintln(os.Stderr, "ralph:", err)
+	os.Exit(code)
+}
+
+// exitCode maps a command error to a process exit code and whether to print it.
+func exitCode(err error) (code int, print bool) {
 	switch {
+	case err == nil:
+		return 0, false
+	case errors.Is(err, errs.ErrInterrupted):
+		return exitInterrupted, false
 	case errors.Is(err, errs.ErrNotImplemented):
-		os.Exit(exitNotImplemented)
+		return exitNotImplemented, true
 	case errors.Is(err, errs.ErrNeedsHuman):
-		os.Exit(exitNeedsHuman)
+		return exitNeedsHuman, true
 	}
-	os.Exit(exitError)
+	return exitError, true
 }

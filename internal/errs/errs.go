@@ -12,4 +12,8 @@ var (
 	// person: they are blocked, need re-articulation, or the iteration budget
 	// ran out. The CLI maps it to a distinct exit code.
 	ErrNeedsHuman = errors.New("needs a human")
+
+	// ErrInterrupted means the command was ended by Ctrl-C or SIGTERM. The CLI
+	// maps it to exit code 130 without printing a message.
+	ErrInterrupted = errors.New("interrupted")
 )
