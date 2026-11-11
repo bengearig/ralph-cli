@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/bengearig/ralph/internal/config"
+	"github.com/bengearig/ralph/internal/taskmanager"
 )
 
 const (
@@ -147,6 +148,26 @@ func (c *Client) UpdateIssue(ctx context.Context, key string, f IssueFields) err
 		return fmt.Errorf("jira: encode update request: %w", err)
 	}
 	_, err = c.do(ctx, http.MethodPut, issuePath+"/"+url.PathEscape(key), body)
+	return err
+}
+
+// AddRemoteLink attaches a pull request to a card as a remote link. Jira
+// updates the existing link when one with the same globalId is already there.
+func (c *Client) AddRemoteLink(ctx context.Context, key string, l taskmanager.PullRequestLink) error {
+	type object struct {
+		URL   string `json:"url"`
+		Title string `json:"title"`
+	}
+	body, err := json.Marshal(struct {
+		GlobalID     string  `json:"globalId"`
+		Relationship string  `json:"relationship"`
+		Application  nameRef `json:"application"`
+		Object       object  `json:"object"`
+	}{l.ID, "pull request", nameRef{Name: "ralph"}, object{URL: l.URL, Title: l.Title}})
+	if err != nil {
+		return fmt.Errorf("jira: encode remote link request: %w", err)
+	}
+	_, err = c.do(ctx, http.MethodPost, issuePath+"/"+url.PathEscape(key)+"/remotelink", body)
 	return err
 }
 

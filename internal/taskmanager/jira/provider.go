@@ -28,6 +28,8 @@ const (
 var (
 	_ taskmanager.Provider    = (*Provider)(nil)
 	_ taskmanager.Preflighter = (*Provider)(nil)
+
+	_ taskmanager.PullRequestLinker = (*Provider)(nil)
 )
 
 func init() {
@@ -213,6 +215,23 @@ func (p *Provider) SetStatus(ctx context.Context, key, status string) error {
 		prepare = func(ctx context.Context) error { return c.EnsureOriginalEstimate(ctx, key, p.estimateFor) }
 	}
 	return c.MoveIssue(ctx, key, path, prepare)
+}
+
+// LinkPullRequest shows the pull request on the card as a remote link.
+func (p *Provider) LinkPullRequest(ctx context.Context, key string, l taskmanager.PullRequestLink) error {
+	switch {
+	case strings.TrimSpace(key) == "":
+		return errors.New("jira: link pull request: card key is empty")
+	case strings.TrimSpace(l.ID) == "":
+		return errors.New("jira: link pull request: link ID is empty")
+	case strings.TrimSpace(l.URL) == "":
+		return errors.New("jira: link pull request: link URL is empty")
+	}
+	c, err := p.getClient()
+	if err != nil {
+		return err
+	}
+	return c.AddRemoteLink(ctx, key, l)
 }
 
 func (p *Provider) estimateFor(issueType string) string {
