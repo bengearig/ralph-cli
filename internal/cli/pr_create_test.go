@@ -355,3 +355,26 @@ func TestPRCreateRecordedPushesNothing(t *testing.T) {
 		t.Errorf("JSON = %+v", res)
 	}
 }
+
+func TestPRCreateDryRunPrefixesCardKey(t *testing.T) {
+	f := newPRCreateFixture(t)
+	before := f.h.ok("pr", "create", "--milestone", "M-1", "--dry-run")
+	t.Setenv("RALPH_TASK_MANAGER__PROVIDER", "jira")
+	t.Setenv("RALPH_TASK_MANAGER__JIRA__BASE_URL", "http://127.0.0.1:1")
+	t.Setenv("RALPH_TASK_MANAGER__JIRA__PROJECT_KEY", "AIN")
+	t.Setenv("RALPH_JIRA_EMAIL", "me@example.com")
+	t.Setenv("RALPH_JIRA_TOKEN", "tok")
+	if err := f.svc.RecordCard(t.Context(), domain.KindMilestone, 1, "jira", "AIN-3604", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	after := f.h.ok("pr", "create", "--milestone", "M-1", "--dry-run")
+	if !strings.Contains(before, "M-1: Login") || strings.Contains(before, "[AIN-3604]") {
+		t.Errorf("unprefixed dry run:\n%s", before)
+	}
+	if !strings.Contains(after, "[AIN-3604] M-1: Login") {
+		t.Errorf("prefixed dry run:\n%s", after)
+	}
+	if strings.ReplaceAll(after, "[AIN-3604] ", "") != before {
+		t.Errorf("dry run differs beyond the title:\n%s\n---\n%s", before, after)
+	}
+}
