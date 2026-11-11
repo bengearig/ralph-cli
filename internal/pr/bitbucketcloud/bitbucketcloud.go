@@ -109,20 +109,27 @@ func (p *Provider) Create(ctx context.Context, req pr.Request) (pr.PullRequest, 
 	if err != nil {
 		return pr.PullRequest{}, err
 	}
-	var resp struct {
-		ID    int `json:"id"`
-		Links struct {
-			HTML struct {
-				Href string `json:"href"`
-			} `json:"html"`
-		} `json:"links"`
-	}
+	var resp apiPullRequest
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return pr.PullRequest{}, fmt.Errorf("bitbucket_cloud: POST %s: decode response: %w", path, err)
 	}
 	if resp.ID <= 0 {
 		return pr.PullRequest{}, fmt.Errorf("bitbucket_cloud: POST %s: response has no pull request id", path)
 	}
+	return p.pullRequest(resp), nil
+}
+
+// apiPullRequest is the part of a Bitbucket pull request ralph reads.
+type apiPullRequest struct {
+	ID    int `json:"id"`
+	Links struct {
+		HTML struct {
+			Href string `json:"href"`
+		} `json:"html"`
+	} `json:"links"`
+}
+
+func (p *Provider) pullRequest(resp apiPullRequest) pr.PullRequest {
 	href := resp.Links.HTML.Href
 	if href == "" {
 		href = link(p.cfg.Workspace, p.cfg.RepoSlug, resp.ID)
@@ -133,5 +140,43 @@ func (p *Provider) Create(ctx context.Context, req pr.Request) (pr.PullRequest, 
 		Namespace:  p.cfg.Workspace,
 		Repository: p.cfg.RepoSlug,
 		URL:        href,
-	}, nil
+	}
+}
+
+var queryEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+
+// FindOpen returns the most recently updated open pull request from
+// sourceBranch into destinationBranch.
+func (p *Provider) FindOpen(ctx context.Context, sourceBranch, destinationBranch string) (pr.PullRequest, bool, error) {
+	if err := p.Validate(); err != nil {
+		return pr.PullRequest{}, false, err
+	}
+	client, err := NewClient(p.cfg, p.timeout, p.lookup, p.http, p.baseURL)
+	if err != nil {
+		return pr.PullRequest{}, false, err
+	}
+	query := url.Values{
+		"state":   {"OPEN"},
+		"q":       {fmt.Sprintf(`source.branch.name="%s" AND destination.branch.name="%s"`, queryEscaper.Replace(sourceBranch), queryEscaper.Replace(destinationBranch))},
+		"sort":    {"-updated_on"},
+		"pagelen": {"1"},
+	}
+	path := fmt.Sprintf("/repositories/%s/%s/pullrequests", url.PathEscape(p.cfg.Workspace), url.PathEscape(p.cfg.RepoSlug))
+	data, err := client.do(ctx, http.MethodGet, path, query, nil)
+	if err != nil {
+		return pr.PullRequest{}, false, err
+	}
+	var resp struct {
+		Values []apiPullRequest `json:"values"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return pr.PullRequest{}, false, fmt.Errorf("bitbucket_cloud: GET %s: decode response: %w", path, err)
+	}
+	if len(resp.Values) == 0 {
+		return pr.PullRequest{}, false, nil
+	}
+	if resp.Values[0].ID <= 0 {
+		return pr.PullRequest{}, false, fmt.Errorf("bitbucket_cloud: GET %s: response has no pull request id", path)
+	}
+	return p.pullRequest(resp.Values[0]), true, nil
 }

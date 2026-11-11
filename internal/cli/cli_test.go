@@ -805,13 +805,22 @@ func TestMilestoneReconcileSquashMerged(t *testing.T) {
 }
 
 // fakeProvider is a pull request provider that counts Create calls.
-type fakeProvider struct{ created int }
+type fakeProvider struct {
+	created   int
+	found     pr.PullRequest
+	foundOK   bool
+	findError error
+}
 
 func (f *fakeProvider) Name() string    { return "fake" }
 func (f *fakeProvider) Validate() error { return nil }
 func (f *fakeProvider) Create(context.Context, pr.Request) (pr.PullRequest, error) {
 	f.created++
 	return pr.PullRequest{ID: "1", Namespace: "acme", Repository: "sso", Number: 1, URL: "https://example.com/pr/1"}, nil
+}
+
+func (f *fakeProvider) FindOpen(context.Context, string, string) (pr.PullRequest, bool, error) {
+	return f.found, f.foundOK, f.findError
 }
 
 func TestPRCreateDriftGate(t *testing.T) {

@@ -37,6 +37,9 @@ type Provider interface {
 	// Validate checks configuration and credentials without network calls.
 	Validate() error
 	Create(ctx context.Context, req Request) (PullRequest, error)
+	// FindOpen returns the most recently updated open pull request from
+	// sourceBranch into destinationBranch, or false when there is none.
+	FindOpen(ctx context.Context, sourceBranch, destinationBranch string) (PullRequest, bool, error)
 }
 
 // Factory builds a provider from configuration.

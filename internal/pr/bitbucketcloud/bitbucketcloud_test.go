@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -58,8 +59,9 @@ func TestValidate(t *testing.T) {
 }
 
 type captured struct {
-	method, path, auth string
-	body               map[string]any
+	method, path, auth, rawQuery string
+	query                        url.Values
+	body                         map[string]any
 }
 
 func fakeServer(t *testing.T, status int, response string) (*httptest.Server, *captured, *int) {
@@ -69,6 +71,7 @@ func fakeServer(t *testing.T, status int, response string) (*httptest.Server, *c
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		*calls++
 		got.method, got.path, got.auth = r.Method, r.URL.EscapedPath(), r.Header.Get("Authorization")
+		got.rawQuery, got.query = r.URL.RawQuery, r.URL.Query()
 		_ = json.NewDecoder(r.Body).Decode(&got.body)
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(response))
@@ -236,5 +239,105 @@ func TestLink(t *testing.T) {
 		if !ok || got != tt.want {
 			t.Errorf("Link(%q, %q, %d) = %q, %v; want %q", tt.namespace, tt.repository, tt.number, got, ok, tt.want)
 		}
+	}
+}
+
+func TestFindOpen(t *testing.T) {
+	srv, got, _ := fakeServer(t, http.StatusOK, `{"values": [{"id": 9, "links": {"html": {"href": "https://bitbucket.org/acme/widgets/pull-requests/9"}}}]}`)
+	pull, ok, err := provider(srv, cfgFor(config.BitbucketAuthBearer)).FindOpen(context.Background(), "ralph/x", "main")
+	if err != nil || !ok {
+		t.Fatalf("ok = %v, err = %v", ok, err)
+	}
+	want := pr.PullRequest{ID: "9", Number: 9, Namespace: "acme", Repository: "widgets", URL: "https://bitbucket.org/acme/widgets/pull-requests/9"}
+	if pull != want {
+		t.Errorf("pull = %+v, want %+v", pull, want)
+	}
+	if got.method != http.MethodGet || got.path != "/repositories/acme/widgets/pullrequests" || got.auth != "Bearer s3cret" {
+		t.Errorf("request = %+v", got)
+	}
+	for k, w := range map[string]string{
+		"state": "OPEN", "sort": "-updated_on", "pagelen": "1",
+		"q": `source.branch.name="ralph/x" AND destination.branch.name="main"`,
+	} {
+		if got.query.Get(k) != w {
+			t.Errorf("query[%s] = %q, want %q", k, got.query.Get(k), w)
+		}
+	}
+}
+
+func TestFindOpenEscapesBranchNames(t *testing.T) {
+	srv, got, _ := fakeServer(t, http.StatusOK, `{"values": []}`)
+	if _, _, err := provider(srv, cfgFor(config.BitbucketAuthBearer)).FindOpen(context.Background(), `a"b`, `c\d`); err != nil {
+		t.Fatal(err)
+	}
+	if want := `source.branch.name="a\"b" AND destination.branch.name="c\\d"`; got.query.Get("q") != want {
+		t.Errorf("q = %q, want %q", got.query.Get("q"), want)
+	}
+}
+
+func TestFindOpenNone(t *testing.T) {
+	for _, body := range []string{`{"values": []}`, `{}`} {
+		srv, _, _ := fakeServer(t, http.StatusOK, body)
+		pull, ok, err := provider(srv, cfgFor(config.BitbucketAuthBearer)).FindOpen(context.Background(), "ralph/x", "main")
+		if err != nil || ok || pull != (pr.PullRequest{}) {
+			t.Errorf("%s: pull = %+v, ok = %v, err = %v", body, pull, ok, err)
+		}
+	}
+}
+
+func TestFindOpenLinkFallback(t *testing.T) {
+	srv, _, _ := fakeServer(t, http.StatusOK, `{"values": [{"id": 5}]}`)
+	pull, ok, err := provider(srv, cfgFor(config.BitbucketAuthBearer)).FindOpen(context.Background(), "a", "b")
+	if err != nil || !ok {
+		t.Fatalf("ok = %v, err = %v", ok, err)
+	}
+	if want, _ := pr.Link(Name, "acme", "widgets", 5); pull.URL != want {
+		t.Errorf("URL = %q, want %q", pull.URL, want)
+	}
+}
+
+func TestFindOpenMalformed(t *testing.T) {
+	for _, body := range []string{`not json`, `{"values": [{"links": {}}]}`} {
+		srv, _, _ := fakeServer(t, http.StatusOK, body)
+		if _, ok, err := provider(srv, cfgFor(config.BitbucketAuthBearer)).FindOpen(context.Background(), "a", "b"); err == nil || ok {
+			t.Errorf("%s: ok = %v, err = %v", body, ok, err)
+		}
+	}
+}
+
+func TestFindOpenErrorsHideCredentials(t *testing.T) {
+	for _, tt := range []struct {
+		status int
+		want   string
+	}{
+		{http.StatusUnauthorized, "authentication failed (401)"},
+		{http.StatusForbidden, "permission denied (403)"},
+		{http.StatusNotFound, "repository acme/widgets not found"},
+		{http.StatusTooManyRequests, "rate limited (429)"},
+		{http.StatusInternalServerError, "500 Internal Server Error"},
+	} {
+		srv, _, _ := fakeServer(t, tt.status, `{"error": {"message": "nope"}}`)
+		_, ok, err := provider(srv, cfgFor(config.BitbucketAuthBasic)).FindOpen(context.Background(), "a", "b")
+		if err == nil || ok || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%d: ok = %v, err = %v, want %q", tt.status, ok, err, tt.want)
+			continue
+		}
+		for _, secret := range []string{"s3cret", "me@example.com"} {
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("%d: error leaks %q: %v", tt.status, secret, err)
+			}
+		}
+	}
+}
+
+func TestFindOpenInvalidConfigMakesNoRequest(t *testing.T) {
+	srv, _, calls := fakeServer(t, http.StatusOK, `{"values": []}`)
+	cfg := cfgFor(config.BitbucketAuthBasic)
+	cfg.Workspace = ""
+	if _, _, err := provider(srv, cfg).FindOpen(context.Background(), "a", "b"); err == nil || !strings.Contains(err.Error(), "workspace") {
+		t.Errorf("err = %v", err)
+	}
+	if *calls != 0 {
+		t.Errorf("%d requests made", *calls)
 	}
 }
