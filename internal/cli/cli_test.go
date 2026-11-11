@@ -1466,3 +1466,63 @@ func TestImportAsNewOptions(t *testing.T) {
 		t.Error("--again without --as-new accepted")
 	}
 }
+
+func TestDocPromoteAndReturnCommands(t *testing.T) {
+	h := newTestEnv(t, true)
+	h.ok("initiative", "create", "--title", "SSO")
+	h.ok("initiative", "create", "--title", "Billing")
+	h.ok("doc", "create", "--initiative", "I-1", "--kind", "design", "--title", "Layout")
+	h.ok("doc", "create", "--initiative", "I-2", "--kind", "design", "--title", "Layout")
+
+	if got := h.ok("doc", "promote", "D-1"); got != "promoted D-1 to project-wide (from I-1)\n" {
+		t.Errorf("doc promote = %q", got)
+	}
+	if got := h.ok("doc", "show", "D-1"); !strings.Contains(got, "from I-1") {
+		t.Errorf("doc show lacks origin: %q", got)
+	}
+	if got := h.ok("doc", "list", "--project"); !strings.Contains(got, "from I-1") {
+		t.Errorf("doc list lacks origin: %q", got)
+	}
+
+	_, _, err := h.run("", "doc", "promote", "D-2")
+	if err == nil || !strings.Contains(err.Error(), "D-1") {
+		t.Errorf("promote clash error = %v, want it to name D-1", err)
+	}
+	_, _, err = h.run("", "doc", "promote", "D-2", "--slug", "Not A Slug")
+	if err == nil {
+		t.Error("invalid --slug accepted")
+	}
+	if got := h.ok("doc", "promote", "D-2", "--slug", "billing-layout"); got != "promoted D-2 to project-wide (from I-2)\n" {
+		t.Errorf("doc promote --slug = %q", got)
+	}
+
+	_, _, err = h.run("", "doc", "promote", "D-1")
+	if err == nil || !strings.Contains(err.Error(), "already project-wide") {
+		t.Errorf("promote of project-wide document error = %v", err)
+	}
+
+	h.ok("doc", "create", "--initiative", "I-1", "--kind", "design", "--title", "Layout")
+	_, _, err = h.run("", "doc", "return", "D-1")
+	if err == nil || !strings.Contains(err.Error(), "D-3") {
+		t.Errorf("return clash error = %v, want it to name D-3", err)
+	}
+	if got := h.ok("doc", "return", "D-1", "--slug", "sso-layout"); got != "returned D-1 to I-1\n" {
+		t.Errorf("doc return --slug = %q", got)
+	}
+	var v service.DocumentView
+	h.json(&v, "doc", "return", "D-2")
+	if v.InitiativeID != "I-2" || v.OriginInitiativeID != "" {
+		t.Errorf("doc return --json = %+v", v)
+	}
+	v = service.DocumentView{}
+	h.json(&v, "doc", "promote", "D-2")
+	if v.InitiativeID != "" || v.OriginInitiativeID != "I-2" {
+		t.Errorf("doc promote --json = %+v", v)
+	}
+
+	h.ok("initiative", "archive", "I-2")
+	_, _, err = h.run("", "doc", "return", "D-2")
+	if err == nil || !strings.Contains(err.Error(), "I-2") || !strings.Contains(err.Error(), "unarchive") {
+		t.Errorf("return to archived origin error = %v", err)
+	}
+}

@@ -89,6 +89,29 @@ func (t *tools) docUnarchive(ctx context.Context, _ *mcp.CallToolRequest, in idI
 	return nil, v, toolError(err)
 }
 
+type docMoveIn struct {
+	ID   string `json:"id" jsonschema:"document ID, for example D-4"`
+	Slug string `json:"slug,omitempty" jsonschema:"optional new slug applied with the move; use it to resolve a slug clash"`
+}
+
+func (t *tools) docPromote(ctx context.Context, _ *mcp.CallToolRequest, in docMoveIn) (*mcp.CallToolResult, service.DocumentView, error) {
+	id, err := domain.ParseID(domain.KindDocument, in.ID)
+	if err != nil {
+		return nil, service.DocumentView{}, err
+	}
+	v, err := t.svc.PromoteDocument(ctx, id, in.Slug)
+	return nil, v, toolError(err)
+}
+
+func (t *tools) docReturn(ctx context.Context, _ *mcp.CallToolRequest, in docMoveIn) (*mcp.CallToolResult, service.DocumentView, error) {
+	id, err := domain.ParseID(domain.KindDocument, in.ID)
+	if err != nil {
+		return nil, service.DocumentView{}, err
+	}
+	v, err := t.svc.ReturnDocument(ctx, id, in.Slug)
+	return nil, v, toolError(err)
+}
+
 type idIn struct {
 	ID string `json:"id" jsonschema:"entity ID, for example I-1, M-2, T-3, or D-4"`
 }

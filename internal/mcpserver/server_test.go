@@ -140,6 +140,7 @@ func TestToolsAreListedWithSchemas(t *testing.T) {
 		"doc_create", "doc_list", "doc_get", "doc_update", "search", "status",
 		"initiative_delete", "milestone_delete", "task_delete", "doc_delete", "note_delete",
 		"initiative_archive", "initiative_unarchive", "doc_archive", "doc_unarchive",
+		"doc_promote", "doc_return",
 		"import_queue", "import_list", "import_get", "import_resolve",
 	} {
 		if !slices.Contains(names, want) {
@@ -778,5 +779,64 @@ func TestTaskImport(t *testing.T) {
 		"milestone_id": ms.ID, "title": "Running", "status": "IN_PROGRESS", "reason": "x",
 	}, nil); !res.IsError {
 		t.Error("IN_PROGRESS import should fail")
+	}
+}
+
+func TestDocPromoteAndReturnTools(t *testing.T) {
+	cs := connect(t)
+	mustOK(t, cs, "initiative_create", map[string]any{"title": "SSO"}, nil)
+	var a, b service.DocumentView
+	mustOK(t, cs, "doc_create", map[string]any{"initiative_id": "I-1", "kind": "design", "title": "Layout"}, &a)
+	mustOK(t, cs, "doc_create", map[string]any{"kind": "design", "title": "Layout"}, &b)
+
+	res := call(t, cs, "doc_promote", map[string]any{"id": a.ID}, nil)
+	if !res.IsError || !strings.Contains(text(res), b.ID) || !strings.Contains(text(res), "slug") {
+		t.Fatalf("clashing promote: error=%v %q", res.IsError, text(res))
+	}
+	var v service.DocumentView
+	mustOK(t, cs, "doc_promote", map[string]any{"id": a.ID, "slug": "sso-layout"}, &v)
+	if v.InitiativeID != "" || v.OriginInitiativeID != "I-1" || v.Slug != "sso-layout" {
+		t.Errorf("doc_promote view = %+v", v)
+	}
+	if res := call(t, cs, "doc_promote", map[string]any{"id": a.ID}, nil); !res.IsError {
+		t.Error("promoting a project-wide document succeeded")
+	}
+	v = service.DocumentView{}
+	mustOK(t, cs, "doc_return", map[string]any{"id": a.ID}, &v)
+	if v.InitiativeID != "I-1" || v.OriginInitiativeID != "" {
+		t.Errorf("doc_return view = %+v", v)
+	}
+	if res := call(t, cs, "doc_return", map[string]any{"id": a.ID}, nil); !res.IsError {
+		t.Error("returning a document with no origin succeeded")
+	}
+
+	tools, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, tool := range tools.Tools {
+		if tool.Name != "doc_promote" && tool.Name != "doc_return" {
+			continue
+		}
+		seen++
+		an := tool.Annotations
+		if an == nil || an.ReadOnlyHint || an.DestructiveHint == nil || *an.DestructiveHint {
+			t.Errorf("%s annotations = %+v, want non-destructive write", tool.Name, an)
+		}
+		schema, _ := json.Marshal(tool.InputSchema)
+		var s struct {
+			Properties map[string]any `json:"properties"`
+			Required   []string       `json:"required"`
+		}
+		if err := json.Unmarshal(schema, &s); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := s.Properties["slug"]; !ok || slices.Contains(s.Required, "slug") {
+			t.Errorf("%s slug input missing or required: %s", tool.Name, schema)
+		}
+	}
+	if seen != 2 {
+		t.Errorf("found %d promote/return tools, want both", seen)
 	}
 }

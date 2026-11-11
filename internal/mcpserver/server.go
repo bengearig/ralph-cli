@@ -218,6 +218,14 @@ func (t *tools) register(s *mcp.Server) {
 		Description: archivePolicy + "Archives the document: it is hidden from lists and search and becomes read-only."}, t.docArchive)
 	mcp.AddTool(s, &mcp.Tool{Name: "doc_unarchive", Annotations: write("Unarchive document"),
 		Description: "Reverse doc_archive. A document in an archived initiative stays hidden and read-only until the initiative is unarchived; the view's archived field says so."}, t.docUnarchive)
+	mcp.AddTool(s, &mcp.Tool{Name: "doc_promote", Annotations: write("Promote document to project-wide"),
+		Description: "Make an initiative's document project-wide, so it outlives the initiative and stays visible when the initiative is archived. " +
+			"The view keeps origin_initiative_id as a link back. Refused if the document is already project-wide or is itself archived. " +
+			"Refused when a project-wide document already has the slug, naming that document; retry with a new slug."}, t.docPromote)
+	mcp.AddTool(s, &mcp.Tool{Name: "doc_return", Annotations: write("Return document to its initiative"),
+		Description: "Reverse doc_promote: move a promoted document back to its origin initiative and clear the origin link. " +
+			"Refused when the document has no origin, when the origin initiative or the document is archived, " +
+			"or when a document in the origin initiative already has the slug, naming that document; retry with a new slug."}, t.docReturn)
 	mcp.AddTool(s, &mcp.Tool{Name: "doc_delete", Annotations: destructive("Delete document"),
 		Description: deletePolicy + "Removes only that document and its search index entries; nothing else cascades and nothing blocks it."}, t.docDelete)
 

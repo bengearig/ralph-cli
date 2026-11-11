@@ -103,7 +103,7 @@ func (a *app) newDocCommand() *cobra.Command {
 			}
 			rows := make([][]string, 0, len(docs))
 			for _, d := range docs {
-				rows = append(rows, []string{d.ID, orDash(d.InitiativeID), d.Kind, d.Slug, d.Title})
+				rows = append(rows, []string{d.ID, docScope(d), d.Kind, d.Slug, d.Title})
 			}
 			return a.writeTable([]string{"ID", "INITIATIVE", "KIND", "SLUG", "TITLE"}, rows)
 		},
@@ -133,7 +133,7 @@ func (a *app) newDocCommand() *cobra.Command {
 			if a.jsonOut {
 				return a.writeJSON(v)
 			}
-			if err := a.printf("%s  %s\nkind: %s\nslug: %s\ninitiative: %s\n%s\n", v.ID, v.Title, v.Kind, v.Slug, orDash(v.InitiativeID),
+			if err := a.printf("%s  %s\nkind: %s\nslug: %s\ninitiative: %s\n%s\n", v.ID, v.Title, v.Kind, v.Slug, docScope(v),
 				archivedLine(v.ArchivedAt, v.Archived, v.InitiativeID)); err != nil {
 				return err
 			}
@@ -183,7 +183,7 @@ func (a *app) newDocCommand() *cobra.Command {
 	update.Flags().StringVar(&upBody, "body", "", "new body")
 	update.Flags().StringVar(&upFile, "file", "", "read the new body from a file, or - for stdin")
 
-	cmd.AddCommand(create, list, show, update, a.newDocArchiveCommand(true), a.newDocArchiveCommand(false), a.newDeleteCommand(domain.KindDocument, false, "Delete a document and its search index entries."))
+	cmd.AddCommand(create, list, show, update, a.newDocArchiveCommand(true), a.newDocArchiveCommand(false), a.newDocMoveCommand(true), a.newDocMoveCommand(false), a.newDeleteCommand(domain.KindDocument, false, "Delete a document and its search index entries."))
 	return cmd
 }
 
@@ -192,6 +192,55 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+func docScope(v service.DocumentView) string {
+	if v.InitiativeID == "" && v.OriginInitiativeID != "" {
+		return "- (from " + v.OriginInitiativeID + ")"
+	}
+	return orDash(v.InitiativeID)
+}
+
+func (a *app) newDocMoveCommand(promote bool) *cobra.Command {
+	use, short := "return <id>", "Return a promoted document to its origin initiative"
+	if promote {
+		use, short = "promote <id>", "Make an initiative's document project-wide, keeping a link to its origin"
+	}
+	var slug string
+	cmd := &cobra.Command{
+		Use:   use,
+		Short: short,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := parseIDArg(domain.KindDocument, args[0])
+			if err != nil {
+				return err
+			}
+			svc, err := a.service(cmd.Context())
+			if err != nil {
+				return err
+			}
+			var v service.DocumentView
+			if promote {
+				v, err = svc.PromoteDocument(cmd.Context(), id, slug)
+			} else {
+				v, err = svc.ReturnDocument(cmd.Context(), id, slug)
+			}
+			if err != nil {
+				return err
+			}
+			a.warn(v.IndexWarning)
+			if a.jsonOut {
+				return a.writeJSON(v)
+			}
+			if promote {
+				return a.printf("promoted %s to project-wide (from %s)\n", v.ID, v.OriginInitiativeID)
+			}
+			return a.printf("returned %s to %s\n", v.ID, v.InitiativeID)
+		},
+	}
+	cmd.Flags().StringVar(&slug, "slug", "", "new slug to apply with the move, to resolve a slug clash")
+	return cmd
 }
 
 func (a *app) newDocArchiveCommand(archive bool) *cobra.Command {
