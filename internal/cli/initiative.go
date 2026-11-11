@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -97,30 +98,14 @@ func (a *app) newInitiativeCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			v, err := svc.GetInitiative(cmd.Context(), id)
-			if err != nil {
-				return err
-			}
-			st, err := svc.Status(cmd.Context(), id, service.ListOptions{IncludeArchived: true})
+			v, err := fetchInitiativeShow(cmd.Context(), svc, id)
 			if err != nil {
 				return err
 			}
 			if a.jsonOut {
-				return a.writeJSON(struct {
-					service.InitiativeView
-					Status service.InitiativeStatus `json:"status"`
-				}{v, st.Initiatives[0]})
+				return a.writeJSON(v)
 			}
-			if err := a.printf("%s  %s\nslug: %s\ntasks: %s\n", v.ID, v.Title, v.Slug, service.FormatCounts(st.Initiatives[0].TaskCounts)); err != nil {
-				return err
-			}
-			if err := a.printf("%s%s", cardLine(v.Card), archivedLine(v.ArchivedAt, false, "")); err != nil {
-				return err
-			}
-			if err := a.section("Brief", v.Brief); err != nil {
-				return err
-			}
-			return a.printMilestoneTable(st.Initiatives[0].Milestones, nil)
+			return a.renderInitiativeShow(v)
 		},
 	}
 
@@ -157,8 +142,38 @@ func (a *app) newInitiativeCommand() *cobra.Command {
 	update.Flags().StringVar(&upBrief, "brief", "", "new brief")
 	update.Flags().StringVar(&upBriefFile, "brief-file", "", "read the new brief from a file, or - for stdin")
 
-	cmd.AddCommand(create, list, show, update, a.newInitiativeArchiveCommand(true), a.newInitiativeArchiveCommand(false), a.newDeleteCommand(domain.KindInitiative, true, "Delete an initiative. Without --force it must have no milestones or documents; with --force they are deleted too."))
+	cmd.AddCommand(create, list, show, a.newInitiativeWatchCommand(), update, a.newInitiativeArchiveCommand(true), a.newInitiativeArchiveCommand(false), a.newDeleteCommand(domain.KindInitiative, true, "Delete an initiative. Without --force it must have no milestones or documents; with --force they are deleted too."))
 	return cmd
+}
+
+type initiativeShow struct {
+	service.InitiativeView
+	Status service.InitiativeStatus `json:"status"`
+}
+
+func fetchInitiativeShow(ctx context.Context, svc *service.Service, id int64) (initiativeShow, error) {
+	v, err := svc.GetInitiative(ctx, id)
+	if err != nil {
+		return initiativeShow{}, err
+	}
+	st, err := svc.Status(ctx, id, service.ListOptions{IncludeArchived: true})
+	if err != nil {
+		return initiativeShow{}, err
+	}
+	return initiativeShow{v, st.Initiatives[0]}, nil
+}
+
+func (a *app) renderInitiativeShow(v initiativeShow) error {
+	if err := a.printf("%s  %s\nslug: %s\ntasks: %s\n", v.ID, v.Title, v.Slug, service.FormatCounts(v.Status.TaskCounts)); err != nil {
+		return err
+	}
+	if err := a.printf("%s%s", cardLine(v.Card), archivedLine(v.ArchivedAt, false, "")); err != nil {
+		return err
+	}
+	if err := a.section("Brief", v.Brief); err != nil {
+		return err
+	}
+	return a.printMilestoneTable(v.Status.Milestones, nil)
 }
 
 func (a *app) printMilestoneTable(ms []service.MilestoneView, waiting map[string][]string) error {

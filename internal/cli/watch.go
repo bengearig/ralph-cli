@@ -194,3 +194,13 @@ func (a *app) runWatch(ctx context.Context, src watchSource, opts watchOptions, 
 		}
 	}
 }
+
+// capture runs fn with a.streams.Out swapped for a buffer and returns what fn wrote.
+func (a *app) capture(fn func() error) (string, error) {
+	var buf bytes.Buffer
+	orig := a.streams.Out
+	a.streams.Out = &buf
+	defer func() { a.streams.Out = orig }()
+	err := fn()
+	return buf.String(), err
+}
