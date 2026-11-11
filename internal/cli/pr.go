@@ -16,6 +16,7 @@ import (
 
 	// Register pull request providers.
 	_ "github.com/bengearig/ralph/internal/pr/bitbucketcloud"
+	_ "github.com/bengearig/ralph/internal/pr/github"
 )
 
 // newPRProvider builds the configured pull request provider; tests replace it.
