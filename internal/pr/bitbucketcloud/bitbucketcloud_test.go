@@ -2,12 +2,15 @@ package bitbucketcloud
 
 import (
 	"context"
-	"errors"
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bengearig/ralph/internal/config"
-	"github.com/bengearig/ralph/internal/errs"
 	"github.com/bengearig/ralph/internal/pr"
 	"github.com/bengearig/ralph/internal/service"
 )
@@ -19,26 +22,172 @@ func env(vars map[string]string) func(string) (string, bool) {
 	}
 }
 
+func cfgFor(auth string) config.BitbucketCloudConfig {
+	return config.BitbucketCloudConfig{Workspace: "acme", RepoSlug: "widgets", Auth: auth, EmailEnv: "EML", TokenEnv: "TOK"}
+}
+
 func TestValidate(t *testing.T) {
-	p := New(config.BitbucketCloudConfig{TokenEnv: "TOK"}, env(nil))
-	err := p.Validate()
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	for _, want := range []string{"workspace", "repo_slug", "TOK"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("missing %q in %v", want, err)
+	for _, tt := range []struct {
+		auth string
+		want []string
+		not  []string
+	}{
+		{config.BitbucketAuthBasic, []string{"workspace", "repo_slug", "TOK", "EML"}, nil},
+		{config.BitbucketAuthBearer, []string{"workspace", "repo_slug", "TOK"}, []string{"EML"}},
+	} {
+		p := New(config.BitbucketCloudConfig{Auth: tt.auth, EmailEnv: "EML", TokenEnv: "TOK"}, time.Second, env(nil))
+		err := p.Validate()
+		if err == nil {
+			t.Fatalf("%s: expected error", tt.auth)
+		}
+		for _, w := range tt.want {
+			if !strings.Contains(err.Error(), w) {
+				t.Errorf("%s: missing %q in %v", tt.auth, w, err)
+			}
+		}
+		for _, w := range tt.not {
+			if strings.Contains(err.Error(), w) {
+				t.Errorf("%s: unexpected %q in %v", tt.auth, w, err)
+			}
 		}
 	}
-	ready := New(config.BitbucketCloudConfig{Workspace: "acme", RepoSlug: "web", TokenEnv: "TOK"}, env(map[string]string{"TOK": "s3cret"}))
+	ready := New(cfgFor(config.BitbucketAuthBasic), time.Second, env(map[string]string{"TOK": "s3cret", "EML": "me@example.com"}))
 	if err := ready.Validate(); err != nil {
 		t.Errorf("Validate = %v", err)
 	}
-	if _, err := ready.Create(context.Background(), pr.Request{}); !errors.Is(err, errs.ErrNotImplemented) {
-		t.Errorf("Create = %v", err)
+}
+
+type captured struct {
+	method, path, auth string
+	body               map[string]any
+}
+
+func fakeServer(t *testing.T, status int, response string) (*httptest.Server, *captured, *int) {
+	t.Helper()
+	got := &captured{}
+	calls := new(int)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*calls++
+		got.method, got.path, got.auth = r.Method, r.URL.EscapedPath(), r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&got.body)
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(response))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, got, calls
+}
+
+func provider(srv *httptest.Server, cfg config.BitbucketCloudConfig) *Provider {
+	return NewWithClient(cfg, time.Second, env(map[string]string{"TOK": "s3cret", "EML": "me@example.com"}), srv.Client(), srv.URL)
+}
+
+func nested(m map[string]any, keys ...string) any {
+	var v any = m
+	for _, k := range keys {
+		v = v.(map[string]any)[k]
 	}
-	if _, err := p.Create(context.Background(), pr.Request{}); errors.Is(err, errs.ErrNotImplemented) {
-		t.Error("Create should report configuration problems first")
+	return v
+}
+
+func TestCreate(t *testing.T) {
+	for _, draft := range []bool{true, false} {
+		srv, got, _ := fakeServer(t, http.StatusCreated, `{"id": 42, "links": {"html": {"href": "https://bitbucket.org/acme/widgets/pull-requests/42"}}}`)
+		pull, err := provider(srv, cfgFor(config.BitbucketAuthBearer)).Create(context.Background(), pr.Request{
+			Title: "M-1: Login", Body: "the body", SourceBranch: "ralph/login", DestinationBranch: "main", Draft: draft,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := pr.PullRequest{ID: "42", Number: 42, Namespace: "acme", Repository: "widgets", URL: "https://bitbucket.org/acme/widgets/pull-requests/42"}
+		if pull != want {
+			t.Errorf("pull = %+v, want %+v", pull, want)
+		}
+		if got.method != http.MethodPost || got.path != "/repositories/acme/widgets/pullrequests" || got.auth != "Bearer s3cret" {
+			t.Errorf("request = %+v", got)
+		}
+		for key, w := range map[string]any{
+			"title": "M-1: Login", "description": "the body", "draft": draft,
+		} {
+			if got.body[key] != w {
+				t.Errorf("body[%s] = %v, want %v", key, got.body[key], w)
+			}
+		}
+		if nested(got.body, "source", "branch", "name") != "ralph/login" || nested(got.body, "destination", "branch", "name") != "main" {
+			t.Errorf("branches = %v", got.body)
+		}
+	}
+}
+
+func TestCreateBasicAuth(t *testing.T) {
+	srv, got, _ := fakeServer(t, http.StatusCreated, `{"id": 1}`)
+	if _, err := provider(srv, cfgFor(config.BitbucketAuthBasic)).Create(context.Background(), pr.Request{}); err != nil {
+		t.Fatal(err)
+	}
+	if want := "Basic " + base64.StdEncoding.EncodeToString([]byte("me@example.com:s3cret")); got.auth != want {
+		t.Errorf("auth = %q, want %q", got.auth, want)
+	}
+}
+
+func TestCreateLinkFallbackAndMissingID(t *testing.T) {
+	srv, _, _ := fakeServer(t, http.StatusCreated, `{"id": 7}`)
+	pull, err := provider(srv, cfgFor(config.BitbucketAuthBearer)).Create(context.Background(), pr.Request{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want, _ := pr.Link(Name, "acme", "widgets", 7); pull.URL != want {
+		t.Errorf("URL = %q, want %q", pull.URL, want)
+	}
+	srv, _, _ = fakeServer(t, http.StatusCreated, `{"links": {"html": {"href": "https://x"}}}`)
+	if _, err := provider(srv, cfgFor(config.BitbucketAuthBearer)).Create(context.Background(), pr.Request{}); err == nil {
+		t.Error("a response without id should fail")
+	}
+}
+
+func TestCreateEscapesPath(t *testing.T) {
+	srv, got, _ := fakeServer(t, http.StatusCreated, `{"id": 3}`)
+	cfg := cfgFor(config.BitbucketAuthBearer)
+	cfg.Workspace, cfg.RepoSlug = "ac me", "wid/gets"
+	if _, err := provider(srv, cfg).Create(context.Background(), pr.Request{}); err != nil {
+		t.Fatal(err)
+	}
+	if want := "/repositories/ac%20me/wid%2Fgets/pullrequests"; got.path != want {
+		t.Errorf("path = %q, want %q", got.path, want)
+	}
+}
+
+func TestCreateInvalidConfigMakesNoRequest(t *testing.T) {
+	srv, _, calls := fakeServer(t, http.StatusCreated, `{"id": 1}`)
+	cfg := cfgFor(config.BitbucketAuthBasic)
+	cfg.Workspace = ""
+	if _, err := provider(srv, cfg).Create(context.Background(), pr.Request{}); err == nil || !strings.Contains(err.Error(), "workspace") {
+		t.Errorf("err = %v", err)
+	}
+	if *calls != 0 {
+		t.Errorf("%d requests made", *calls)
+	}
+}
+
+func TestCreateErrorsHideCredentials(t *testing.T) {
+	for _, tt := range []struct {
+		status int
+		want   string
+	}{
+		{http.StatusUnauthorized, "authentication failed (401)"},
+		{http.StatusForbidden, "permission denied (403)"},
+		{http.StatusNotFound, "repository acme/widgets not found"},
+		{http.StatusBadRequest, "bad request (400)"},
+	} {
+		srv, _, _ := fakeServer(t, tt.status, `{"error": {"message": "nope"}}`)
+		_, err := provider(srv, cfgFor(config.BitbucketAuthBasic)).Create(context.Background(), pr.Request{})
+		if err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%d: err = %v, want %q", tt.status, err, tt.want)
+			continue
+		}
+		for _, secret := range []string{"s3cret", "me@example.com"} {
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("%d: error leaks %q: %v", tt.status, secret, err)
+			}
+		}
 	}
 }
 

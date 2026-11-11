@@ -24,8 +24,11 @@ type Request struct {
 
 // PullRequest is an opened pull request.
 type PullRequest struct {
-	ID  string `json:"id"`
-	URL string `json:"url"`
+	ID         string `json:"id"`
+	Namespace  string `json:"namespace"`
+	Repository string `json:"repository"`
+	Number     int    `json:"number"`
+	URL        string `json:"url"`
 }
 
 // Provider opens pull requests on a hosting service.

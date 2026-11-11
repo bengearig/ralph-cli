@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +20,7 @@ import (
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/errs"
 	"github.com/bengearig/ralph/internal/pr"
+	"github.com/bengearig/ralph/internal/pr/bitbucketcloud"
 	"github.com/bengearig/ralph/internal/project"
 	"github.com/bengearig/ralph/internal/service"
 	"github.com/bengearig/ralph/internal/store"
@@ -808,7 +811,7 @@ func (f *fakeProvider) Name() string    { return "fake" }
 func (f *fakeProvider) Validate() error { return nil }
 func (f *fakeProvider) Create(context.Context, pr.Request) (pr.PullRequest, error) {
 	f.created++
-	return pr.PullRequest{ID: "1", URL: "https://example.com/pr/1"}, nil
+	return pr.PullRequest{ID: "1", Namespace: "acme", Repository: "sso", Number: 1, URL: "https://example.com/pr/1"}, nil
 }
 
 func TestPRCreateDriftGate(t *testing.T) {
@@ -898,14 +901,26 @@ func TestPRCreateDriftGate(t *testing.T) {
 		t.Errorf("unchanged create: %q, created %d", out, fake.created)
 	}
 
-	// The real provider is reached on a clean milestone, so the error is
-	// its own and not a refusal.
-	newPRProvider = pr.New
+	// The real provider is reached on a clean milestone, against a fake server.
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id": 9, "links": {"html": {"href": "https://bitbucket.example/acme/sso/pull-requests/9"}}}`))
+	}))
+	defer srv.Close()
+	newPRProvider = func(c *config.Config) (pr.Provider, error) {
+		return bitbucketcloud.NewWithClient(c.PR.BitbucketCloud, c.PR.Timeout, os.LookupEnv, srv.Client(), srv.URL), nil
+	}
 	t.Setenv("RALPH_PR__BITBUCKET_CLOUD__WORKSPACE", "acme")
 	t.Setenv("RALPH_PR__BITBUCKET_CLOUD__REPO_SLUG", "sso")
+	t.Setenv(cfg.PR.BitbucketCloud.EmailEnv, "me@example.com")
 	t.Setenv(cfg.PR.BitbucketCloud.TokenEnv, "secret")
-	if _, _, err := h.run("", "pr", "create", "--milestone", "M-1"); !errors.Is(err, errs.ErrNotImplemented) {
-		t.Errorf("clean milestone with bitbucket_cloud: err = %v, want ErrNotImplemented", err)
+	if help := h.ok("pr", "create", "--help"); strings.Contains(help, "not implemented") {
+		t.Errorf("help still says creation is not implemented:\n%s", help)
+	}
+	if out := h.ok("pr", "create", "--milestone", "M-1"); out != "opened https://bitbucket.example/acme/sso/pull-requests/9\n" || gotPath != "/repositories/acme/sso/pullrequests" {
+		t.Errorf("clean milestone with bitbucket_cloud: %q, path %q", out, gotPath)
 	}
 	newPRProvider = func(*config.Config) (pr.Provider, error) { return fake, nil }
 
