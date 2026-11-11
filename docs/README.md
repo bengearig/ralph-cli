@@ -37,5 +37,6 @@ provider, [ADR 22](adr/0022-create-cards-when-resources-are-created.md) records 
 [ADR 32](adr/0032-unstarted-milestone-branches.md) records how unstarted milestone branches are reported and kept current, and
 [ADR 33](adr/0033-promote-documents-to-project-wide.md) records promoting documents to project-wide, and
 [ADR 34](adr/0034-record-pull-requests-without-urls.md) records how a milestone's pull request is recorded without a URL, and how the Bitbucket Cloud and GitHub providers authenticate and adopt pull requests, and
-[ADR 35](adr/0035-watch-by-polling-and-snapshot-comparison.md) records how watching works. Add a new
+[ADR 35](adr/0035-watch-by-polling-and-snapshot-comparison.md) records how watching works, and
+[ADR 36](adr/0036-watch-milestones-tasks-and-the-overview.md) records how milestones, tasks, and the overview are watched. Add a new
 record rather than editing an accepted one; mark the old record superseded.
