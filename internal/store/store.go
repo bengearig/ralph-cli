@@ -96,6 +96,9 @@ type Store interface {
 	UpdateMilestone(ctx context.Context, m *domain.Milestone) error
 	// SetMilestoneGit replaces a milestone's git record without changing updated_at.
 	SetMilestoneGit(ctx context.Context, id int64, g domain.MilestoneGit) error
+	// SetMilestonePullRequest replaces a milestone's pull request record without
+	// changing updated_at; a zero record clears it.
+	SetMilestonePullRequest(ctx context.Context, id int64, rec domain.PullRequestRecord) error
 	// DeleteMilestone removes a milestone with its tasks and their notes, and the dependency edges to and from it.
 	DeleteMilestone(ctx context.Context, id int64) error
 	// SetMilestoneDependencies replaces the milestone's whole dependency set; an empty slice clears it.

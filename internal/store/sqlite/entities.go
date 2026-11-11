@@ -128,13 +128,14 @@ func (s *Store) DeleteInitiative(ctx context.Context, id int64) error {
 // ---- milestones ----
 
 const milestoneCols = `id, initiative_id, slug, title, description, position, branch, base_commit, head_commit,
-	created_at, updated_at`
+	pr_provider, pr_namespace, pr_repository, pr_number, created_at, updated_at`
 
 func scanMilestone(sc scanner) (domain.Milestone, error) {
 	var m domain.Milestone
 	var created, updated string
 	if err := sc.Scan(&m.ID, &m.InitiativeID, &m.Slug, &m.Title, &m.Description, &m.Position,
-		&m.Git.Branch, &m.Git.BaseCommit, &m.Git.HeadCommit, &created, &updated); err != nil {
+		&m.Git.Branch, &m.Git.BaseCommit, &m.Git.HeadCommit,
+		&m.PullRequest.Provider, &m.PullRequest.Namespace, &m.PullRequest.Repository, &m.PullRequest.Number, &created, &updated); err != nil {
 		return m, err
 	}
 	var err error
@@ -220,6 +221,17 @@ func (s *Store) SetMilestoneGit(ctx context.Context, id int64, g domain.Mileston
 	what := domain.FormatID(domain.KindMilestone, id)
 	if err != nil {
 		return mapErr(err, "recording git state of "+what)
+	}
+	return checkAffected(res, what)
+}
+
+func (s *Store) SetMilestonePullRequest(ctx context.Context, id int64, rec domain.PullRequestRecord) error {
+	res, err := s.q.ExecContext(ctx,
+		`UPDATE milestones SET pr_provider = ?, pr_namespace = ?, pr_repository = ?, pr_number = ? WHERE id = ?`,
+		rec.Provider, rec.Namespace, rec.Repository, rec.Number, id)
+	what := domain.FormatID(domain.KindMilestone, id)
+	if err != nil {
+		return mapErr(err, "recording pull request of "+what)
 	}
 	return checkAffected(res, what)
 }

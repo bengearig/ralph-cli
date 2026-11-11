@@ -102,6 +102,7 @@ type Milestone struct {
 	Description  string
 	Position     int
 	Git          MilestoneGit
+	PullRequest  PullRequestRecord
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -113,6 +114,18 @@ type MilestoneGit struct {
 	BaseCommit string
 	HeadCommit string
 }
+
+// PullRequestRecord identifies the pull request opened for a milestone. The
+// zero value means none is recorded.
+type PullRequestRecord struct {
+	Provider   string
+	Namespace  string
+	Repository string
+	Number     int
+}
+
+// IsZero reports whether no pull request is recorded.
+func (r PullRequestRecord) IsZero() bool { return r == PullRequestRecord{} }
 
 // Task is a single loopable unit of work.
 type Task struct {

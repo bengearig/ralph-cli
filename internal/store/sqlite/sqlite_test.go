@@ -1069,6 +1069,10 @@ func TestPermanentIDsUpgradePreservesData(t *testing.T) {
 		if strings.HasPrefix(line, "documents [") {
 			wantRows[n] = strings.TrimSuffix(wantRows[n], "]") + " <nil>]"
 		}
+		// Migration 0009 appends the empty pull request record to milestones.
+		if strings.HasPrefix(line, "milestones [") {
+			wantRows[n] = strings.TrimSuffix(line, "]") + "    0]"
+		}
 	}
 	wantHits := hits(old)
 	chunks := count(t, old, `SELECT COUNT(*) FROM chunks`)
