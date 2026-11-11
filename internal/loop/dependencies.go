@@ -21,6 +21,7 @@ const (
 	DependencyCancelled = "cancelled"
 	DependencyNotDone   = "not_done"
 	DependencyNotMerged = "not_merged"
+	DependencyBaseStale = "base_stale"
 	DependencyUnknown   = "unknown"
 )
 
@@ -97,21 +98,20 @@ func CheckDependency(ctx context.Context, svc *service.Service, cfg *config.Conf
 	if err != nil {
 		return DependencyFinding{}, err
 	}
-	return ClassifyDependency(ctx, dm, cfg.PR.BaseBranch, func(ctx context.Context) (drift.Report, error) {
+	return ClassifyDependency(ctx, dm, func(ctx context.Context) (drift.Input, error) {
 		in, err := DriftInput(ctx, svc, cfg, root, id)
-		if err != nil {
-			if errors.Is(err, project.ErrNotGitRepo) {
-				return drift.Report{}, errors.New("checking dependencies needs a git repository")
-			}
-			return drift.Report{}, err
+		if errors.Is(err, project.ErrNotGitRepo) {
+			return drift.Input{}, errors.New("checking dependencies needs a git repository")
 		}
-		return drift.Check(ctx, in)
+		return in, err
 	})
 }
 
-// ClassifyDependency turns a dependency milestone into a finding. report runs
-// the drift check and is called only when the milestone is DONE.
-func ClassifyDependency(ctx context.Context, dm service.MilestoneView, baseBranch string, report func(context.Context) (drift.Report, error)) (DependencyFinding, error) {
+// ClassifyDependency turns a dependency milestone into a finding. input builds
+// the dependency's drift input and is called only when the milestone is DONE.
+// A dependency not merged into the local base is checked once more against the
+// last fetched remote-tracking base; nothing is fetched.
+func ClassifyDependency(ctx context.Context, dm service.MilestoneView, input func(context.Context) (drift.Input, error)) (DependencyFinding, error) {
 	f := DependencyFinding{ID: dm.ID}
 	switch {
 	case dm.Status == service.MilestoneCancelled:
@@ -121,9 +121,25 @@ func ClassifyDependency(ctx context.Context, dm service.MilestoneView, baseBranc
 		f.Reason = fmt.Sprintf("is %s, not DONE", dm.Status)
 		f.Fix = "finish it first: ralph loop --milestone " + dm.ID
 	default:
-		r, err := report(ctx)
+		in, err := input(ctx)
 		if err != nil {
 			return f, err
+		}
+		r, err := drift.Check(ctx, in)
+		if err != nil {
+			return f, err
+		}
+		if r.State != drift.StateMerged {
+			stale, err := mergedOnlyRemotely(ctx, in)
+			if err != nil {
+				return f, err
+			}
+			if stale {
+				f.State = DependencyBaseStale
+				f.Reason = fmt.Sprintf("is merged into %s/%s, but local %s is behind", in.BaseRemote, in.BaseBranch, in.BaseBranch)
+				f.Fix = fmt.Sprintf("git pull --ff-only %s %s", in.BaseRemote, in.BaseBranch)
+				return f, nil
+			}
 		}
 		switch r.State {
 		case drift.StateMerged:
@@ -134,11 +150,37 @@ func ClassifyDependency(ctx context.Context, dm service.MilestoneView, baseBranc
 			f.Fix = fmt.Sprintf("ralph milestone reconcile %s, or use --force", dm.ID)
 		default:
 			f.State = DependencyNotMerged
-			f.Reason = fmt.Sprintf("branch %s is not merged into %s", r.Branch, baseBranch)
+			f.Reason = fmt.Sprintf("branch %s is not merged into %s", r.Branch, in.BaseBranch)
 			f.Fix = "ralph milestone merge " + dm.ID
 		}
 	}
 	return f, nil
+}
+
+// mergedOnlyRemotely reports whether the dependency is merged into the
+// remote-tracking base although the local base lacks it.
+func mergedOnlyRemotely(ctx context.Context, in drift.Input) (bool, error) {
+	if in.BaseRemote == "" || in.BaseBranch == "" {
+		return false, nil
+	}
+	remoteRef := fmt.Sprintf("refs/remotes/%s/%s", in.BaseRemote, in.BaseBranch)
+	ok, err := in.Repo.RefExists(ctx, remoteRef)
+	if err != nil || !ok {
+		return false, err
+	}
+	localRef := "refs/heads/" + in.BaseBranch
+	if ok, err := in.Repo.RefExists(ctx, localRef); err != nil || !ok {
+		return false, err
+	}
+	if behind, err := in.Repo.IsAncestor(ctx, remoteRef, localRef); err != nil || behind {
+		return false, err
+	}
+	in.BaseRef = remoteRef
+	r, err := drift.Check(ctx, in)
+	if err != nil {
+		return false, err
+	}
+	return r.State == drift.StateMerged, nil
 }
 
 // DependencyRefusal is the ErrNeedsHuman error listing unsatisfied messages.

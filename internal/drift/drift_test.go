@@ -1379,3 +1379,27 @@ func TestUnstartedAcceptMovedBranch(t *testing.T) {
 	e.wantRecord(domain.MilestoneGit{Branch: branch, BaseCommit: tip, HeadCommit: tip})
 	wantState(t, e.check(e.input()), StateUnchanged)
 }
+
+func TestBaseRef(t *testing.T) {
+	e := newEnv(t, "login")
+	e.do(0, true)
+	e.recordHere()
+	gitCmd(t, e.root, "switch", "--quiet", "main")
+	gitCmd(t, e.root, "merge", "--quiet", "--no-ff", "-m", "Merge", branch)
+	gitCmd(t, e.root, "update-ref", "refs/remotes/origin/main", "HEAD")
+	gitCmd(t, e.root, "reset", "--quiet", "--hard", e.base)
+
+	wantState(t, e.check(e.input()), StateUnchanged)
+	in := e.input()
+	in.BaseRef = "refs/remotes/origin/main"
+	r := e.check(in)
+	wantState(t, r, StateMerged)
+	if r.BaseRef != in.BaseRef {
+		t.Errorf("base_ref = %q", r.BaseRef)
+	}
+
+	in.BaseRef = "refs/remotes/origin/nope"
+	if _, err := Check(context.Background(), in); !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("unresolvable BaseRef err = %v", err)
+	}
+}
