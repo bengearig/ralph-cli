@@ -106,7 +106,7 @@ loop:
   prompt_template: ""
 
 pr:
-  # bitbucket_cloud
+  # bitbucket_cloud | github
   provider: bitbucket_cloud
   base_branch: main
   # Git remote `ralph pr create` pushes the milestone's branch to.
@@ -126,6 +126,13 @@ pr:
     # Name of the environment variable holding the API token. Never put the
     # token itself in a config file.
     token_env: RALPH_BITBUCKET_TOKEN
+  github:
+    # The user or organization that owns the repository.
+    owner: ""
+    repo: ""
+    # Name of the environment variable holding the access token. Never put the
+    # token itself in a config file.
+    token_env: RALPH_GITHUB_TOKEN
 
 task_manager:
   # none | jira. With none, ralph does not touch any task manager.

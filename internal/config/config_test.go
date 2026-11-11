@@ -343,7 +343,7 @@ func TestValidateReportsAllProblems(t *testing.T) {
 	cfg.Steps.Loop.Harness = "codex"
 	cfg.Loop.StallThreshold = 0
 	cfg.Loop.BranchTemplate = "ralph/{{.Milestone"
-	cfg.PR.Provider = "github"
+	cfg.PR.Provider = "gitlab"
 	cfg.PR.BaseBranch = " "
 	cfg.PR.Remote = " "
 	cfg.Harness.ClaudeCode.MaxBudgetUSD = -1
@@ -491,8 +491,34 @@ func TestValidatePR(t *testing.T) {
 			c.PR.BitbucketCloud.TokenEnv = ""
 		}, "pr.bitbucket_cloud.token_env:"},
 		{"basic empty email_env", func(c *Config) { c.PR.BitbucketCloud.EmailEnv = "" }, "pr.bitbucket_cloud.email_env:"},
+		{"github valid", func(c *Config) {
+			c.PR.Provider = PRGitHub
+			c.PR.GitHub.Owner, c.PR.GitHub.Repo = "acme", "widgets"
+		}, ""},
+		{"github skips bitbucket section", func(c *Config) {
+			c.PR.Provider = PRGitHub
+			c.PR.GitHub.Owner, c.PR.GitHub.Repo = "acme", "widgets"
+			c.PR.BitbucketCloud = BitbucketCloudConfig{}
+		}, ""},
+		{"github empty owner", func(c *Config) {
+			c.PR.Provider = PRGitHub
+			c.PR.GitHub.Repo = "widgets"
+		}, "pr.github.owner:"},
+		{"github blank repo", func(c *Config) {
+			c.PR.Provider = PRGitHub
+			c.PR.GitHub.Owner, c.PR.GitHub.Repo = "acme", " "
+		}, "pr.github.repo:"},
+		{"github empty token_env", func(c *Config) {
+			c.PR.Provider = PRGitHub
+			c.PR.GitHub.Owner, c.PR.GitHub.Repo = "acme", "widgets"
+			c.PR.GitHub.TokenEnv = " "
+		}, "pr.github.token_env:"},
+		{"bitbucket skips github section", func(c *Config) {
+			c.PR.GitHub = GitHubConfig{}
+		}, ""},
+		{"unknown provider lists github", func(c *Config) { c.PR.Provider = "gitlab" }, "github"},
 		{"other provider skips section", func(c *Config) {
-			c.PR.Provider = "github"
+			c.PR.Provider = "gitlab"
 			c.PR.BitbucketCloud = BitbucketCloudConfig{}
 		}, "pr.provider:"},
 	}
@@ -517,6 +543,56 @@ func TestValidatePR(t *testing.T) {
 				t.Errorf("bitbucket settings validated for another provider: %v", err)
 			}
 		})
+	}
+}
+
+func TestGitHubDefaults(t *testing.T) {
+	cfg, err := Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := cfg.PR.GitHub
+	if g.TokenEnv != "RALPH_GITHUB_TOKEN" || g.Owner != "" || g.Repo != "" {
+		t.Errorf("github defaults = %+v", g)
+	}
+	if cfg.PR.Provider != PRBitbucketCloud {
+		t.Errorf("pr.provider = %q", cfg.PR.Provider)
+	}
+}
+
+func TestGitHubLayers(t *testing.T) {
+	file := writeFile(t, t.TempDir(), "p.yaml", "pr:\n  provider: github\n  github:\n    owner: file-owner\n    repo: widgets\n    token_env: MY_GH_TOKEN\n")
+	l, err := Load(Sources{
+		ProjectFile: file,
+		Environ: []string{
+			"RALPH_PR__GITHUB__OWNER=acme",
+			"RALPH_GITHUB_TOKEN=secret",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	g := l.Config.PR.GitHub
+	if g.Owner != "acme" || g.Repo != "widgets" || g.TokenEnv != "MY_GH_TOKEN" {
+		t.Errorf("github = %+v", g)
+	}
+	if err := l.Config.Validate(); err != nil {
+		t.Errorf("Validate: %v", err)
+	}
+	out, err := l.YAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "secret") {
+		t.Errorf("token leaked into config:\n%s", out)
+	}
+
+	l, err = Load(Sources{Environ: []string{"RALPH_GITHUB_TOKEN=secret"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := l.Config.PR.GitHub.TokenEnv; got != "RALPH_GITHUB_TOKEN" {
+		t.Errorf("token_env = %q", got)
 	}
 }
 

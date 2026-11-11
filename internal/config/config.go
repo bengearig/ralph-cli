@@ -25,6 +25,7 @@ const (
 	EmbeddingsNone   = "none"
 
 	PRBitbucketCloud = "bitbucket_cloud"
+	PRGitHub         = "github"
 
 	BitbucketAuthBasic  = "basic"
 	BitbucketAuthBearer = "bearer"
@@ -38,7 +39,7 @@ var jiraDurationRE = regexp.MustCompile(`^[0-9]+[wdhm]( [0-9]+[wdhm])*$`)
 var (
 	knownHarnesses      = []string{HarnessClaudeCode}
 	knownEmbeddings     = []string{EmbeddingsOllama, EmbeddingsNone}
-	knownPRProviders    = []string{PRBitbucketCloud}
+	knownPRProviders    = []string{PRBitbucketCloud, PRGitHub}
 	knownBitbucketAuths = []string{BitbucketAuthBasic, BitbucketAuthBearer}
 	knownTaskManagers   = []string{TaskManagerNone, TaskManagerJira}
 	knownLogLevels      = []string{"debug", "info", "warn", "error"}
@@ -161,6 +162,13 @@ type PRConfig struct {
 	Draft          bool                 `koanf:"draft"`
 	Timeout        time.Duration        `koanf:"timeout"`
 	BitbucketCloud BitbucketCloudConfig `koanf:"bitbucket_cloud"`
+	GitHub         GitHubConfig         `koanf:"github"`
+}
+
+type GitHubConfig struct {
+	Owner    string `koanf:"owner"`
+	Repo     string `koanf:"repo"`
+	TokenEnv string `koanf:"token_env"`
 }
 
 type BitbucketCloudConfig struct {
@@ -371,6 +379,18 @@ func (c *Config) Validate() error {
 		}
 		if strings.TrimSpace(b.TokenEnv) == "" {
 			bad("pr.bitbucket_cloud.token_env", "must name an environment variable")
+		}
+	}
+	if c.PR.Provider == PRGitHub {
+		g := c.PR.GitHub
+		if strings.TrimSpace(g.Owner) == "" {
+			bad("pr.github.owner", "must not be empty")
+		}
+		if strings.TrimSpace(g.Repo) == "" {
+			bad("pr.github.repo", "must not be empty")
+		}
+		if strings.TrimSpace(g.TokenEnv) == "" {
+			bad("pr.github.token_env", "must name an environment variable")
 		}
 	}
 
