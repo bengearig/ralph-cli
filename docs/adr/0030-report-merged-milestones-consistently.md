@@ -1,6 +1,6 @@
 # 30. Report merged milestones consistently
 
-- Status: Accepted
+- Status: Accepted; refined by [32. Unstarted milestone branches](0032-unstarted-milestone-branches.md)
 - Date: 2026-11-10
 - Refines: [17. Detect and reconcile branch drift](0017-detect-and-reconcile-branch-drift.md)
 

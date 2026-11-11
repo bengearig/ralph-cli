@@ -140,6 +140,7 @@ flowchart TD
    |---|---|
    | `unchanged` | Proceeds. |
    | `ahead` | Warns, listing the commits beyond the recorded head (`! M-1 branch has 1 commit(s) beyond the recorded head:`, then one line per commit), records the tip as the new head, and proceeds. |
+   | `ahead`, for an [unstarted](#unstarted-milestones) branch that carries nothing beyond the base branch | Prints one notice instead of the warning, records the tip as both base and head, and proceeds. |
    | `behind`, `diverged`, `merged`, `branch_missing` | Refuses with exit code `3`, without switching branches. The feed and the error name the state and say `run: ralph milestone reconcile <M-n>`. |
 
    A refusal comes before the dirty-tree check, so the drift is what gets reported. A milestone without a record
@@ -154,6 +155,8 @@ flowchart TD
    - If it needs to switch branches, a dirty working tree is refused, listing the changed paths.
    - If the branch exists, the loop switches to it.
    - Otherwise it creates the branch from `pr.base_branch`, falling back to `origin/<base>`, without tracking.
+   - An [unstarted](#unstarted-milestones) branch with no work of its own that is strictly behind the base ref is
+     then fast-forwarded to it (see [Unstarted milestones](#unstarted-milestones)).
 4. **Record.** The loop then records the milestone's git state (see [Git records](data-model.md#git-records)):
    - **It created the branch.** It records the branch, and records the commit it started from as both
      `base_commit` and `head_commit`.
@@ -162,9 +165,10 @@ flowchart TD
      `base_commit`. If the base branch can't be found, or the two share no history, the feed warns and
      `base_commit` stays empty. Tasks finished before the record existed keep an empty `commit`.
    - **The milestone is already recorded.** The record is left as it is, apart from the head the drift check moved
-     for an `ahead` branch.
+     for an `ahead` branch. For an unstarted branch that was moved onto the base branch, or fast-forwarded by the
+     loop, the base and the head are both set to the new tip.
 
-   `--dry-run` records nothing.
+   `--dry-run` records nothing, and does not fast-forward.
 5. **Ignored paths.** Changes under `.ralph/` are never counted, staged, or stashed.
 
 ### Milestone dependencies
@@ -472,9 +476,9 @@ The states are checked in this order, and the first that applies wins:
 |---|---|---|---|
 | `branch_missing` | The branch doesn't exist locally and its recorded head is not merged. The report says whether `origin/<branch>` does. | refuse | refuse |
 | `unrecorded` | The milestone has no recorded head. [Backfill](#backfill) applies. | record on first use and proceed | refuse |
-| `merged` | The milestone is in the base ref in one of two ways. **By ancestry:** its head (the tip, or the recorded head when the branch was deleted) is not the recorded base (or the proposed base, when unrecorded) and is contained in the base ref; a branch with no commits of its own is therefore not `merged`. **By tasks:** it has `DONE` tasks and the work of every one is found in base-branch commits the milestone doesn't share, by `Ralph-Task` trailer or patch-id, never by subject (see [Merged by tasks](#merged-by-tasks)). The report's `merged_by` says which. | refuse | refuse |
+| `merged` | The milestone is in the base ref in one of two ways. **By ancestry:** its head (the tip, or the recorded head when the branch was deleted) is not the recorded base (or the proposed base, when unrecorded) and is contained in the base ref. A branch of an [unstarted](#unstarted-milestones) milestone is never `merged` by ancestry, even when its tip is in the base ref. **By tasks:** it has `DONE` tasks and the work of every one is found in base-branch commits the milestone doesn't share, by `Ralph-Task` trailer or patch-id, never by subject (see [Merged by tasks](#merged-by-tasks)). The report's `merged_by` says which. | refuse | refuse |
 | `unchanged` | The tip is the recorded head. | proceed | proceed |
-| `ahead` | The recorded head is an ancestor of the tip: commits were added on top. The report lists them. | warn, record the tip as head, proceed | refuse |
+| `ahead` | The recorded head is an ancestor of the tip: commits were added on top. The report lists them. An unstarted branch moved onto the base branch is `ahead` too; when it carries nothing beyond the base branch, the proposed base is its tip. | warn, record the tip as head, proceed (for an unstarted branch with nothing of its own, record the tip as base and head, with a notice) | refuse |
 | `behind` | The tip is an ancestor of the recorded head: recorded commits are no longer on the branch. The report lists them. | refuse | refuse |
 | `diverged` | Anything else: a rebase, amend, squash, or reset onto other work. A recorded head that no longer exists as an object also counts. | refuse | refuse |
 
@@ -486,6 +490,36 @@ For a deleted branch, `merged` by ancestry and then `merged` by tasks are checke
 branch after merging it still reports `merged`, with `branch_exists` false and the summary ending
 ` (branch deleted)`. An empty recorded head, or one that no longer exists as an object, can't be merged by ancestry,
 but may still be merged by tasks when the recorded base exists to bound the search.
+
+### Unstarted milestones
+
+A milestone is **unstarted** when its recorded head is not empty and equals its recorded base, and it has no `DONE`
+tasks: the loop recorded the branch but no work has been done on it. The report's `unstarted` field says so, and is
+always present. Such a branch has nothing to lose, so ancestry never makes it `merged`: without this rule, bringing a
+stale branch up to date with `git branch -f <branch> main` would put its tip in the base ref and leave the milestone
+refused as `merged`, with no way forward but an empty commit. A deleted branch is unchanged: with its head equal to
+the recorded base it is already not merged.
+
+A moved unstarted branch is `ahead` like any branch with commits on top. When its tip is in the base ref, so it
+carries nothing the base branch lacks, the proposed base is the tip. A person's own commits on an unstarted branch
+are beyond the base ref, so they keep the usual `ahead` handling.
+
+- **Re-record.** When the loop resumes an `ahead` unstarted branch whose proposed base is its tip, it records the tip
+  as both base and head and prints one line, instead of listing the base branch's commits as extra work.
+  `ralph milestone reconcile --accept` records the same.
+- **Fast-forward.** When the loop resumes an unstarted branch with no work of its own that is strictly behind the base
+  ref, it runs `git merge --ff-only` to the base ref, never a merge commit and never a rewind, and records the new tip
+  as base and head. It does nothing when the working tree has uncommitted changes (the feed says why), when the branch
+  has commits of its own, or under `--dry-run`. `ralph pr create` and `ralph milestone merge` never move a branch.
+
+```text
+! M-10 branch ralph/import-agent was moved to 52cef75a1b, which is in main; recording it as the base
+! M-10 branch ralph/import-agent had no work of its own and was behind main; fast-forwarded to 52cef75a1b
+! M-10 branch ralph/import-agent had no work of its own and is behind main, but the working tree has uncommitted changes; not fast-forwarding
+```
+
+Moving a started milestone's branch onto a newer base branch is not done by ralph. See
+[ADR 0032](adr/0032-unstarted-milestone-branches.md).
 
 ### Merged by tasks
 

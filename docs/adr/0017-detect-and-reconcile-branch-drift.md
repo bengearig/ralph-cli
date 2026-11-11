@@ -1,6 +1,6 @@
 # 17. Detect and reconcile branch drift
 
-- Status: Accepted; refined by [30. Report merged milestones consistently](0030-report-merged-milestones-consistently.md)
+- Status: Accepted; refined by [30. Report merged milestones consistently](0030-report-merged-milestones-consistently.md) and [32. Unstarted milestone branches](0032-unstarted-milestone-branches.md)
 - Date: 2026-11-09
 - Refines: [16. Record the loop's git state](0016-record-the-loops-git-state.md)
 
