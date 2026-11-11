@@ -41,7 +41,11 @@ errors.`,
 			if err != nil {
 				return err
 			}
-			res, err := loop.SyncBase(cmd.Context(), l.Config, p.Root, loop.SyncOptions{DryRun: dryRun})
+			svc, err := a.service(cmd.Context())
+			if err != nil {
+				return err
+			}
+			res, err := loop.SyncBase(cmd.Context(), svc, l.Config, p.Root, loop.SyncOptions{DryRun: dryRun})
 			if err != nil {
 				return err
 			}
@@ -54,9 +58,15 @@ errors.`,
 			upstream := res.Remote + "/" + res.BaseBranch
 			switch {
 			case res.Synced:
-				return a.printf("fast-forwarded %s to %s: %s..%s (%d commit(s))\n", res.BaseBranch, upstream, shortCommit(res.From), shortCommit(res.To), res.Behind)
+				if err := a.printf("fast-forwarded %s to %s: %s..%s (%d commit(s))\n", res.BaseBranch, upstream, shortCommit(res.From), shortCommit(res.To), res.Behind); err != nil {
+					return err
+				}
+				return a.printMerged(res, "merged:")
 			case res.DryRun && res.State == git.BaseBehind:
-				return a.printf("would fast-forward %s to %s: %s..%s (%d commit(s))\n", res.BaseBranch, upstream, shortCommit(res.From), shortCommit(res.RemoteTip), res.Behind)
+				if err := a.printf("would fast-forward %s to %s: %s..%s (%d commit(s))\n", res.BaseBranch, upstream, shortCommit(res.From), shortCommit(res.RemoteTip), res.Behind); err != nil {
+					return err
+				}
+				return a.printMerged(res, "would be merged:")
 			case res.State == git.BaseCurrent:
 				return a.printf("%s is already up to date with %s\n", res.BaseBranch, upstream)
 			}
@@ -65,4 +75,17 @@ errors.`,
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "fetch and check, then print what would happen without moving the branch")
 	return cmd
+}
+
+func (a *app) printMerged(res loop.SyncResult, verb string) error {
+	for _, m := range res.NewlyMerged {
+		kept := "already deleted"
+		if m.BranchExists {
+			kept = "kept locally"
+		}
+		if err := a.printf("%s %s (branch %s, %s)\n", verb, m.ID, m.Branch, kept); err != nil {
+			return err
+		}
+	}
+	return nil
 }

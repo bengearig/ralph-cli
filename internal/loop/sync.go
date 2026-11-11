@@ -1,16 +1,21 @@
 package loop
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 
 	"github.com/bengearig/ralph/internal/config"
+	"github.com/bengearig/ralph/internal/domain"
+	"github.com/bengearig/ralph/internal/drift"
 	"github.com/bengearig/ralph/internal/errs"
 	"github.com/bengearig/ralph/internal/git"
 	"github.com/bengearig/ralph/internal/looplock"
 	"github.com/bengearig/ralph/internal/project"
+	"github.com/bengearig/ralph/internal/service"
 )
 
 // SyncOptions selects optional parts of SyncBase.
@@ -32,16 +37,26 @@ type SyncResult struct {
 	DryRun   bool     `json:"dry_run"`
 	Synced   bool     `json:"synced"`
 	Warnings []string `json:"warnings"`
+	// NewlyMerged lists the milestones the sync brought into the base branch.
+	NewlyMerged []MergedMilestone `json:"newly_merged"`
 	// RemoteTip is the fetched remote tip; a dry run reports it as the target.
 	RemoteTip string `json:"-"`
+}
+
+// MergedMilestone is a milestone a sync merged into the base branch.
+type MergedMilestone struct {
+	ID           string `json:"id"`
+	Branch       string `json:"branch"`
+	BranchExists bool   `json:"branch_exists"`
+	MergedBy     string `json:"merged_by"`
 }
 
 // SyncBase fetches pr.base_branch from pr.remote and fast-forwards the local
 // base branch to it. It never pushes, merges, rewrites, deletes, or switches
 // branches.
-func SyncBase(ctx context.Context, cfg *config.Config, root string, opts SyncOptions) (SyncResult, error) {
+func SyncBase(ctx context.Context, svc *service.Service, cfg *config.Config, root string, opts SyncOptions) (SyncResult, error) {
 	remote, branch := cfg.PR.Remote, cfg.PR.BaseBranch
-	res := SyncResult{Remote: remote, BaseBranch: branch, DryRun: opts.DryRun, Warnings: []string{}}
+	res := SyncResult{Remote: remote, BaseBranch: branch, DryRun: opts.DryRun, Warnings: []string{}, NewlyMerged: []MergedMilestone{}}
 
 	lockPath := filepath.Join(root, project.DirName, "loop.lock")
 	holder, held, err := looplock.Probe(lockPath)
@@ -81,7 +96,7 @@ func SyncBase(ctx context.Context, cfg *config.Config, root string, opts SyncOpt
 			errs.ErrNeedsHuman, branch, remote, branch, st.Ahead, st.Behind, remote, branch)
 	case git.BaseBehind:
 		if opts.DryRun {
-			return res, nil
+			return res, res.reportMerged(ctx, svc, cfg, root, res.From, res.RemoteTip)
 		}
 		if err := repo.FastForwardBranch(ctx, remote, branch); err != nil {
 			return res, fmt.Errorf("%w: could not fast-forward %s: %s", errs.ErrNeedsHuman, branch, gitMessage(err))
@@ -90,6 +105,63 @@ func SyncBase(ctx context.Context, cfg *config.Config, root string, opts SyncOpt
 			return res, err
 		}
 		res.Synced = true
+		return res, res.reportMerged(ctx, svc, cfg, root, res.From, res.To)
 	}
 	return res, nil
+}
+
+func (r *SyncResult) reportMerged(ctx context.Context, svc *service.Service, cfg *config.Config, root, from, to string) error {
+	merged, warnings, err := NewlyMerged(ctx, svc, cfg, root, from, to)
+	if err != nil {
+		return err
+	}
+	r.NewlyMerged = merged
+	r.Warnings = append(r.Warnings, warnings...)
+	return nil
+}
+
+// NewlyMerged lists the DONE milestones, in initiatives that are not archived,
+// merged into the commit to but not into the commit from. A milestone whose
+// check fails is skipped with a warning.
+func NewlyMerged(ctx context.Context, svc *service.Service, cfg *config.Config, root, from, to string) ([]MergedMilestone, []string, error) {
+	out, warnings := []MergedMilestone{}, []string{}
+	ms, err := svc.ListMilestones(ctx, 0, service.ListOptions{})
+	if err != nil {
+		return nil, nil, err
+	}
+	type candidate struct {
+		n  int64
+		id string
+	}
+	var cands []candidate
+	for _, m := range ms {
+		if m.Status != service.MilestoneDone {
+			continue
+		}
+		n, err := domain.ParseID(domain.KindMilestone, m.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		cands = append(cands, candidate{n, m.ID})
+	}
+	slices.SortFunc(cands, func(a, b candidate) int { return cmp.Compare(a.n, b.n) })
+	for _, c := range cands {
+		in, err := DriftInput(ctx, svc, cfg, root, c.n)
+		if err == nil {
+			var after, before drift.Report
+			in.BaseRef = to
+			after, err = drift.Check(ctx, in)
+			if err == nil && after.State == drift.StateMerged {
+				in.BaseRef = from
+				before, err = drift.Check(ctx, in)
+				if err == nil && before.State != drift.StateMerged {
+					out = append(out, MergedMilestone{ID: c.id, Branch: after.Branch, BranchExists: after.BranchExists, MergedBy: after.MergedBy})
+				}
+			}
+		}
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("could not check %s: %v", c.id, err))
+		}
+	}
+	return out, warnings, nil
 }
