@@ -108,18 +108,14 @@ func (a *app) newTaskCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			v, err := svc.GetTask(cmd.Context(), id)
+			v, err := fetchTaskShow(cmd.Context(), svc, id)
 			if err != nil {
 				return err
 			}
 			if a.jsonOut {
-				return a.writeJSON(v)
+				return a.writeJSON(v.View)
 			}
-			initiative, err := taskInitiative(cmd.Context(), svc, v)
-			if err != nil {
-				return err
-			}
-			return a.printTask(v, initiative)
+			return a.renderTaskShow(v)
 		},
 	}
 
@@ -258,7 +254,7 @@ func (a *app) newTaskCommand() *cobra.Command {
 	next.Flags().StringVar(&nextMilestone, "milestone", "", "milestone ID (required)")
 	_ = next.MarkFlagRequired("milestone")
 
-	cmd.AddCommand(create, list, show, update, status, note, next, a.newDeleteCommand(domain.KindTask, true, "Delete a task and its notes. Without --force the task must not be IN_PROGRESS or DONE."))
+	cmd.AddCommand(create, list, show, a.newTaskWatchCommand(), update, status, note, next, a.newDeleteCommand(domain.KindTask, true, "Delete a task and its notes. Without --force the task must not be IN_PROGRESS or DONE."))
 	return cmd
 }
 
@@ -297,6 +293,28 @@ func taskInitiative(ctx context.Context, svc *service.Service, v service.TaskVie
 		return "", err
 	}
 	return m.InitiativeID, nil
+}
+
+// taskShow is what "task show" renders; --json prints View alone.
+type taskShow struct {
+	View       service.TaskView
+	Initiative string
+}
+
+func fetchTaskShow(ctx context.Context, svc *service.Service, id int64) (taskShow, error) {
+	v, err := svc.GetTask(ctx, id)
+	if err != nil {
+		return taskShow{}, err
+	}
+	initiative, err := taskInitiative(ctx, svc, v)
+	if err != nil {
+		return taskShow{}, err
+	}
+	return taskShow{View: v, Initiative: initiative}, nil
+}
+
+func (a *app) renderTaskShow(v taskShow) error {
+	return a.printTask(v.View, v.Initiative)
 }
 
 func (a *app) printTask(v service.TaskView, initiative string) error {

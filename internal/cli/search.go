@@ -1,14 +1,18 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/loop"
 	"github.com/bengearig/ralph/internal/service"
+	"github.com/bengearig/ralph/internal/store"
 )
 
 func (a *app) newSearchCommand() *cobra.Command {
@@ -109,11 +113,23 @@ chunking settings.`,
 func (a *app) newStatusCommand() *cobra.Command {
 	var initiative string
 	var archived bool
+	var lw *listWatch
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Summarize initiatives, milestones, and task progress",
-		Args:  cobra.NoArgs,
+		Long: `Summarize initiatives, milestones, and task progress.
+
+With --watch it polls and shows the summary again whenever it changes. It is
+read-only. On a terminal it redraws in place and highlights what changed;
+otherwise (or with --json) it writes one line of JSON for the first snapshot and
+for every change. The overview never finishes, so the watch runs until it is
+interrupted (exit 130), an error occurs, or, with --initiative, that initiative
+no longer exists.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := lw.check(cmd); err != nil {
+				return err
+			}
 			iID, err := parseIDFlag(domain.KindInitiative, initiative)
 			if err != nil {
 				return err
@@ -122,46 +138,96 @@ func (a *app) newStatusCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			st, err := svc.Status(cmd.Context(), iID, service.ListOptions{IncludeArchived: archived})
+			if lw.Watch {
+				return a.watchStatus(cmd.Context(), svc, iID, archived, lw.Interval)
+			}
+			doc, err := a.fetchStatus(cmd.Context(), svc, iID, archived)
 			if err != nil {
 				return err
 			}
-			waiting := map[string][]string{}
-			if cfg, root, ok := a.waitingContext(); ok {
-				cache := map[string][]loop.DependencyFinding{}
-				for _, i := range st.Initiatives {
-					for _, m := range i.Milestones {
-						if w := a.waitingOn(cmd.Context(), svc, cfg, root, m, cache); len(w) > 0 {
-							waiting[m.ID] = findingIDs(w)
-						}
-					}
-				}
-			}
 			if a.jsonOut {
-				return a.writeJSON(statusJSON(st, waiting))
+				return a.writeJSON(doc)
 			}
-			if len(st.Initiatives) == 0 {
-				return a.printf("no initiatives yet; start with `ralph initiative create` or /ralph:receive in Claude Code\n")
-			}
-			for n, i := range st.Initiatives {
-				if n > 0 {
-					if err := a.printf("\n"); err != nil {
-						return err
-					}
-				}
-				if err := a.printf("%s  %s  (%d document(s); %s)\n", i.ID, i.Title, i.Documents, service.FormatCounts(i.TaskCounts)); err != nil {
-					return err
-				}
-				if err := a.printMilestoneTable(i.Milestones, waiting); err != nil {
-					return err
-				}
-			}
-			return nil
+			return a.renderStatus(doc)
 		},
 	}
 	cmd.Flags().StringVar(&initiative, "initiative", "", "only this initiative")
 	cmd.Flags().BoolVar(&archived, "archived", false, "include archived initiatives and documents, and their contents")
+	lw = addListWatchFlags(cmd)
 	return cmd
+}
+
+func (a *app) fetchStatus(ctx context.Context, svc *service.Service, initiativeID int64, archived bool) (statusDoc, error) {
+	st, err := svc.Status(ctx, initiativeID, service.ListOptions{IncludeArchived: archived})
+	if err != nil {
+		return statusDoc{}, err
+	}
+	waiting := map[string][]string{}
+	if cfg, root, ok := a.waitingContext(); ok {
+		cache := map[string][]loop.DependencyFinding{}
+		for _, i := range st.Initiatives {
+			for _, m := range i.Milestones {
+				if w := a.waitingOn(ctx, svc, cfg, root, m, cache); len(w) > 0 {
+					waiting[m.ID] = findingIDs(w)
+				}
+			}
+		}
+	}
+	return statusJSON(st, waiting), nil
+}
+
+func (a *app) renderStatus(doc statusDoc) error {
+	if len(doc.Initiatives) == 0 {
+		return a.printf("no initiatives yet; start with `ralph initiative create` or /ralph:receive in Claude Code\n")
+	}
+	for n, i := range doc.Initiatives {
+		if n > 0 {
+			if err := a.printf("\n"); err != nil {
+				return err
+			}
+		}
+		if err := a.printf("%s  %s  (%d document(s); %s)\n", i.ID, i.Title, i.Documents, service.FormatCounts(i.TaskCounts)); err != nil {
+			return err
+		}
+		ms := make([]service.MilestoneView, 0, len(i.Milestones))
+		waiting := map[string][]string{}
+		for _, m := range i.Milestones {
+			ms = append(ms, m.MilestoneView)
+			if len(m.WaitingOn) > 0 {
+				waiting[m.ID] = m.WaitingOn
+			}
+		}
+		if err := a.printMilestoneTable(ms, waiting); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *app) watchStatus(ctx context.Context, svc *service.Service, initiativeID int64, archived bool, interval time.Duration) error {
+	seen := ""
+	src := watchSource{Fetch: func(ctx context.Context) (snapshot, error) {
+		doc, err := a.fetchStatus(ctx, svc, initiativeID, archived)
+		if err != nil {
+			if seen != "" && errors.Is(err, store.ErrNotFound) {
+				return snapshot{}, fmt.Errorf("%s no longer exists", seen)
+			}
+			return snapshot{}, err
+		}
+		if initiativeID != 0 {
+			seen = domain.FormatID(domain.KindInitiative, initiativeID)
+		}
+		text, err := a.capture(func() error { return a.renderStatus(doc) })
+		if err != nil {
+			return snapshot{}, err
+		}
+		js, err := snapshotJSON(doc)
+		if err != nil {
+			return snapshot{}, err
+		}
+		return snapshot{Text: text, JSON: js, State: notDone}, nil
+	}}
+	return a.runWatch(ctx, src, watchOptions{Interval: interval}, a.newWatchRenderer(interval))
 }
 
 type statusMilestone struct {
@@ -174,12 +240,12 @@ type statusInitiative struct {
 	Milestones []statusMilestone `json:"milestones"`
 }
 
-func statusJSON(st service.StatusView, waiting map[string][]string) struct {
+type statusDoc struct {
 	Initiatives []statusInitiative `json:"initiatives"`
-} {
-	out := struct {
-		Initiatives []statusInitiative `json:"initiatives"`
-	}{Initiatives: make([]statusInitiative, 0, len(st.Initiatives))}
+}
+
+func statusJSON(st service.StatusView, waiting map[string][]string) statusDoc {
+	out := statusDoc{Initiatives: make([]statusInitiative, 0, len(st.Initiatives))}
 	for _, i := range st.Initiatives {
 		si := statusInitiative{InitiativeStatus: i, Milestones: make([]statusMilestone, 0, len(i.Milestones))}
 		for _, m := range i.Milestones {

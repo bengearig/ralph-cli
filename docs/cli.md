@@ -169,15 +169,36 @@ its origin, shown as `from I-n` by `doc show` and `doc list`, and `ralph doc ret
 
 A watch is the live form of a `show` command: it prints the same view, keeps running, and shows it again whenever it
 changes. It is read-only. It learns of changes by polling the database, so it sees changes made by a loop, an agent's
-MCP server, or another CLI process. `ralph initiative watch <id>` follows an initiative the way `ralph initiative show`
-prints it.
+MCP server, or another CLI process.
+
+| Command | Follows |
+|---|---|
+| `ralph initiative watch <id>` | An initiative, as `ralph initiative show` prints it. |
+| `ralph milestone watch <id>` | A milestone and its tasks, as `ralph milestone show` prints it. |
+| `ralph task watch <id>` | A task and its notes, as `ralph task show` prints it. |
+| `ralph status --watch` | The overview, as `ralph status` prints it. See [Watching the overview](#watching-the-overview). |
+
+The three `watch` commands take the same flags:
 
 | Flag | Meaning |
 |---|---|
 | `--interval <duration>` | How often to poll for changes. The default is `1s` and the minimum is `100ms`; a smaller value is an error. |
-| `--until-done` | End the watch when the initiative is finished: it has at least one milestone, every milestone is done or cancelled, and at least one is done. It ends with exit code `3` instead when a task is blocked. Without the flag the watch runs until interrupted. |
+| `--until-done` | End the watch when the item is finished, or with exit code `3` when it is stuck. Without the flag the watch runs until interrupted. The rules are [below](#until-done). |
 
 Watches also take the global `--json`, `--project-dir`, and `--config` flags.
+
+### Until done
+
+`--until-done` is accepted by the single-item watches. What counts as finished or stuck depends on the item:
+
+| Watch | Finished (exit `0`) | Stuck (exit `3`) |
+|---|---|---|
+| `initiative watch` | It has at least one milestone, every milestone is done or cancelled, and at least one is done. | A task is blocked. |
+| `milestone watch` | The milestone is done. | The milestone is blocked, or any of its tasks is blocked. |
+| `task watch` | The task is done or cancelled. | The task is blocked. |
+
+When the item is both finished and stuck, as a done milestone with a blocked task, it is reported as stuck. The watch
+draws the final view once more before it exits, so the last state stays on screen.
 
 ### Output
 
@@ -196,7 +217,8 @@ view. The cursor is hidden while the watch runs and restored on exit, leaving th
 
 When the output is not a terminal, or with `--json`, the watch writes one compact JSON document per line, with no
 escape sequences and no footer. The document has the same data as `show --json`. The first is written immediately and
-one more for each change. Warnings and notices go to standard error, never to standard output.
+one more for each change. Warnings and notices go to standard error, never to standard output. Each watch writes the
+data its `show` command prints with `--json`; the example below is an initiative watch.
 
 ```sh
 $ ralph initiative watch I-1 --json
@@ -205,28 +227,55 @@ $ ralph initiative watch I-1 --json
 
 Each later change adds another line of the same shape.
 
-To wait for an initiative from a script, use `--until-done`:
+To follow a loop, run it in one terminal and watch its milestone from a second:
+
+```sh
+ralph loop --milestone M-18      # first terminal
+ralph milestone watch M-18       # second terminal
+```
+
+To wait from a script, use `--until-done`:
 
 ```sh
 ralph initiative watch I-8 --until-done && ./deploy.sh
+ralph task watch T-42 --until-done > /dev/null || echo "T-42 needs attention"
 ```
 
-The command exits `0` once the initiative is finished, so the next command runs only then. Without a terminal it writes
-one JSON line per change meanwhile; redirect it to `/dev/null` to discard them.
+The command exits `0` once the item is finished, so the next command runs only then, and `3` when it is stuck. Without a
+terminal it writes one JSON line per change meanwhile; redirect it to `/dev/null` to discard them.
+
+### Watching the overview
+
+`ralph status --watch` (short `-w`) follows the summary `ralph status` prints, and `--initiative` and `--archived`
+narrow it exactly as they do without `--watch`. The overview is a flag on `status`, not a watch subcommand, because it
+is the same command with the same filters.
+
+| Flag | Meaning |
+|---|---|
+| `--watch`, `-w` | Poll and show the output again whenever it changes. |
+| `--interval <duration>` | How often to poll, as for the other watches. It is accepted only together with `--watch`. |
+
+The overview never finishes, so it has no `--until-done`. It runs until it is interrupted, an error occurs, or, with
+`--initiative`, that initiative no longer exists. Output, exit codes, and `--json` behave as for the other watches.
 
 ### Exit codes and errors
 
 | Exit code | When |
 |---|---|
-| `0` | The initiative is finished (with `--until-done`), or the output was closed. |
-| `3` | The initiative is stuck: a task is blocked (with `--until-done`). |
+| `0` | The item is finished (with `--until-done`), or the output was closed. |
+| `3` | The item is stuck (with `--until-done`); see [Until done](#until-done). |
 | `130` | Interrupted by Ctrl-C or SIGTERM. The terminal is restored and nothing is printed. |
-| `1` | An error, including a bad `--interval` and the initiative no longer existing. Starting a watch on an initiative that does not exist gives the same error as `show`. |
+| `1` | An error, including a bad `--interval` and the watched item no longer existing. Starting a watch on an item that does not exist gives the same error as `show`. |
 
 A poll that fails because the database is busy or locked, or because the poll timed out, is not an error. The footer
 shows `waiting: <reason>` in place of the update time (on standard error as a notice without a terminal), and the
-watch tries again at the next poll. An archived initiative is still watched. See
-[ADR 35](adr/0035-watch-by-polling-and-snapshot-comparison.md).
+watch tries again at the next poll.
+
+If the watched initiative, milestone, or task is deleted while it is watched, the watch ends with an error such as
+`M-18 no longer exists` and exit code `1`. An archived item is still watched, and its view shows that it is archived.
+A watch never writes to the store, the repository, or a task manager. See
+[ADR 35](adr/0035-watch-by-polling-and-snapshot-comparison.md) and
+[ADR 36](adr/0036-watch-milestones-tasks-and-the-overview.md).
 
 ## Search
 

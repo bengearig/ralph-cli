@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strconv"
@@ -112,52 +113,14 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			m, err := svc.GetMilestone(cmd.Context(), id)
+			v, err := a.fetchMilestoneShowWaiting(cmd.Context(), svc, id)
 			if err != nil {
 				return err
-			}
-			tasks, err := svc.ListTasks(cmd.Context(), service.TaskFilter{MilestoneID: id, IncludeArchived: true})
-			if err != nil {
-				return err
-			}
-			var findings []loop.DependencyFinding
-			if len(m.DependsOn) > 0 {
-				if cfg, root, ok := a.waitingContext(); ok {
-					findings = a.dependencyFindings(cmd.Context(), svc, cfg, root, m, map[string][]loop.DependencyFinding{})
-				}
 			}
 			if a.jsonOut {
-				return a.writeJSON(struct {
-					service.MilestoneView
-					WaitingOn []loop.DependencyFinding `json:"waiting_on,omitempty"`
-					Tasks     []service.TaskView       `json:"tasks"`
-				}{m, loop.Unsatisfied(findings), tasks})
+				return a.writeJSON(v)
 			}
-			if err := a.printf("%s  %s\ninitiative: %s\nslug: %s\nstatus: %s\n", m.ID, m.Title, m.InitiativeID, m.Slug, m.Status); err != nil {
-				return err
-			}
-			if err := a.printf("%s%s", cardLine(m.Card), archivedLine("", m.Archived, m.InitiativeID)); err != nil {
-				return err
-			}
-			if m.Branch != "" {
-				if err := a.printf("branch: %s\n", branchLine(m)); err != nil {
-					return err
-				}
-			}
-			if m.PullRequest != nil {
-				if err := a.printf("pull request: %s\n", pullRequestLine(*m.PullRequest)); err != nil {
-					return err
-				}
-			}
-			if len(m.DependsOn) > 0 {
-				if err := a.printf("depends on: %s\n", dependsOnLine(m.DependsOn, findings)); err != nil {
-					return err
-				}
-			}
-			if err := a.section("Description", m.Description); err != nil {
-				return err
-			}
-			return a.printTaskTable(tasks)
+			return a.renderMilestoneShow(v)
 		},
 	}
 
@@ -213,7 +176,7 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 	update.Flags().StringSliceVar(&upDependsOn, "depends-on", nil, "replace the milestones this one depends on, e.g. M-15,M-16 (repeatable)")
 	update.Flags().BoolVar(&upNoDependsOn, "no-depends-on", false, "remove all dependencies")
 
-	cmd.AddCommand(create, list, show, update, a.newMilestoneReconcileCommand(), a.newMilestoneMergeCommand(), a.newDeleteCommand(domain.KindMilestone, true, "Delete a milestone. Without --force it must have no tasks; with --force its tasks and their notes are deleted too."))
+	cmd.AddCommand(create, list, show, a.newMilestoneWatchCommand(), update, a.newMilestoneReconcileCommand(), a.newMilestoneMergeCommand(), a.newDeleteCommand(domain.KindMilestone, true, "Delete a milestone. Without --force it must have no tasks; with --force its tasks and their notes are deleted too."))
 	return cmd
 }
 
@@ -473,4 +436,68 @@ func (a *app) printReconcileChanges(actions drift.Actions, after drift.Report) e
 		}
 	}
 	return nil
+}
+
+type milestoneShow struct {
+	service.MilestoneView
+	WaitingOn []loop.DependencyFinding `json:"waiting_on,omitempty"`
+	Tasks     []service.TaskView       `json:"tasks"`
+
+	findings []loop.DependencyFinding
+}
+
+func fetchMilestoneShow(ctx context.Context, svc *service.Service, id int64) (milestoneShow, error) {
+	m, err := svc.GetMilestone(ctx, id)
+	if err != nil {
+		return milestoneShow{}, err
+	}
+	tasks, err := svc.ListTasks(ctx, service.TaskFilter{MilestoneID: id, IncludeArchived: true})
+	if err != nil {
+		return milestoneShow{}, err
+	}
+	return milestoneShow{MilestoneView: m, Tasks: tasks}, nil
+}
+
+// fetchMilestoneShowWaiting adds the dependency findings, which need the project's config and git.
+func (a *app) fetchMilestoneShowWaiting(ctx context.Context, svc *service.Service, id int64) (milestoneShow, error) {
+	v, err := fetchMilestoneShow(ctx, svc, id)
+	if err != nil {
+		return v, err
+	}
+	if len(v.DependsOn) > 0 {
+		if cfg, root, ok := a.waitingContext(); ok {
+			v.findings = a.dependencyFindings(ctx, svc, cfg, root, v.MilestoneView, map[string][]loop.DependencyFinding{})
+			v.WaitingOn = loop.Unsatisfied(v.findings)
+		}
+	}
+	return v, nil
+}
+
+func (a *app) renderMilestoneShow(v milestoneShow) error {
+	m := v.MilestoneView
+	if err := a.printf("%s  %s\ninitiative: %s\nslug: %s\nstatus: %s\n", m.ID, m.Title, m.InitiativeID, m.Slug, m.Status); err != nil {
+		return err
+	}
+	if err := a.printf("%s%s", cardLine(m.Card), archivedLine("", m.Archived, m.InitiativeID)); err != nil {
+		return err
+	}
+	if m.Branch != "" {
+		if err := a.printf("branch: %s\n", branchLine(m)); err != nil {
+			return err
+		}
+	}
+	if m.PullRequest != nil {
+		if err := a.printf("pull request: %s\n", pullRequestLine(*m.PullRequest)); err != nil {
+			return err
+		}
+	}
+	if len(m.DependsOn) > 0 {
+		if err := a.printf("depends on: %s\n", dependsOnLine(m.DependsOn, v.findings)); err != nil {
+			return err
+		}
+	}
+	if err := a.section("Description", m.Description); err != nil {
+		return err
+	}
+	return a.printTaskTable(v.Tasks)
 }
