@@ -1281,16 +1281,16 @@ func (s *Service) moveDocument(ctx context.Context, id int64, slug string, promo
 
 // ArchiveInitiative archives an initiative, making it and everything under it
 // read-only. It is idempotent and refused while a loop holds one of its milestones.
-func (s *Service) ArchiveInitiative(ctx context.Context, id int64) (InitiativeView, error) {
-	return s.setInitiativeArchived(ctx, id, true)
+func (s *Service) ArchiveInitiative(ctx context.Context, id int64, choice DocumentChoice) (InitiativeView, error) {
+	return s.setInitiativeArchived(ctx, id, true, choice)
 }
 
 // UnarchiveInitiative reverses ArchiveInitiative, under the same loop guard.
 func (s *Service) UnarchiveInitiative(ctx context.Context, id int64) (InitiativeView, error) {
-	return s.setInitiativeArchived(ctx, id, false)
+	return s.setInitiativeArchived(ctx, id, false, DocumentChoice{})
 }
 
-func (s *Service) setInitiativeArchived(ctx context.Context, id int64, archive bool) (InitiativeView, error) {
+func (s *Service) setInitiativeArchived(ctx context.Context, id int64, archive bool, choice DocumentChoice) (InitiativeView, error) {
 	var out InitiativeView
 	err := s.InTx(ctx, func(tx *Service) error {
 		i, err := tx.store.GetInitiative(ctx, id)
@@ -1317,6 +1317,12 @@ func (s *Service) setInitiativeArchived(ctx context.Context, id int64, archive b
 		if err := tx.guardLoop(action, domain.FormatID(domain.KindInitiative, id), ids); err != nil {
 			return err
 		}
+		var promoted []string
+		if archive {
+			if promoted, err = tx.promoteForArchive(ctx, i, choice); err != nil {
+				return err
+			}
+		}
 		if err := tx.store.SetInitiativeArchived(ctx, id, at); err != nil {
 			return err
 		}
@@ -1324,9 +1330,66 @@ func (s *Service) setInitiativeArchived(ctx context.Context, id int64, archive b
 			return err
 		}
 		out = initiativeView(i)
+		out.PromotedDocuments = promoted
 		return nil
 	})
 	return out, err
+}
+
+// promoteForArchive validates the choice against the initiative's candidate
+// documents and promotes the chosen ones, returning their IDs.
+func (s *Service) promoteForArchive(ctx context.Context, i domain.Initiative, choice DocumentChoice) ([]string, error) {
+	docs, err := s.store.ListDocuments(ctx, store.DocumentFilter{InitiativeID: i.ID, ExcludeArchived: true})
+	if err != nil {
+		return nil, err
+	}
+	var candidates []domain.Document
+	for _, d := range docs {
+		if d.InitiativeID != nil && *d.InitiativeID == i.ID && d.ArchivedAt.IsZero() {
+			candidates = append(candidates, d)
+		}
+	}
+	if len(candidates) > 0 && !choice.chosen() {
+		return nil, newDocumentChoiceError(i, candidates)
+	}
+	byID := make(map[int64]domain.Document, len(candidates))
+	for _, d := range candidates {
+		byID[d.ID] = d
+	}
+	var pick []domain.Document
+	switch {
+	case choice.All:
+		pick = candidates
+	case len(choice.IDs) > 0:
+		seen := map[int64]bool{}
+		for _, id := range choice.IDs {
+			d, ok := byID[id]
+			if !ok {
+				return nil, fmt.Errorf("%w: %s is not an initiative-scoped, unarchived document of %s",
+					domain.ErrInvalid, domain.FormatID(domain.KindDocument, id), domain.FormatID(domain.KindInitiative, i.ID))
+			}
+			if !seen[id] {
+				seen[id] = true
+				pick = append(pick, d)
+			}
+		}
+	}
+	var promoted []string
+	for _, d := range pick {
+		what := domain.FormatID(domain.KindDocument, d.ID)
+		if err := requireFreeDocumentSlug(ctx, s.store, d, nil, d.Slug); err != nil {
+			if !errors.Is(err, store.ErrConflict) {
+				return nil, err
+			}
+			return nil, fmt.Errorf("%w: cannot promote %s: another project-wide document already uses the slug %q; promote %s on its own with a new slug, then archive again",
+				store.ErrConflict, what, d.Slug, what)
+		}
+		if _, err := s.PromoteDocument(ctx, d.ID, ""); err != nil {
+			return nil, err
+		}
+		promoted = append(promoted, what)
+	}
+	return promoted, nil
 }
 
 // ArchiveDocument archives a document. It is idempotent.

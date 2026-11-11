@@ -157,7 +157,7 @@ func TestDependencyOnArchivedInitiativeAllowedButNotFrom(t *testing.T) {
 	e := newEnv(t)
 	live, old := e.depInitiative(t, "Live"), e.depInitiative(t, "Old")
 	a, b := e.depMilestone(t, live, "A"), e.depMilestone(t, old, "B")
-	if _, err := e.svc.ArchiveInitiative(ctx, old); err != nil {
+	if _, err := e.svc.ArchiveInitiative(ctx, old, DocumentChoice{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := setDeps(e, a, b); err != nil {

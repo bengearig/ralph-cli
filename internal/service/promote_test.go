@@ -104,7 +104,7 @@ func TestPromoteArchived(t *testing.T) {
 	if _, err := e.svc.PromoteDocument(ctx, archivedDoc, ""); !errors.Is(err, ErrArchived) {
 		t.Errorf("promote archived document: %v", err)
 	}
-	if _, err := e.svc.ArchiveInitiative(ctx, ini); err != nil {
+	if _, err := e.svc.ArchiveInitiative(ctx, ini, DocumentChoice{None: true}); err != nil {
 		t.Fatal(err)
 	}
 	v, err := e.svc.PromoteDocument(ctx, inArchivedInit, "")
@@ -192,7 +192,7 @@ func TestReturnDocumentRules(t *testing.T) {
 	if _, err := e.svc.UnarchiveDocument(ctx, id2); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.ArchiveInitiative(ctx, ini); err != nil {
+	if _, err := e.svc.ArchiveInitiative(ctx, ini, DocumentChoice{None: true}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.svc.ReturnDocument(ctx, id2, ""); !errors.Is(err, ErrArchived) || !strings.Contains(err.Error(), "initiative unarchive") {

@@ -342,7 +342,7 @@ func TestSyncCardsScope(t *testing.T) {
 		t.Errorf("other initiative got a card: %+v", c)
 	}
 
-	if _, err := e.svc.ArchiveInitiative(ctx, oid); err != nil {
+	if _, err := e.svc.ArchiveInitiative(ctx, oid, DocumentChoice{}); err != nil {
 		t.Fatal(err)
 	}
 	r, err = e.svc.SyncCards(ctx, SyncOptions{})

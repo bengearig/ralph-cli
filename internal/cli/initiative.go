@@ -199,7 +199,7 @@ func (a *app) newInitiativeArchiveCommand(archive bool) *cobra.Command {
 			}
 			var v service.InitiativeView
 			if archive {
-				v, err = svc.ArchiveInitiative(cmd.Context(), id)
+				v, err = svc.ArchiveInitiative(cmd.Context(), id, service.DocumentChoice{})
 			} else {
 				v, err = svc.UnarchiveInitiative(cmd.Context(), id)
 			}

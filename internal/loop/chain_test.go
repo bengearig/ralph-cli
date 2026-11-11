@@ -92,7 +92,7 @@ func TestOverviewInitiativeErrors(t *testing.T) {
 	if _, err := Overview(ctx, e.svc, e.cfg, e.root, 99, false); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("unknown initiative err = %v", err)
 	}
-	if _, err := e.svc.ArchiveInitiative(ctx, 1); err != nil {
+	if _, err := e.svc.ArchiveInitiative(ctx, 1, service.DocumentChoice{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Overview(ctx, e.svc, e.cfg, e.root, 1, false); !errors.Is(err, service.ErrArchived) {

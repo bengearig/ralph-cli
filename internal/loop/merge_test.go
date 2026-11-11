@@ -185,7 +185,7 @@ func TestMergeRefusesUnfinishedMilestone(t *testing.T) {
 
 func TestMergeRefusesArchivedInitiative(t *testing.T) {
 	e := newMergeEnv(t)
-	if _, err := e.svc.ArchiveInitiative(context.Background(), 1); err != nil {
+	if _, err := e.svc.ArchiveInitiative(context.Background(), 1, service.DocumentChoice{}); err != nil {
 		t.Fatal(err)
 	}
 	e.assertRefusal(t, MergeOptions{}, nil, "archived")

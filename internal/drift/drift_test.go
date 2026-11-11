@@ -1002,7 +1002,7 @@ func TestApplyRefusedWhenArchived(t *testing.T) {
 		t.Fatal(err)
 	}
 	iID, _ := domain.ParseID(domain.KindInitiative, m.InitiativeID)
-	if _, err := e.svc.ArchiveInitiative(ctx, iID); err != nil {
+	if _, err := e.svc.ArchiveInitiative(ctx, iID, service.DocumentChoice{}); err != nil {
 		t.Fatal(err)
 	}
 	before := e.snapshot()

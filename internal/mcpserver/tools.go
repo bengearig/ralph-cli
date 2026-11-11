@@ -58,7 +58,7 @@ func (t *tools) initiativeArchive(ctx context.Context, _ *mcp.CallToolRequest, i
 	if err != nil {
 		return nil, service.InitiativeView{}, err
 	}
-	v, err := t.svc.ArchiveInitiative(ctx, id)
+	v, err := t.svc.ArchiveInitiative(ctx, id, service.DocumentChoice{})
 	return nil, v, toolError(err)
 }
 

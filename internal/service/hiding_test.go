@@ -56,7 +56,7 @@ func newHidingFixture(t *testing.T, e env) hidingFixture {
 	}
 	f.projectDoc = pd.ID
 	f.archived = append(f.archived, pd.ID)
-	if _, err := e.svc.ArchiveInitiative(ctx, f.archivedIni); err != nil {
+	if _, err := e.svc.ArchiveInitiative(ctx, f.archivedIni, DocumentChoice{None: true}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.svc.ArchiveDocument(ctx, mustID(t, domain.KindDocument, pd.ID)); err != nil {

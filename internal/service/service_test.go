@@ -946,7 +946,7 @@ func TestImportAsNewUpFrontErrors(t *testing.T) {
 		t.Errorf("initiative err = %v", err)
 	}
 	ini, _ := e.svc.CreateInitiative(ctx, InitiativeInput{Title: "X", Brief: "b"})
-	if _, err := e.svc.ArchiveInitiative(ctx, 1); err != nil {
+	if _, err := e.svc.ArchiveInitiative(ctx, 1, DocumentChoice{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.svc.ImportAsNew(ctx, f, AsNewOptions{Kind: domain.DocReference, InitiativeID: 1}); err == nil {
@@ -1063,7 +1063,7 @@ func TestImportTaskArchivedInitiative(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	iID, mID := e.scaffold(t)
-	if _, err := e.svc.ArchiveInitiative(ctx, iID); err != nil {
+	if _, err := e.svc.ArchiveInitiative(ctx, iID, DocumentChoice{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.svc.ImportTask(ctx, ImportTaskInput{MilestoneID: mID, Title: "t", Status: domain.StatusProposed, Reason: "r"}); !errors.Is(err, ErrArchived) {

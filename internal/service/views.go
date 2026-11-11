@@ -20,6 +20,8 @@ type InitiativeView struct {
 	IndexWarning string    `json:"index_warning,omitempty"`
 	CardWarning  string    `json:"card_warning,omitempty"`
 	Card         *CardView `json:"card,omitempty"`
+
+	PromotedDocuments []string `json:"promoted_documents,omitempty"`
 }
 
 type MilestoneView struct {

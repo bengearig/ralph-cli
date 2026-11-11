@@ -534,7 +534,7 @@ func TestTaskNextRefusesArchivedInitiative(t *testing.T) {
 	var ms service.MilestoneView
 	mustOK(t, cs, "initiative_create", map[string]any{"title": "Customer SSO"}, nil)
 	mustOK(t, cs, "milestone_create", map[string]any{"initiative_id": "I-1", "title": "OIDC login"}, &ms)
-	if _, err := svc.ArchiveInitiative(ctx, 1); err != nil {
+	if _, err := svc.ArchiveInitiative(ctx, 1, service.DocumentChoice{}); err != nil {
 		t.Fatal(err)
 	}
 	res := call(t, cs, "task_next", map[string]any{"milestone_id": ms.ID}, nil)

@@ -1164,7 +1164,7 @@ func TestLoopAndPRRefuseArchivedInitiative(t *testing.T) {
 		}
 		defer closeFn()
 		if on {
-			_, err = svc.ArchiveInitiative(context.Background(), 1)
+			_, err = svc.ArchiveInitiative(context.Background(), 1, service.DocumentChoice{})
 		} else {
 			_, err = svc.UnarchiveInitiative(context.Background(), 1)
 		}
@@ -1194,6 +1194,7 @@ func TestArchiveCommandsRoundTrip(t *testing.T) {
 	h.ok("task", "create", "--milestone", "M-1", "--title", "Route", "--description", "Add route", "--criteria", "Tests pass")
 	h.ok("doc", "create", "--initiative", "I-1", "--kind", "design", "--title", "Scoped", "--body", "scoped")
 	h.ok("doc", "create", "--kind", "design", "--title", "Wide", "--body", "wide")
+	h.ok("doc", "archive", "D-1")
 
 	if got := h.ok("initiative", "archive", "I-1"); got != "archived I-1\n" {
 		t.Errorf("initiative archive = %q", got)
