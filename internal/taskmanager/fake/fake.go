@@ -17,10 +17,17 @@ type Call struct {
 	Request taskmanager.CardRequest
 }
 
+// LinkCall is a recorded successful LinkPullRequest.
+type LinkCall struct {
+	Key  string
+	Link taskmanager.PullRequestLink
+}
+
 // Provider records calls and hands out sequential keys.
 type Provider struct {
 	mu          sync.Mutex
 	calls       []Call
+	links       []LinkCall
 	n           int
 	attempts    int
 	err         error
@@ -33,6 +40,8 @@ type Provider struct {
 var (
 	_ taskmanager.Provider    = (*Provider)(nil)
 	_ taskmanager.Preflighter = (*Provider)(nil)
+
+	_ taskmanager.PullRequestLinker = (*Provider)(nil)
 )
 
 // New returns an empty fake provider.
@@ -74,16 +83,17 @@ func (p *Provider) Preflight(context.Context) error {
 	return p.preflight
 }
 
-// SetError makes every Create, Update, and SetStatus return err; nil clears it.
+// SetError makes every Create, Update, SetStatus, and LinkPullRequest return err; nil clears it.
 func (p *Provider) SetError(err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.err = err
 }
 
-// SetHook installs a per-call check run before each Create, Update, and
-// SetStatus. n is the 1-based count of those calls so far, including this one; a
-// non-nil return fails the call.
+// SetHook installs a per-call check run before each Create, Update, SetStatus,
+// and LinkPullRequest. n is the 1-based count of those calls so far, including
+// this one; a non-nil return fails the call. LinkPullRequest passes an empty
+// request.
 func (p *Provider) SetHook(h func(n int, method string, req taskmanager.CardRequest) error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -95,6 +105,13 @@ func (p *Provider) Calls() []Call {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]Call(nil), p.calls...)
+}
+
+// Links returns a copy of the successful LinkPullRequest calls in order.
+func (p *Provider) Links() []LinkCall {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]LinkCall(nil), p.links...)
 }
 
 func (p *Provider) Create(_ context.Context, req taskmanager.CardRequest) (taskmanager.Card, error) {
@@ -126,6 +143,16 @@ func (p *Provider) SetStatus(_ context.Context, key, status string) error {
 		return err
 	}
 	p.calls = append(p.calls, Call{Method: "SetStatus", Key: key, Request: taskmanager.CardRequest{Status: status}})
+	return nil
+}
+
+func (p *Provider) LinkPullRequest(_ context.Context, key string, l taskmanager.PullRequestLink) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.check("LinkPullRequest", taskmanager.CardRequest{}); err != nil {
+		return err
+	}
+	p.links = append(p.links, LinkCall{Key: key, Link: l})
 	return nil
 }
 

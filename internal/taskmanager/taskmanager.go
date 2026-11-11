@@ -63,6 +63,18 @@ type Preflighter interface {
 	Preflight(ctx context.Context) error
 }
 
+// PullRequestLink is a pull request to show on a card. ID is stable for one
+// pull request, so linking it again updates the link instead of adding another.
+type PullRequestLink struct {
+	ID, Title, URL string
+}
+
+// PullRequestLinker is implemented by providers that can attach a pull request
+// link to a card. Callers skip a provider that does not implement it.
+type PullRequestLinker interface {
+	LinkPullRequest(ctx context.Context, key string, l PullRequestLink) error
+}
+
 // Factory builds a provider from configuration.
 type Factory func(cfg *config.Config) (Provider, error)
 

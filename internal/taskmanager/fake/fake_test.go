@@ -173,3 +173,74 @@ func TestSetStatusFailureInjection(t *testing.T) {
 		t.Errorf("failed calls recorded: %+v", p.Calls())
 	}
 }
+
+func TestLinkPullRequestRecordedInOrder(t *testing.T) {
+	p := New()
+	a := taskmanager.PullRequestLink{ID: "ralph-pr:github:o/r#1", Title: "Pull request r#1", URL: "https://example.test/1"}
+	b := taskmanager.PullRequestLink{ID: "ralph-pr:github:o/r#2", Title: "Pull request r#2", URL: "https://example.test/2"}
+	if err := p.LinkPullRequest(ctx, "K-1", a); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.LinkPullRequest(ctx, "K-2", b); err != nil {
+		t.Fatal(err)
+	}
+	links := p.Links()
+	if len(links) != 2 || links[0] != (LinkCall{Key: "K-1", Link: a}) || links[1] != (LinkCall{Key: "K-2", Link: b}) {
+		t.Fatalf("links = %+v", links)
+	}
+	if len(p.Calls()) != 0 {
+		t.Errorf("link recorded as card call: %+v", p.Calls())
+	}
+}
+
+func TestLinkPullRequestFailureInjection(t *testing.T) {
+	p := New()
+	boom := errors.New("boom")
+	p.SetError(boom)
+	if err := p.LinkPullRequest(ctx, "K-1", taskmanager.PullRequestLink{}); err != boom {
+		t.Errorf("err = %v", err)
+	}
+	p.SetError(nil)
+	p.SetHook(func(n int, method string, _ taskmanager.CardRequest) error {
+		if method == "LinkPullRequest" && n == 2 {
+			return boom
+		}
+		return nil
+	})
+	if err := p.LinkPullRequest(ctx, "K-1", taskmanager.PullRequestLink{}); err != boom {
+		t.Errorf("hook err = %v", err)
+	}
+	if len(p.Links()) != 0 {
+		t.Errorf("failed calls recorded: %+v", p.Links())
+	}
+	if err := p.LinkPullRequest(ctx, "K-1", taskmanager.PullRequestLink{ID: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Links()) != 1 {
+		t.Errorf("links = %+v", p.Links())
+	}
+}
+
+func TestLinkPullRequestConcurrent(t *testing.T) {
+	p := New()
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = p.LinkPullRequest(ctx, "K-1", taskmanager.PullRequestLink{})
+			_ = p.Links()
+		}()
+	}
+	wg.Wait()
+	if len(p.Links()) != 50 {
+		t.Errorf("links = %d", len(p.Links()))
+	}
+}
+
+func TestFakeIsPullRequestLinker(t *testing.T) {
+	var p taskmanager.Provider = New()
+	if _, ok := p.(taskmanager.PullRequestLinker); !ok {
+		t.Error("fake does not implement PullRequestLinker")
+	}
+}

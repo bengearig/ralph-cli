@@ -121,3 +121,18 @@ func TestDuplicateRegisterPanics(t *testing.T) {
 	}()
 	Register("test-dup", f)
 }
+
+type linkingStub struct{ stub }
+
+func (linkingStub) LinkPullRequest(context.Context, string, PullRequestLink) error { return nil }
+
+func TestPullRequestLinkerIsOptional(t *testing.T) {
+	var plain Provider = stub{}
+	if _, ok := plain.(PullRequestLinker); ok {
+		t.Error("stub without LinkPullRequest satisfies PullRequestLinker")
+	}
+	var linking Provider = linkingStub{}
+	if _, ok := linking.(PullRequestLinker); !ok {
+		t.Error("stub with LinkPullRequest does not satisfy PullRequestLinker")
+	}
+}
