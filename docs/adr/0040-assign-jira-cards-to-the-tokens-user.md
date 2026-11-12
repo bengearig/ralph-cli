@@ -45,4 +45,10 @@ wants the assignee filled in needs it done when the card moves, without ralph ta
 - Assigning needs the token's user to hold the Assign Issues project permission, in addition to the permissions
   already needed to create and edit cards.
 - A card held by someone else stays where it is and is reported as an error until it is reassigned in Jira.
+- The loop is the one place a Jira condition stops ralph. When it starts a task whose card, or whose milestone's card, is
+  held by someone else, it moves the task to `BLOCKED` with a reason naming the card and the holder, starts no session,
+  counts no failure, and stops needing a human. Interactive commands and MCP calls still only warn. The loop is
+  singled out because it works unattended: a warning there would go unseen while an agent did the work of a card another
+  person owns, whereas a person at a command line sees the warning and decides. This is a narrow exception to the rule
+  that a Jira failure never blocks ralph ([ADR 22](0022-create-cards-when-resources-are-created.md)).
 - A failed move leaves the card pending, so a later push or `ralph cards sync` records the new state.
