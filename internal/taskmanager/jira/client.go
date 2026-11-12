@@ -21,6 +21,7 @@ import (
 const (
 	issuePath       = "/rest/api/3/issue"
 	projectPath     = "/rest/api/3/project"
+	myselfPath      = "/rest/api/3/myself"
 	maxResponseBody = 1 << 20
 	maxBodySnippet  = 200
 )
@@ -198,6 +199,70 @@ func (c *Client) ProjectIssueTypes(ctx context.Context, projectKey string) ([]Is
 		out = append(out, IssueType{Name: t.Name, Level: t.HierarchyLevel})
 	}
 	return out, nil
+}
+
+// User is a Jira user.
+type User struct {
+	AccountID   string
+	DisplayName string
+}
+
+type userJSON struct {
+	AccountID   string `json:"accountId"`
+	DisplayName string `json:"displayName"`
+}
+
+// CurrentUser returns the user the API token belongs to.
+func (c *Client) CurrentUser(ctx context.Context) (User, error) {
+	data, err := c.do(ctx, http.MethodGet, myselfPath, nil)
+	if err != nil {
+		return User{}, err
+	}
+	var u userJSON
+	if err := json.Unmarshal(data, &u); err != nil {
+		return User{}, fmt.Errorf("jira: GET %s: response is not valid JSON: %w", myselfPath, err)
+	}
+	if u.AccountID == "" {
+		return User{}, fmt.Errorf("jira: GET %s: response has no accountId", myselfPath)
+	}
+	return User{AccountID: u.AccountID, DisplayName: u.DisplayName}, nil
+}
+
+// Assignee returns a card's assignee, or nil when it has none.
+func (c *Client) Assignee(ctx context.Context, key string) (*User, error) {
+	path := issuePath + "/" + url.PathEscape(key)
+	data, err := c.do(ctx, http.MethodGet, path+"?fields=assignee", nil)
+	if err != nil {
+		return nil, err
+	}
+	var issue struct {
+		Fields struct {
+			Assignee *userJSON `json:"assignee"`
+		} `json:"fields"`
+	}
+	if err := json.Unmarshal(data, &issue); err != nil {
+		return nil, fmt.Errorf("jira: GET %s: response is not valid JSON: %w", path, err)
+	}
+	a := issue.Fields.Assignee
+	if a == nil {
+		return nil, nil
+	}
+	return &User{AccountID: a.AccountID, DisplayName: a.DisplayName}, nil
+}
+
+// AssignIssue assigns a card to the user with the given account ID.
+func (c *Client) AssignIssue(ctx context.Context, key, accountID string) error {
+	if accountID == "" {
+		return fmt.Errorf("jira: assign %s: account ID is empty", key)
+	}
+	body, err := json.Marshal(struct {
+		AccountID string `json:"accountId"`
+	}{accountID})
+	if err != nil {
+		return fmt.Errorf("jira: encode assign request: %w", err)
+	}
+	_, err = c.do(ctx, http.MethodPut, issuePath+"/"+url.PathEscape(key)+"/assignee", body)
+	return err
 }
 
 func (c *Client) issueStatus(ctx context.Context, key string) (string, error) {
@@ -398,6 +463,9 @@ func (e *APIError) Error() string {
 func (e *APIError) hint() string {
 	switch e.Status {
 	case http.StatusUnauthorized, http.StatusForbidden:
+		if strings.HasSuffix(e.path, "/assignee") {
+			return "check the email and API token, and that the token's user has the Assign Issues permission in the project"
+		}
 		return "check the email and API token, and that the token's user can create issues in the project"
 	case http.StatusNotFound:
 		return "check task_manager.jira.base_url and project_key"
