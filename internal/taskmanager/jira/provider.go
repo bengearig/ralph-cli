@@ -30,6 +30,7 @@ var (
 	_ taskmanager.Preflighter = (*Provider)(nil)
 
 	_ taskmanager.PullRequestLinker = (*Provider)(nil)
+	_ taskmanager.CardFinder        = (*Provider)(nil)
 )
 
 func init() {
@@ -281,6 +282,36 @@ func (p *Provider) LinkPullRequest(ctx context.Context, key string, l taskmanage
 		return err
 	}
 	return c.AddRemoteLink(ctx, key, l)
+}
+
+// FindOpenCards lists the open cards in the project that carry every
+// configured label. It refuses to run without labels, which would match every
+// open card in the project.
+func (p *Provider) FindOpenCards(ctx context.Context, search taskmanager.CardSearch) ([]taskmanager.CardCandidate, error) {
+	labels := p.labels()
+	if len(labels) == 0 {
+		return nil, errors.New("task_manager.jira.labels must name at least one label: without labels the search would match every open card in the project")
+	}
+	c, err := p.getClient()
+	if err != nil {
+		return nil, err
+	}
+	found, err := c.SearchOpenCards(ctx, p.cfg.ProjectKey, labels, search.CreatedAfter)
+	if err != nil {
+		return nil, err
+	}
+	base := strings.TrimRight(p.cfg.BaseURL, "/")
+	out := make([]taskmanager.CardCandidate, len(found))
+	for i, f := range found {
+		out[i] = taskmanager.CardCandidate{
+			Key:     f.Key,
+			URL:     base + "/browse/" + f.Key,
+			Summary: f.Summary,
+			Status:  f.Status,
+			Created: f.Created,
+		}
+	}
+	return out, nil
 }
 
 func (p *Provider) estimateFor(issueType string) string {

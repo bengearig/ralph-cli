@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/bengearig/ralph/internal/config"
@@ -773,5 +774,118 @@ func TestSetStatusAssignsOnlyForInProgress(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+type findJira struct {
+	*httptest.Server
+	mu     sync.Mutex
+	bodies []map[string]any
+	status int
+	resp   string
+}
+
+func newFindJira(t *testing.T, status int, resp string) *findJira {
+	t.Helper()
+	f := &findJira{status: status, resp: resp}
+	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		f.mu.Lock()
+		f.bodies = append(f.bodies, m)
+		f.mu.Unlock()
+		if r.URL.Path != "/rest/api/3/search/jql" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(f.status)
+		_, _ = w.Write([]byte(f.resp))
+	}))
+	t.Cleanup(f.Close)
+	return f
+}
+
+func findProvider(base string, labels ...string) *Provider {
+	cfg := testCfg(base + "/")
+	cfg.Labels = labels
+	return NewProvider(cfg, 0, env(goodEnv), nil)
+}
+
+func TestFindOpenCards(t *testing.T) {
+	f := newFindJira(t, 200, `{"issues":[{"key":"PROJ-1","fields":{"summary":"T-1: a","status":{"name":"To Do"},"created":"2026-11-10T14:03:22.123+0000"}},{"key":"PROJ-2","fields":{"summary":"T-2: b","status":{"name":"In Progress"},"created":"2026-11-11T09:00:00.000+0000"}}]}`)
+	p := findProvider(f.URL, "ralph", " ", "automation-platform", "ralph")
+	got, err := p.FindOpenCards(context.Background(), taskmanager.CardSearch{CreatedAfter: time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.bodies) != 1 {
+		t.Fatalf("requests = %d", len(f.bodies))
+	}
+	wantJQL := `project = "PROJ" AND labels = "ralph" AND labels = "automation-platform" AND statusCategory != Done AND created >= "2026-01-15" ORDER BY created ASC`
+	if jql := f.bodies[0]["jql"]; jql != wantJQL {
+		t.Errorf("jql = %v", jql)
+	}
+	want := []taskmanager.CardCandidate{
+		{Key: "PROJ-1", URL: f.URL + "/browse/PROJ-1", Summary: "T-1: a", Status: "To Do", Created: time.Date(2026, 11, 10, 14, 3, 22, 123e6, time.UTC)},
+		{Key: "PROJ-2", URL: f.URL + "/browse/PROJ-2", Summary: "T-2: b", Status: "In Progress", Created: time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v", got)
+	}
+	for i, w := range want {
+		g := got[i]
+		if g.Key != w.Key || g.URL != w.URL || g.Summary != w.Summary || g.Status != w.Status || !g.Created.Equal(w.Created) {
+			t.Errorf("candidate %d = %+v, want %+v", i, g, w)
+		}
+	}
+}
+
+func TestFindOpenCardsWithoutLabels(t *testing.T) {
+	for name, labels := range map[string][]string{"none": nil, "blanks": {"", "  "}} {
+		t.Run(name, func(t *testing.T) {
+			f := newFindJira(t, 200, `{"issues":[]}`)
+			_, err := findProvider(f.URL, labels...).FindOpenCards(context.Background(), taskmanager.CardSearch{})
+			if err == nil || !strings.Contains(err.Error(), "task_manager.jira.labels must name at least one label: without labels the search would match every open card in the project") {
+				t.Errorf("err = %v", err)
+			}
+			if len(f.bodies) != 0 {
+				t.Errorf("requests = %d", len(f.bodies))
+			}
+		})
+	}
+}
+
+func TestFindOpenCardsAPIError(t *testing.T) {
+	f := newFindJira(t, 400, `{"errorMessages":["bad jql"]}`)
+	_, err := findProvider(f.URL, "ralph").FindOpenCards(context.Background(), taskmanager.CardSearch{})
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 400 {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestFindOpenCardsMissingCredentials(t *testing.T) {
+	f := newFindJira(t, 200, `{"issues":[]}`)
+	cfg := testCfg(f.URL)
+	cfg.Labels = []string{"ralph"}
+	_, err := NewProvider(cfg, 0, env(nil), nil).FindOpenCards(context.Background(), taskmanager.CardSearch{})
+	if err == nil || !strings.Contains(err.Error(), "RALPH_JIRA_EMAIL") || len(f.bodies) != 0 {
+		t.Errorf("err = %v, requests = %d", err, len(f.bodies))
+	}
+}
+
+func TestRegisteredProviderIsCardFinder(t *testing.T) {
+	cfg, err := config.Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.TaskManager.Provider = config.TaskManagerJira
+	p, err := taskmanager.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.(taskmanager.CardFinder); !ok {
+		t.Errorf("%T does not implement CardFinder", p)
 	}
 }
