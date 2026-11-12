@@ -17,6 +17,7 @@ func (a *app) newCardsCommand() *cobra.Command {
 		Short: "Work with task manager cards",
 	}
 	cmd.AddCommand(a.newCardsSyncCommand())
+	cmd.AddCommand(a.newCardsReconcileCommand())
 	return cmd
 }
 

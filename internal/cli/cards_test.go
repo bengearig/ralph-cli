@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/bengearig/ralph/internal/config"
 	"github.com/bengearig/ralph/internal/domain"
@@ -416,5 +417,100 @@ func TestCardsSyncHelp(t *testing.T) {
 	flat := strings.Join(strings.Fields(out), " ")
 	if !strings.Contains(flat, "explicit") || !strings.Contains(flat, "safe to rerun") {
 		t.Errorf("help = %q", out)
+	}
+}
+
+func reconcileCandidates(p *tmfake.Provider) {
+	p.SetCandidates([]taskmanager.CardCandidate{
+		{Key: "FAKE-90", URL: "https://x/browse/FAKE-90", Summary: "T-99: Gone", Status: "To Do"},
+		{Key: "FAKE-91", URL: "https://x/browse/FAKE-91", Summary: "No id here", Status: "To Do"},
+	})
+}
+
+func TestCardsReconcileDryRun(t *testing.T) {
+	h, p := syncEnv(t)
+	reconcileCandidates(p)
+	out, errOut, err := h.run("", "cards", "reconcile")
+	if err != nil {
+		t.Fatalf("reconcile: %v\n%s", err, errOut)
+	}
+	if !regexp.MustCompile(`(?m)^orphan\s+T-99\s+FAKE-90\s+\[To Do\]\s+T-99: Gone\s+https://x/browse/FAKE-90$`).MatchString(out) {
+		t.Errorf("no orphan line in %q", out)
+	}
+	if !regexp.MustCompile(`(?m)^skipped\s+FAKE-91\s+summary has no ralph ID\s+\(No id here\)$`).MatchString(out) {
+		t.Errorf("no skipped line in %q", out)
+	}
+	if !strings.Contains(out, "orphans 1, skipped 1\n") {
+		t.Errorf("totals missing: %q", out)
+	}
+	for _, c := range p.Calls() {
+		if c.Method == "SetStatus" {
+			t.Errorf("dry run called SetStatus: %+v", c)
+		}
+	}
+}
+
+func TestCardsReconcileJSON(t *testing.T) {
+	h, p := syncEnv(t)
+	reconcileCandidates(p)
+	out := h.ok("--json", "cards", "reconcile")
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatalf("json %q: %v", out, err)
+	}
+	for _, k := range []string{"items", "orphans", "skipped", "cancelled", "failed"} {
+		if _, ok := raw[k]; !ok {
+			t.Errorf("missing %q in %q", k, out)
+		}
+	}
+	var r service.ReconcileReport
+	if err := json.Unmarshal([]byte(out), &r); err != nil || r.Orphans != 1 || r.Skipped != 1 || len(r.Items) != 2 {
+		t.Errorf("report = %+v (%v)", r, err)
+	}
+}
+
+func TestCardsReconcileCreatedAfter(t *testing.T) {
+	h, p := syncEnv(t)
+	h.ok("cards", "reconcile", "--created-after", "2026-01-15")
+	s := p.Searches()
+	want := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	if len(s) != 1 || !s[0].CreatedAfter.Equal(want) {
+		t.Fatalf("searches = %+v", s)
+	}
+
+	_, _, err := h.run("", "cards", "reconcile", "--created-after", "15/01/2026")
+	if err == nil || !errors.Is(err, domain.ErrInvalid) ||
+		!strings.Contains(err.Error(), `--created-after: "15/01/2026" is not a date (expected YYYY-MM-DD)`) {
+		t.Errorf("err = %v", err)
+	}
+	if n := len(p.Searches()); n != 1 {
+		t.Errorf("bad date searched: %d searches", n)
+	}
+}
+
+func TestCardsReconcileNotConfigured(t *testing.T) {
+	h := newTestEnv(t, true)
+	_, _, err := h.run("", "cards", "reconcile")
+	if err == nil || !strings.Contains(err.Error(), "task_manager.provider") || errors.Is(err, errs.ErrNeedsHuman) {
+		t.Errorf("none: err = %v", err)
+	}
+
+	h = jiraEnv(t, "")
+	_, _, err = h.run("", "cards", "reconcile")
+	if err == nil || !strings.Contains(err.Error(), "task manager disabled") || !strings.Contains(err.Error(), "RALPH_JIRA_TOKEN") {
+		t.Errorf("jira: err = %v", err)
+	}
+}
+
+func TestCardsReconcileHelp(t *testing.T) {
+	h := newTestEnv(t, true)
+	flat := strings.Join(strings.Fields(h.ok("cards", "reconcile", "--help")), " ")
+	for _, want := range []string{"changes nothing", "other people's or other repos' cards", "--created-after"} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("help lacks %q: %q", want, flat)
+		}
+	}
+	if out := h.ok("cards", "--help"); !strings.Contains(out, "reconcile") {
+		t.Errorf("cards help lacks reconcile: %q", out)
 	}
 }
