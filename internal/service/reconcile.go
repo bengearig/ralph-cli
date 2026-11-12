@@ -13,9 +13,19 @@ import (
 	"github.com/bengearig/ralph/internal/taskmanager"
 )
 
-// ReconcileOptions scopes ReconcileCards. A zero CreatedAfter means no date scope.
+// ErrReconcileNeedsScope means applying was asked for without a creation date scope.
+var ErrReconcileNeedsScope = fmt.Errorf("%w: applying requires a creation date scope", domain.ErrInvalid)
+
+// ErrNoCanceledStatus means applying was asked for with no canceled status configured.
+var ErrNoCanceledStatus = fmt.Errorf("%w: applying requires a canceled status; set task_manager.jira.canceled_status", domain.ErrInvalid)
+
+// ReconcileOptions scopes ReconcileCards. A zero CreatedAfter means no date
+// scope. With Apply set, orphans are cancelled and Progress, when set, is
+// called with each card's final item.
 type ReconcileOptions struct {
 	CreatedAfter time.Time
+	Apply        bool
+	Progress     func(ReconcileItem)
 }
 
 // ReconcileItem is the outcome for one candidate card. ID is the ralph ID
@@ -40,8 +50,10 @@ type ReconcileReport struct {
 }
 
 const (
-	reconcileOrphan  = "orphan"
-	reconcileSkipped = "skipped"
+	reconcileOrphan    = "orphan"
+	reconcileSkipped   = "skipped"
+	reconcileCancelled = "cancelled"
+	reconcileFailed    = "failed"
 )
 
 var summaryID = regexp.MustCompile(`^([IMT])-([0-9]+): `)
@@ -70,7 +82,8 @@ func (r *ReconcileReport) add(it ReconcileItem) {
 }
 
 // ReconcileCards finds the provider's open cards and classifies each as an
-// orphan or skipped. It writes nothing and calls the provider only to search.
+// orphan or skipped. With Apply it then cancels the orphans in the provider.
+// It writes nothing to the store.
 func (s *Service) ReconcileCards(ctx context.Context, opts ReconcileOptions) (ReconcileReport, error) {
 	report := ReconcileReport{Items: []ReconcileItem{}}
 	if s.taskManager == nil {
@@ -78,6 +91,14 @@ func (s *Service) ReconcileCards(ctx context.Context, opts ReconcileOptions) (Re
 	}
 	if s.inTx {
 		return report, errors.New("cards cannot be reconciled inside a transaction")
+	}
+	if opts.Apply {
+		if opts.CreatedAfter.IsZero() {
+			return report, ErrReconcileNeedsScope
+		}
+		if s.cardCanceledStatus == "" {
+			return report, ErrNoCanceledStatus
+		}
 	}
 	finder, ok := s.taskManager.(taskmanager.CardFinder)
 	if !ok {
@@ -105,6 +126,28 @@ func (s *Service) ReconcileCards(ctx context.Context, opts ReconcileOptions) (Re
 			it.Outcome = reconcileOrphan
 		}
 		report.add(it)
+	}
+	if !opts.Apply {
+		return report, nil
+	}
+	for n := range report.Items {
+		it := &report.Items[n]
+		if it.Outcome != reconcileOrphan {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return report, err
+		}
+		if err := s.taskManager.SetStatus(ctx, it.Key, string(domain.StatusCancelled)); err != nil {
+			it.Outcome, it.Reason = reconcileFailed, err.Error()
+			report.Failed++
+		} else {
+			it.Outcome = reconcileCancelled
+			report.Cancelled++
+		}
+		if opts.Progress != nil {
+			opts.Progress(*it)
+		}
 	}
 	return report, nil
 }

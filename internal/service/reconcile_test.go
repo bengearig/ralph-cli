@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -213,5 +214,119 @@ func TestReconcileIsReadOnly(t *testing.T) {
 	after, _ := e.svc.ListCards(ctx, "fake")
 	if !reflect.DeepEqual(before, after) {
 		t.Errorf("cards changed: %+v -> %+v", before, after)
+	}
+}
+
+func applyFixture(t *testing.T) (env, *tmfake.Provider, time.Time) {
+	t.Helper()
+	e, p, _, _, _ := reconcileFixture(t)
+	e.svc.cardCanceledStatus = "Canceled"
+	p.SetCandidates([]taskmanager.CardCandidate{
+		cand("O-1", "T-90: a"), cand("S-1", "no id"), cand("O-2", "T-91: b"), cand("O-3", "T-92: c"),
+	})
+	return e, p, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+}
+
+func setStatusCalls(p *tmfake.Provider) []tmfake.Call {
+	var out []tmfake.Call
+	for _, c := range p.Calls() {
+		if c.Method == "SetStatus" && (strings.HasPrefix(c.Key, "O-") || strings.HasPrefix(c.Key, "S-")) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func TestReconcileApplyCancelsOrphans(t *testing.T) {
+	e, p, after := applyFixture(t)
+	r, err := e.svc.ReconcileCards(context.Background(), ReconcileOptions{Apply: true, CreatedAfter: after})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, c := range setStatusCalls(p) {
+		if c.Request.Status != "CANCELLED" {
+			t.Errorf("%+v", c)
+		}
+		keys = append(keys, c.Key)
+	}
+	if !reflect.DeepEqual(keys, []string{"O-1", "O-2", "O-3"}) {
+		t.Errorf("keys %v", keys)
+	}
+	if r.Orphans != 3 || r.Skipped != 1 || r.Cancelled != 3 || r.Failed != 0 {
+		t.Errorf("%+v", r)
+	}
+	for _, it := range r.Items {
+		want := "cancelled"
+		if it.Key == "S-1" {
+			want = "skipped"
+		}
+		if it.Outcome != want {
+			t.Errorf("%+v", it)
+		}
+	}
+}
+
+func TestReconcileApplyOneFails(t *testing.T) {
+	e, p, after := applyFixture(t)
+	p.SetHook(func(_ int, _ string, req taskmanager.CardRequest) error {
+		if req.ID == "O-2" {
+			return errors.New("denied")
+		}
+		return nil
+	})
+	var progress []ReconcileItem
+	r, err := e.svc.ReconcileCards(context.Background(), ReconcileOptions{Apply: true, CreatedAfter: after, Progress: func(it ReconcileItem) { progress = append(progress, it) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Cancelled != 2 || r.Failed != 1 || r.Orphans != 3 {
+		t.Errorf("%+v", r)
+	}
+	if it := r.Items[2]; it.Key != "O-2" || it.Outcome != "failed" || it.Reason != "denied" {
+		t.Errorf("%+v", it)
+	}
+	if r.Items[3].Outcome != "cancelled" {
+		t.Errorf("%+v", r.Items[3])
+	}
+	if len(progress) != 3 || progress[1].Outcome != "failed" || progress[2].Outcome != "cancelled" {
+		t.Errorf("progress %+v", progress)
+	}
+}
+
+func TestReconcileApplyPreconditions(t *testing.T) {
+	ctx := context.Background()
+	e, p, after := applyFixture(t)
+	calls := len(p.Calls())
+	if _, err := e.svc.ReconcileCards(ctx, ReconcileOptions{Apply: true}); !errors.Is(err, ErrReconcileNeedsScope) || !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("err = %v", err)
+	}
+	e.svc.cardCanceledStatus = ""
+	if _, err := e.svc.ReconcileCards(ctx, ReconcileOptions{Apply: true, CreatedAfter: after}); !errors.Is(err, ErrNoCanceledStatus) || !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("err = %v", err)
+	}
+	if len(p.Searches()) != 0 || len(p.Calls()) != calls {
+		t.Errorf("provider used: %+v %+v", p.Searches(), p.Calls()[calls:])
+	}
+}
+
+func TestReconcileDryRunNeedsNeither(t *testing.T) {
+	e, p, _ := applyFixture(t)
+	e.svc.cardCanceledStatus = ""
+	r, err := e.svc.ReconcileCards(context.Background(), ReconcileOptions{})
+	if err != nil || r.Orphans != 3 || r.Cancelled != 0 || len(setStatusCalls(p)) != 0 {
+		t.Errorf("%+v %v", r, err)
+	}
+}
+
+func TestReconcileApplyContextCancelled(t *testing.T) {
+	e, p, after := applyFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	r, err := e.svc.ReconcileCards(ctx, ReconcileOptions{Apply: true, CreatedAfter: after, Progress: func(ReconcileItem) { cancel() }})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	if r.Cancelled != 1 || len(setStatusCalls(p)) != 1 || r.Items[2].Outcome != "orphan" || r.Items[3].Outcome != "orphan" {
+		t.Errorf("%+v", r)
 	}
 }
