@@ -252,6 +252,73 @@ be moved is named in a warning, for example `warning: card PROJ-12 was not moved
 hand. With `--json` and in the MCP tools, the result's `cards` field lists every card with whether it `moved`, and
 the error when it did not.
 
+A card whose move failed, or whose resource was deleted before `canceled_status` was set, has no record left in ralph.
+[Reconciling orphaned cards](#reconciling-orphaned-cards) finds such cards in Jira and cancels them.
+
+## Reconciling orphaned cards
+
+Deleting a resource removes its card record, so a card whose move failed, or whose resource was deleted before
+`canceled_status` was set, has nothing left in ralph to retry from. It stays open in Jira. `ralph cards reconcile`
+finds those cards by searching Jira and comparing what it finds with the store.
+
+```sh
+ralph cards reconcile                                  # dry run: report only
+ralph cards reconcile --created-after 2026-01-01       # dry run, scoped by creation date
+ralph cards reconcile --created-after 2026-01-01 --apply
+```
+
+- `--created-after YYYY-MM-DD` limits the search to cards created on or after that date. Only the date is sent, and Jira
+  reads it in the Jira user's time zone.
+- `--apply` cancels the orphans. Without it the command changes nothing.
+- `--json` prints the report: counts of each outcome and `items`, each with its `outcome`, `key`, `url`, the parsed `id`
+  when there is one, `summary`, `status`, and a `reason` for a skip or a failure.
+
+### The search
+
+The search finds open cards, that is, cards whose status category is not Done, in the configured project that carry
+every label in `task_manager.jira.labels`, optionally created on or after `--created-after`. It uses Jira's
+`search/jql` endpoint. At least one label must be configured: without labels the search would match every open card in
+the project, so the command refuses to run.
+
+### Which cards are orphans
+
+A card's ralph ID is read from the start of its summary, the `ID: title` form ralph writes. The first rule that
+matches decides:
+
+| Outcome | When |
+|---|---|
+| skipped | The card's key is recorded for a resource in ralph. The reason names that resource. |
+| skipped | The summary has no ralph ID, so there is nothing to match. |
+| skipped | The ID exists in ralph, including archived and cancelled work, under a different key or with no recorded card. |
+| orphan | Otherwise: the ID and the key are both unknown to ralph. |
+
+Skipped cards are listed with their reason for a person to review, and are never changed. Cards of archived or
+cancelled work are skipped because they are [`ralph cards sync`](#syncing-existing-work)'s business.
+
+### Applying
+
+A dry run is the default and exits `0` whatever it finds. `--apply` is refused unless `--created-after` is given and
+`task_manager.jira.canceled_status` is set, and it asks no confirmation: review the dry run first. Each orphan is moved
+through the workflow to `canceled_status`, and one line is printed to standard error as each is handled. A card with
+no transition to that status is reported as `failed` with the reachable statuses, and is never forced. Nothing is
+deleted in Jira.
+
+### The shared-label risk
+
+Labels identify the Jira project, not the ralph store. Another person's cards, or another repository's, that carry the
+same labels in the same project have IDs unknown to this store, so they look like orphans, and `--apply` would cancel
+them. Review the dry run, and scope the search with `--created-after` to the date this repository started using ralph.
+
+### Permissions and exit codes
+
+The token's user needs the Browse Projects permission for the search and the Transition Issues permission for the move.
+
+Exit code `0` means success, including every dry run. With `--apply`, `3` means at least one card could not be
+cancelled, and `1` is any other error, including a missing scope, a missing `canceled_status`, a malformed date, and
+a search that failed.
+
+The command is CLI only. There is no MCP tool, so an agent session cannot trigger a bulk cancel.
+
 ## Syncing existing work
 
 `ralph cards sync` and the `cards_sync` MCP tool bring cards in line with ralph:
