@@ -75,7 +75,9 @@ when the card is behind, and the last error on the next line. The `list` command
 Without a provider none of this appears.
 
 Edits to a resource and changes to a task's or milestone's status are pushed to its card, and a failure of any card
-operation is a `warning:` line on standard error, never a failed command. See [Jira](jira.md) for what is pushed.
+operation is a `warning:` line on standard error, never a failed command. That includes `ralph task status` meeting a card
+held by someone else: it saves the change and prints the conflict as a warning. Only `ralph loop` stops on it; see
+[Jira](jira.md#in-the-loop). See [Jira](jira.md) for what is pushed.
 
 | Command | Purpose |
 |---|---|
@@ -389,6 +391,11 @@ the document is project-wide. The file's record is marked `done` with a `created
 
 `ralph loop` and `ralph pr create`, including their dry runs, refuse a milestone whose initiative is
 [archived](#archiving).
+
+`ralph loop` also stops with exit code `3` and the `needs_human` stop reason when a task it starts has a Jira card, or a
+milestone card, held by someone else (see [Assigning cards](jira.md#assigning-cards)). It moves the task to `BLOCKED`
+with a reason naming the card and its holder, starts no session, and counts no failure. Reassign or unassign the card,
+move the task back to `TODO`, and rerun; see [In the loop](jira.md#in-the-loop).
 
 Both also fetch `pr.base_branch` from `pr.remote` before they start and refuse with exit code `3` when the local base
 branch is behind or diverged, or the fetch fails; for a behind base the message names [`ralph sync`](#ralph-sync). `pr.stale_base: sync` fast-forwards a behind base instead. `--force`

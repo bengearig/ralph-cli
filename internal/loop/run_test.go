@@ -21,6 +21,8 @@ import (
 	"github.com/bengearig/ralph/internal/search"
 	"github.com/bengearig/ralph/internal/service"
 	"github.com/bengearig/ralph/internal/store/sqlite"
+	"github.com/bengearig/ralph/internal/taskmanager"
+	tmfake "github.com/bengearig/ralph/internal/taskmanager/fake"
 
 	_ "github.com/bengearig/ralph/internal/harness/claudecode"
 )
@@ -71,6 +73,12 @@ func gitCmd(t *testing.T, dir string, args ...string) string {
 // and a TODO task per title.
 func newRunEnv(t *testing.T, titles ...string) *runEnv {
 	t.Helper()
+	return newRunEnvWith(t, nil, titles...)
+}
+
+// newRunEnvWith is newRunEnv with a task manager provider, which may be nil.
+func newRunEnvWith(t *testing.T, tm taskmanager.Provider, titles ...string) *runEnv {
+	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
@@ -105,7 +113,7 @@ func newRunEnv(t *testing.T, titles ...string) *runEnv {
 	}
 	cfg.Loop.StallThreshold = 2
 	cfg.Loop.MaxIterations = 10
-	svc := service.New(st, &search.Index{Store: st, Chunker: search.Chunker{MaxChars: 500}}, service.Options{StallThreshold: cfg.Loop.StallThreshold})
+	svc := service.New(st, &search.Index{Store: st, Chunker: search.Chunker{MaxChars: 500}}, service.Options{StallThreshold: cfg.Loop.StallThreshold, TaskManager: tm})
 
 	i, _ := svc.CreateInitiative(ctx, service.InitiativeInput{Title: "SSO"})
 	iID, _ := domain.ParseID(domain.KindInitiative, i.ID)
@@ -1177,5 +1185,85 @@ func TestRunUnstartedBranchAtBaseTipIsLeftAlone(t *testing.T) {
 	}
 	if m := e.milestone(t); m.BaseCommit != record.BaseCommit {
 		t.Errorf("base = %q, want unchanged %q", m.BaseCommit, record.BaseCommit)
+	}
+}
+
+// failInProgress makes the nth SetStatus to IN_PROGRESS return err. The task's
+// card is pushed before its milestone's, so n picks which one fails.
+func failInProgress(p *tmfake.Provider, n int, err error) {
+	seen := 0
+	p.SetHook(func(_ int, method string, req taskmanager.CardRequest) error {
+		if method != "SetStatus" || req.Status != "IN_PROGRESS" {
+			return nil
+		}
+		seen++
+		if seen == n {
+			return err
+		}
+		return nil
+	})
+}
+
+func TestRunBlocksAndStopsOnAssigneeConflict(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		nth      int
+		resource string
+	}{
+		{"task card", 1, "T-1"},
+		{"milestone card", 2, "M-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := tmfake.New()
+			e := newRunEnvWith(t, p, "first", "second")
+			failInProgress(p, tc.nth, &taskmanager.AssigneeConflictError{Key: "AIN-12", Assignee: "Pat Lee"})
+			h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+			out, err := e.run(t, context.Background(), h)
+			if !errors.Is(err, errs.ErrNeedsHuman) || out.StopReason != StopNeedsHuman {
+				t.Fatalf("err = %v, stop = %s\n%s", err, out.StopReason, e.out.String())
+			}
+			t1 := e.status(t, 1)
+			if t1.Status != "BLOCKED" {
+				t.Fatalf("T-1 = %+v", t1)
+			}
+			for _, want := range []string{"AIN-12", "Pat Lee", "(" + tc.resource + ")"} {
+				if !strings.Contains(t1.BlockedReason, want) {
+					t.Errorf("BlockedReason %q lacks %q", t1.BlockedReason, want)
+				}
+			}
+			noted := false
+			for _, n := range t1.Notes {
+				noted = noted || (strings.Contains(n.Body, "AIN-12") && strings.Contains(n.Body, "Pat Lee"))
+			}
+			if !noted {
+				t.Errorf("no note names the card and holder: %+v", t1.Notes)
+			}
+			if len(out.Blocked) != 1 || out.Blocked[0].ID != "T-1" || out.Blocked[0].Reason != t1.BlockedReason {
+				t.Errorf("blocked = %+v", out.Blocked)
+			}
+			if h.calls != 0 || out.Iterations != 0 || t1.FailureCount != 0 {
+				t.Errorf("sessions = %d, iterations = %d, failures = %d", h.calls, out.Iterations, t1.FailureCount)
+			}
+			if got := e.status(t, 2).Status; got != "TODO" {
+				t.Errorf("T-2 = %s", got)
+			}
+			if want := "✗ T-1 BLOCKED: " + t1.BlockedReason; !strings.Contains(e.out.String(), want) {
+				t.Errorf("feed lacks %q:\n%s", want, e.out.String())
+			}
+		})
+	}
+}
+
+func TestRunCardFailureWithoutConflictDoesNotStop(t *testing.T) {
+	p := tmfake.New()
+	e := newRunEnvWith(t, p, "only")
+	p.SetError(errors.New("jira is down"))
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+	out, err := e.run(t, context.Background(), h)
+	if err != nil || out.StopReason != StopCompleted {
+		t.Fatalf("err = %v, stop = %s\n%s", err, out.StopReason, e.out.String())
+	}
+	if h.calls != 1 || e.status(t, 1).Status != "DONE" || len(out.Blocked) != 0 {
+		t.Errorf("sessions = %d, blocked = %+v", h.calls, out.Blocked)
 	}
 }

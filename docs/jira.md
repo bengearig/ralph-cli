@@ -59,7 +59,9 @@ Creating an initiative, milestone, or task, by any command or MCP tool, creates 
   missing milestone and initiative cards. If a parent's card cannot be created, the child's is not attempted, and its
   recorded error names the parent.
 - **A failure never blocks ralph.** The resource is saved either way. A Jira failure is printed as a warning (on
-  standard error for the CLI, as `card_warning` in the result for `--json` and MCP) and the command still succeeds.
+  standard error for the CLI, as `card_warning` in the result for `--json` and MCP) and the command still succeeds. The
+  one exception is the loop meeting a card held by someone else; see
+  [In the loop](#in-the-loop).
   The card then shows as pending creation, with the last error, until a later attempt succeeds.
 - **No duplicates across processes.** Before calling Jira, a process claims the card in ralph's store. If another
   process, such as the loop's MCP server beside a person's CLI, holds a recent claim, this one skips creation instead
@@ -214,13 +216,30 @@ assignee as people set it.
   they are never assigned.
 - **Three cases.** A card with no assignee is assigned to the token's user and then moved. A card already assigned to
   the token's user is left as it is and is still moved. A card held by someone else is never overwritten: ralph neither
-  assigns nor moves it, and reports an error that names the card and the person who holds it.
+  assigns nor moves it, and reports an error that names the card and the person who holds it. Interactive commands and
+  MCP calls only warn about it, and the loop stops; see [In the loop](#in-the-loop).
 - **Blank status mapping.** Assigning runs even when the `IN_PROGRESS` entry of `status_map` is blank, and even when the
   card is already in the in-progress status, so a card that is in progress but unassigned still gets its assignee.
 - **Other failures.** If the `myself` call or the assignment call fails, the failure is an ordinary card warning, like
   any other Jira failure (see [When Jira fails](#when-jira-fails)). It is not a conflict.
 - **Permission.** Assigning needs the token's user to hold the Assign Issues project permission, in addition to
   permission to create and edit issues. Without it, Jira answers 403 and the card warns.
+
+### In the loop
+
+When the loop starts a task and its card, or its milestone's card, is held by someone else, the loop stops for a
+person. This is the one place a Jira condition stops ralph: working a card someone else owns silently is the failure
+this prevents.
+
+- **The task is blocked.** The loop moves the task to `BLOCKED` with a reason that names the card and the person who
+  holds it, prints the reason in its feed, and stops with the `needs_human` stop reason and exit code `3`. No session is
+  started for the task and no failure is counted against the Stall Statute.
+- **Everything else only warns.** `ralph task status`, the other interactive commands, and MCP calls such as
+  `task_set_status` save the status change and report the conflict as a warning (`card_warning`, with a
+  `card_conflict` object naming the card, the resource, and the holder, in the task view a status change returns). They
+  never block or fail.
+- **What to do.** Reassign the card to the token's user, or unassign it, in Jira. Then move the task back to `TODO`
+  (`ralph task status <id> TODO`) and rerun the loop. Until the card is reassigned, the rerun meets the same conflict.
 
 ## Deleting
 
@@ -264,7 +283,8 @@ card.
 
 ## When Jira fails
 
-Jira never blocks ralph. A failed call is a warning on standard error (or `card_warning` in a result) and the ralph
+Jira does not block ralph, with one exception: the loop stops when a card it needs to move is held by someone else (see
+[In the loop](#in-the-loop)). Any other failed call is a warning on standard error (or `card_warning` in a result) and the ralph
 change still succeeds. The card is recorded as pending, which `show` and `list` display with the last error. Editing
 the resource again retries the push, and `ralph cards sync` retries every pending card at once. This holds for the
 loop too: a status change it makes never waits on, or fails because of, Jira beyond the time one call can take,
@@ -394,7 +414,7 @@ where one applies. Ralph does not retry; fix the cause and run the operation aga
 | Status | Likely cause | What to check |
 |---|---|---|
 | 401, 403 | The email or token is wrong, or the user may not create issues in the project, or, with `assign_on_start` on, may not assign them. | The email and API token, and that the token's user can create issues in the project and, when assigning, holds the Assign Issues permission. |
-| Assignment error naming the holder | With `assign_on_start` on, the card is already assigned to someone else, so ralph neither assigned nor moved it. | Who holds the card in Jira. Reassign it there, or unassign it; see [Assigning cards](#assigning-cards). |
+| Assignment error naming the holder | With `assign_on_start` on, the card is already assigned to someone else, so ralph neither assigned nor moved it. A warning in interactive commands and MCP calls; in the loop it blocks the task and stops the run. | Who holds the card in Jira. Reassign it there, or unassign it, then move a blocked task back to `TODO`; see [In the loop](#in-the-loop). |
 | 404 | The site or project does not exist, or the account cannot see it. | `task_manager.jira.base_url` and `task_manager.jira.project_key`. |
 | 400 mentioning an issue type or a field | The project lacks an issue type, the type is not allowed under the parent, or a required field is missing. | `task_manager.jira.issue_types` against the project's issue types, and the project's required fields. |
 | 400 `Please select valid parent issue` | The child's issue type is not exactly one hierarchy level below its parent's type. | The levels of the types in `task_manager.jira.issue_types`; see [Hierarchy levels](#hierarchy-levels). |

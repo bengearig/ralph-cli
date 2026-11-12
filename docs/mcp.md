@@ -170,6 +170,12 @@ returns an error without syncing anything when the check fails. An error is also
 tools return `cards` (each card's `id`, `key`, `url`, `moved`, and `error`) when cards were moved to
 `task_manager.jira.canceled_status` before the delete. See [Jira](jira.md).
 
+The task view that `task_set_status` returns carries `card_conflict` when moving the task pushed a card that someone else
+holds: an object with `card` (the key), `resource` (the task or milestone ID), and `assignee` (the holder's name). It is
+omitted otherwise. The status change is saved and `card_warning` carries the same condition as text, so over MCP a
+conflict never fails the call. Only the loop acts on it, by blocking the task and stopping; see
+[In the loop](jira.md#in-the-loop).
+
 ### Imports
 
 Four tools drive [imports](data-model.md#imports). Records are addressed by project-relative `path`.

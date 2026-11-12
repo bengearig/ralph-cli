@@ -91,7 +91,7 @@ func (p *Provider) SetError(err error) {
 }
 
 // SetHook installs a per-call check run before each Create, Update, SetStatus,
-// and LinkPullRequest. n is the 1-based count of those calls so far, including
+// and LinkPullRequest. For SetStatus the request's ID is the card key. n is the 1-based count of those calls so far, including
 // this one; a non-nil return fails the call. LinkPullRequest passes an empty
 // request.
 func (p *Provider) SetHook(h func(n int, method string, req taskmanager.CardRequest) error) {
@@ -139,7 +139,7 @@ func (p *Provider) Update(_ context.Context, key string, req taskmanager.CardReq
 func (p *Provider) SetStatus(_ context.Context, key, status string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.check("SetStatus", taskmanager.CardRequest{Status: status}); err != nil {
+	if err := p.check("SetStatus", taskmanager.CardRequest{ID: key, Status: status}); err != nil {
 		return err
 	}
 	p.calls = append(p.calls, Call{Method: "SetStatus", Key: key, Request: taskmanager.CardRequest{Status: status}})

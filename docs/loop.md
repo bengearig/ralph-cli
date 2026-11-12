@@ -266,8 +266,15 @@ a check that cannot be made is reported as a warning.
 
 When a task manager is configured, the status changes the loop makes go through the normal service, so they push to
 the task's card and its milestone's card like any other change (see [Jira](jira.md#status)). A provider failure is
-only a warning and never stops the loop or counts against the Stall Statute. Each provider call adds latency to the
-status change, bounded by [`task_manager.timeout`](configuration.md#task_manager).
+only a warning and never stops the loop or counts against the Stall Statute, with one exception: an assignee conflict.
+Each provider call adds latency to the status change, bounded by
+[`task_manager.timeout`](configuration.md#task_manager).
+
+With [`assign_on_start`](jira.md#assigning-cards) on, a task's card or its milestone's card may be held by someone else
+when the loop moves the task to `IN_PROGRESS`. The loop then moves the task to `BLOCKED` with a reason naming the card and
+its holder, prints the reason, and stops with the `needs_human` stop reason. No session is started and no failure is
+counted. Reassign or unassign the card in Jira, move the task back to `TODO`, and rerun; see
+[Jira](jira.md#in-the-loop).
 
 The `Ralph-Task` trailer lets ralph match commits to tasks even after a rebase or amend rewrites history, and after a
 squash whose message keeps the trailers (see [Task matchers](#task-matchers)). It is controlled by
@@ -282,6 +289,7 @@ optional `Card:` trailer's. See
 | Milestone `DONE` (or all tasks `CANCELLED`) | `0` | — |
 | Nothing loopable left, but `BLOCKED` or `PROPOSED` tasks remain | `3` | as reported |
 | `loop.max_iterations` reached with work left | `3` | rerun to continue |
+| A task's card, or its milestone's card, is held by someone else (see [Jira](jira.md#in-the-loop)) | `3` | the task becomes `BLOCKED`, with no session started and no failure counted; reassign the card, move the task to `TODO`, rerun |
 | Ctrl-C or `SIGTERM` | `1` | current task stays `IN_PROGRESS`; rerun resumes it |
 | The `ralph` MCP server did not connect in the session | `1` | stays `IN_PROGRESS`, no failure counted |
 | The recorded branch has drifted: `behind`, `diverged`, `merged`, or `branch_missing` | `3` | unchanged; run `ralph milestone reconcile` |
