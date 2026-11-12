@@ -44,5 +44,6 @@ provider, [ADR 22](adr/0022-create-cards-when-resources-are-created.md) records 
 [ADR 37](adr/0037-release-from-version-tags-with-checksummed-archives.md) records how releases are made from version tags, and
 [ADR 38](adr/0038-install-from-github-releases-and-update-in-place.md) records how ralph is installed from releases and updated in place, and
 [ADR 39](adr/0039-fetch-the-base-branch-and-refuse-a-stale-one.md) records how the base branch is fetched and a stale one refused, and
-[ADR 40](adr/0040-assign-jira-cards-to-the-tokens-user.md) records how Jira cards are assigned to the token's user. Add a new
+[ADR 40](adr/0040-assign-jira-cards-to-the-tokens-user.md) records how Jira cards are assigned to the token's user, and
+[ADR 41](adr/0041-reconcile-orphaned-cards-from-the-cli.md) records how orphaned cards are found and cancelled. Add a new
 record rather than editing an accepted one; mark the old record superseded.
