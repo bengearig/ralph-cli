@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/taskmanager"
@@ -242,5 +243,85 @@ func TestFakeIsPullRequestLinker(t *testing.T) {
 	var p taskmanager.Provider = New()
 	if _, ok := p.(taskmanager.PullRequestLinker); !ok {
 		t.Error("fake does not implement PullRequestLinker")
+	}
+}
+
+func TestFindOpenCardsReturnsCopyOfCandidates(t *testing.T) {
+	p := New()
+	in := []taskmanager.CardCandidate{{Key: "A-1", Summary: "T-1: x", Created: time.Unix(10, 0)}, {Key: "A-2"}}
+	p.SetCandidates(in)
+	in[0].Key = "changed"
+
+	got, err := p.FindOpenCards(context.Background(), taskmanager.CardSearch{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Key != "A-1" || got[1].Key != "A-2" {
+		t.Fatalf("got %+v", got)
+	}
+	got[0].Key = "mutated"
+	again, _ := p.FindOpenCards(context.Background(), taskmanager.CardSearch{})
+	if again[0].Key != "A-1" {
+		t.Errorf("caller changed fake state: %+v", again)
+	}
+}
+
+func TestFindOpenCardsRecordsSearchesInOrder(t *testing.T) {
+	p := New()
+	first := taskmanager.CardSearch{}
+	second := taskmanager.CardSearch{CreatedAfter: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)}
+	for _, s := range []taskmanager.CardSearch{first, second} {
+		if _, err := p.FindOpenCards(context.Background(), s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := p.Searches()
+	if len(got) != 2 || !got[0].CreatedAfter.IsZero() || !got[1].CreatedAfter.Equal(second.CreatedAfter) {
+		t.Fatalf("searches = %+v", got)
+	}
+	got[0].CreatedAfter = time.Now()
+	if !p.Searches()[0].CreatedAfter.IsZero() {
+		t.Error("Searches did not return a copy")
+	}
+}
+
+func TestFindOpenCardsError(t *testing.T) {
+	p := New()
+	p.SetCandidates([]taskmanager.CardCandidate{{Key: "A-1"}})
+	boom := errors.New("boom")
+	p.SetError(boom)
+	got, err := p.FindOpenCards(context.Background(), taskmanager.CardSearch{})
+	if !errors.Is(err, boom) || got != nil {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	p.SetError(nil)
+	if got, err := p.FindOpenCards(context.Background(), taskmanager.CardSearch{}); err != nil || len(got) != 1 {
+		t.Fatalf("after clearing: %v, %v", got, err)
+	}
+}
+
+func TestFindOpenCardsSkipsHook(t *testing.T) {
+	p := New()
+	var ns []int
+	p.SetHook(func(n int, method string, _ taskmanager.CardRequest) error {
+		ns = append(ns, n)
+		if method == "FindOpenCards" {
+			t.Error("hook ran for FindOpenCards")
+		}
+		return nil
+	})
+	_, _ = p.FindOpenCards(context.Background(), taskmanager.CardSearch{})
+	if _, err := p.Create(context.Background(), taskmanager.CardRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ns) != 1 || ns[0] != 1 {
+		t.Errorf("hook counts = %v, want [1]", ns)
+	}
+}
+
+func TestFakeIsCardFinder(t *testing.T) {
+	var p taskmanager.Provider = New()
+	if _, ok := p.(taskmanager.CardFinder); !ok {
+		t.Error("fake does not implement CardFinder")
 	}
 }
