@@ -22,6 +22,17 @@ type Card struct {
 	URL string `json:"url"`
 }
 
+// AssigneeConflictError reports that a card is held by someone other than the
+// user ralph acts as. Assignee is the holder's display name, or the account ID
+// when there is none.
+type AssigneeConflictError struct {
+	Key, Assignee string
+}
+
+func (e *AssigneeConflictError) Error() string {
+	return fmt.Sprintf("card %s is already assigned to %s", e.Key, e.Assignee)
+}
+
 // CardRequest describes a card to create or update. ID is the display ID such
 // as T-12; ParentKey is empty for an initiative.
 type CardRequest struct {

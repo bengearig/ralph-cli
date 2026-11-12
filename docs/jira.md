@@ -14,7 +14,8 @@ See [Configuration](configuration.md#task_manager) for the settings, and
 ## Setup
 
 1. Create an API token on the Atlassian account's security page (Account settings, then Security, then API tokens).
-   Use an account that can create and edit issues in the target project.
+   Use an account that can create and edit issues in the target project, and, if `assign_on_start` is on, assign
+   them.
 2. Export the account email and the token. The variable names are the ones configured in
    `task_manager.jira.email_env` and `task_manager.jira.token_env`; the defaults are `RALPH_JIRA_EMAIL` and
    `RALPH_JIRA_TOKEN`:
@@ -88,7 +89,8 @@ Editing an initiative's title or brief, a milestone's title or description, or a
 acceptance criteria updates
 the card's summary and description. Ralph sends only those two fields, and the sync is one way: Jira is never read
 back, so an edit made in Jira to the summary or description is overwritten the next time ralph pushes. Labels and
-parents are set when the card is created and are not changed afterward.
+parents are set when the card is created and are not changed afterward. The assignee is left alone too, unless
+[`assign_on_start`](#assigning-cards) is on.
 
 Only cards that already exist, or whose creation was attempted and failed, are touched. An edit never creates a card
 for work that predates Jira; see [Syncing existing work](#syncing-existing-work).
@@ -191,6 +193,34 @@ Nothing here is on by default; a project whose workflow needs it sets it in its 
   the card stays where it is. Blank the `status_map` entry for that status if ralph should not attempt the move.
 - **Seeing the workflow.** `GET /rest/api/3/issue/<KEY>/transitions` lists the moves available to a card from its
   current status, and `GET /rest/api/3/project/<KEY>/statuses` lists a project's statuses.
+
+## Assigning cards
+
+Ralph can assign a card to the person whose API token it uses when work on the card starts. It is opt-in:
+
+```yaml
+task_manager:
+  jira:
+    assign_on_start: true
+```
+
+`task_manager.jira.assign_on_start` is `false` by default. With it off, ralph makes no extra Jira calls and leaves the
+assignee as people set it.
+
+- **Who.** The user the API token belongs to. Ralph asks Jira who the credential is, through the `myself` endpoint
+  (`GET /rest/api/3/myself`), and assigns that account. No account ID is configured. The answer is kept for the life of
+  the process.
+- **When.** When a task's or a milestone's card is moved to in progress. Initiative cards are never moved by ralph, so
+  they are never assigned.
+- **Three cases.** A card with no assignee is assigned to the token's user and then moved. A card already assigned to
+  the token's user is left as it is and is still moved. A card held by someone else is never overwritten: ralph neither
+  assigns nor moves it, and reports an error that names the card and the person who holds it.
+- **Blank status mapping.** Assigning runs even when the `IN_PROGRESS` entry of `status_map` is blank, and even when the
+  card is already in the in-progress status, so a card that is in progress but unassigned still gets its assignee.
+- **Other failures.** If the `myself` call or the assignment call fails, the failure is an ordinary card warning, like
+  any other Jira failure (see [When Jira fails](#when-jira-fails)). It is not a conflict.
+- **Permission.** Assigning needs the token's user to hold the Assign Issues project permission, in addition to
+  permission to create and edit issues. Without it, Jira answers 403 and the card warns.
 
 ## Deleting
 
@@ -352,7 +382,9 @@ refuses a request that has no parent card key.
 
 When ralph updates an existing card it sends only the summary and description, overwriting whatever is there,
 so edit those in ralph rather than in Jira. It does not touch anything else, including labels: labels that people add
-to a card are kept, as are its status, assignee, and every other field.
+to a card are kept, as are its status and every other field. The assignee is kept as well, except that ralph assigns
+an unassigned card to the token's user when it moves the card to in progress and
+[`assign_on_start`](#assigning-cards) is on.
 
 ## Errors
 
@@ -361,7 +393,8 @@ where one applies. Ralph does not retry; fix the cause and run the operation aga
 
 | Status | Likely cause | What to check |
 |---|---|---|
-| 401, 403 | The email or token is wrong, or the user may not create issues in the project. | The email and API token, and that the token's user can create issues in the project. |
+| 401, 403 | The email or token is wrong, or the user may not create issues in the project, or, with `assign_on_start` on, may not assign them. | The email and API token, and that the token's user can create issues in the project and, when assigning, holds the Assign Issues permission. |
+| Assignment error naming the holder | With `assign_on_start` on, the card is already assigned to someone else, so ralph neither assigned nor moved it. | Who holds the card in Jira. Reassign it there, or unassign it; see [Assigning cards](#assigning-cards). |
 | 404 | The site or project does not exist, or the account cannot see it. | `task_manager.jira.base_url` and `task_manager.jira.project_key`. |
 | 400 mentioning an issue type or a field | The project lacks an issue type, the type is not allowed under the parent, or a required field is missing. | `task_manager.jira.issue_types` against the project's issue types, and the project's required fields. |
 | 400 `Please select valid parent issue` | The child's issue type is not exactly one hierarchy level below its parent's type. | The levels of the types in `task_manager.jira.issue_types`; see [Hierarchy levels](#hierarchy-levels). |

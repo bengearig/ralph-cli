@@ -200,6 +200,7 @@ type JiraConfig struct {
 	StatusMap        map[string][]string `koanf:"status_map"`
 	Labels           []string            `koanf:"labels"`
 	OriginalEstimate JiraEstimates       `koanf:"original_estimate"`
+	AssignOnStart    bool                `koanf:"assign_on_start"`
 }
 
 // JiraEstimates are the original estimates given to cards that have none before they move; empty means none.

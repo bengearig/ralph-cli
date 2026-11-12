@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -575,5 +576,136 @@ func TestEnsureOriginalEstimate(t *testing.T) {
 				t.Errorf("put = %q, want %q", put, tc.put)
 			}
 		})
+	}
+}
+
+type clientReq struct {
+	method, uri, auth, body string
+}
+
+func recordingServer(t *testing.T, status int, resp string) (*httptest.Server, *[]clientReq) {
+	t.Helper()
+	var mu sync.Mutex
+	var reqs []clientReq
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		reqs = append(reqs, clientReq{r.Method, r.RequestURI, r.Header.Get("Authorization"), string(b)})
+		mu.Unlock()
+		w.WriteHeader(status)
+		io.WriteString(w, resp)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &reqs
+}
+
+func TestCurrentUser(t *testing.T) {
+	srv, reqs := recordingServer(t, 200, `{"accountId":"abc","displayName":"Me"}`)
+	u, err := newTestClient(t, srv.URL, time.Second).CurrentUser(context.Background())
+	if err != nil || u != (User{AccountID: "abc", DisplayName: "Me"}) {
+		t.Fatalf("u=%+v err=%v", u, err)
+	}
+	if len(*reqs) != 1 || (*reqs)[0].method != "GET" || (*reqs)[0].uri != "/rest/api/3/myself" || (*reqs)[0].auth != authValue() {
+		t.Errorf("requests = %+v", *reqs)
+	}
+}
+
+func TestCurrentUserErrors(t *testing.T) {
+	for name, body := range map[string]string{"no account id": `{"displayName":"Me"}`, "empty account id": `{"accountId":""}`, "not json": `<html>`} {
+		t.Run(name, func(t *testing.T) {
+			srv, reqs := recordingServer(t, 200, body)
+			_, err := newTestClient(t, srv.URL, time.Second).CurrentUser(context.Background())
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if len(*reqs) != 1 {
+				t.Errorf("requests = %d", len(*reqs))
+			}
+			if strings.Contains(err.Error(), testToken) {
+				t.Errorf("credential in error: %v", err)
+			}
+		})
+	}
+}
+
+func TestAssignee(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+		body string
+		uri  string
+		want *User
+	}{
+		{"null", "AIN-1", `{"fields":{"assignee":null}}`, "/rest/api/3/issue/AIN-1?fields=assignee", nil},
+		{"missing", "AIN-1", `{"fields":{}}`, "/rest/api/3/issue/AIN-1?fields=assignee", nil},
+		{"present", "AIN-1", `{"fields":{"assignee":{"accountId":"abc","displayName":"Me"}}}`, "/rest/api/3/issue/AIN-1?fields=assignee", &User{"abc", "Me"}},
+		{"escaped", "A/B 1", `{"fields":{}}`, "/rest/api/3/issue/A%2FB%201?fields=assignee", nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, reqs := recordingServer(t, 200, tc.body)
+			got, err := newTestClient(t, srv.URL, time.Second).Assignee(context.Background(), tc.key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
+				t.Errorf("got %+v, want %+v", got, tc.want)
+			}
+			if len(*reqs) != 1 || (*reqs)[0].method != "GET" || (*reqs)[0].uri != tc.uri || (*reqs)[0].auth != authValue() {
+				t.Errorf("requests = %+v", *reqs)
+			}
+		})
+	}
+}
+
+func TestAssigneeInvalidJSON(t *testing.T) {
+	srv, reqs := recordingServer(t, 200, `nope`)
+	_, err := newTestClient(t, srv.URL, time.Second).Assignee(context.Background(), "AIN-1")
+	if err == nil || !strings.Contains(err.Error(), "response is not valid JSON") || len(*reqs) != 1 {
+		t.Fatalf("err=%v requests=%d", err, len(*reqs))
+	}
+}
+
+func TestAssignIssue(t *testing.T) {
+	srv, reqs := recordingServer(t, 204, "")
+	if err := newTestClient(t, srv.URL, time.Second).AssignIssue(context.Background(), "AIN-1", "abc"); err != nil {
+		t.Fatal(err)
+	}
+	want := clientReq{"PUT", "/rest/api/3/issue/AIN-1/assignee", authValue(), `{"accountId":"abc"}`}
+	if len(*reqs) != 1 || (*reqs)[0] != want {
+		t.Errorf("requests = %+v", *reqs)
+	}
+}
+
+func TestAssignIssueEmptyAccountID(t *testing.T) {
+	srv, reqs := recordingServer(t, 204, "")
+	if err := newTestClient(t, srv.URL, time.Second).AssignIssue(context.Background(), "AIN-1", ""); err == nil {
+		t.Fatal("expected error")
+	}
+	if len(*reqs) != 0 {
+		t.Errorf("requests = %+v", *reqs)
+	}
+}
+
+func TestAssignIssueForbiddenHint(t *testing.T) {
+	srv, reqs := recordingServer(t, 403, `{"errorMessages":["Forbidden"]}`)
+	err := newTestClient(t, srv.URL, time.Second).AssignIssue(context.Background(), "AIN-1", "abc")
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.Status != 403 {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "Assign Issues permission") || strings.Contains(err.Error(), "can create issues") {
+		t.Errorf("err = %v", err)
+	}
+	if strings.Contains(err.Error(), testToken) || len(*reqs) != 1 {
+		t.Errorf("err=%v requests=%d", err, len(*reqs))
+	}
+}
+
+func TestForbiddenOnCreateKeepsHint(t *testing.T) {
+	srv, _ := recordingServer(t, 403, `{}`)
+	_, err := newTestClient(t, srv.URL, time.Second).CreateIssue(context.Background(), IssueFields{})
+	if err == nil || !strings.Contains(err.Error(), "can create issues") || strings.Contains(err.Error(), "Assign Issues") {
+		t.Errorf("err = %v", err)
 	}
 }
