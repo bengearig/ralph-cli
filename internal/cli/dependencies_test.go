@@ -165,6 +165,9 @@ func TestLoopAndPRCreateEnforceDependencies(t *testing.T) {
 		if err := svc.RecordMilestoneGit(context.Background(), id, domain.MilestoneGit{Branch: branch, BaseCommit: base, HeadCommit: head}); err != nil {
 			t.Fatal(err)
 		}
+		if err := svc.RecordTaskCommit(context.Background(), id, head); err != nil {
+			t.Fatal(err)
+		}
 	}
 	fake := &fakeProvider{}
 	newPRProvider = func(*config.Config) (pr.Provider, error) { return fake, nil }
