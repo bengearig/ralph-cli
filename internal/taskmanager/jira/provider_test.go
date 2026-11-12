@@ -3,6 +3,7 @@ package jira
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -556,5 +557,221 @@ func TestSetStatusFillsEstimateBeforeMoving(t *testing.T) {
 		if strings.HasPrefix(r, "PUT") {
 			t.Errorf("estimate sent with none configured: %v", reqs)
 		}
+	}
+}
+
+type assignJira struct {
+	*httptest.Server
+	mu         sync.Mutex
+	reqs       []string
+	putBody    string
+	assignee   string
+	myselfCode int
+	putCode    int
+}
+
+func newAssignJira(t *testing.T, assignee string) *assignJira {
+	t.Helper()
+	f := &assignJira{assignee: assignee, myselfCode: http.StatusOK, putCode: http.StatusNoContent}
+	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.reqs = append(f.reqs, r.Method+" "+r.URL.Path)
+		switch {
+		case r.URL.Path == "/rest/api/3/myself":
+			if f.myselfCode != http.StatusOK {
+				w.WriteHeader(f.myselfCode)
+				return
+			}
+			_, _ = w.Write([]byte(`{"accountId":"me-1","displayName":"Me"}`))
+		case r.Method == "PUT" && strings.HasSuffix(r.URL.Path, "/assignee"):
+			b, _ := io.ReadAll(r.Body)
+			f.putBody = string(b)
+			w.WriteHeader(f.putCode)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/transitions"):
+			_, _ = w.Write([]byte(`{"transitions":[{"id":"21","to":{"name":"In Progress"}},{"id":"31","to":{"name":"Done"}},{"id":"41","to":{"name":"Cancelled"}}]}`))
+		case r.Method == "GET" && r.URL.RawQuery == "fields=assignee":
+			_, _ = w.Write([]byte(`{"fields":{"assignee":` + f.assignee + `}}`))
+		case r.Method == "GET":
+			_, _ = w.Write([]byte(`{"fields":{"status":{"name":"To Do"}}}`))
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	t.Cleanup(f.Close)
+	return f
+}
+
+func (f *assignJira) requests() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.reqs...)
+}
+
+func (f *assignJira) has(prefix string) bool {
+	for _, r := range f.requests() {
+		if strings.HasPrefix(r, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func assignProvider(f *assignJira, mutate func(*config.JiraConfig)) *Provider {
+	cfg := testCfg(f.URL)
+	cfg.AssignOnStart = true
+	cfg.StatusMap = map[string][]string{"TODO": {"To Do"}, "IN_PROGRESS": {"In Progress"}, "DONE": {"Done"}}
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	return NewProvider(cfg, 0, env(goodEnv), nil)
+}
+
+func TestSetStatusAssignsUnassignedCard(t *testing.T) {
+	f := newAssignJira(t, "null")
+	if err := assignProvider(f, nil).SetStatus(context.Background(), "PROJ-1", "IN_PROGRESS"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"GET /rest/api/3/myself",
+		"GET /rest/api/3/issue/PROJ-1",
+		"PUT /rest/api/3/issue/PROJ-1/assignee",
+		"GET /rest/api/3/issue/PROJ-1",
+		"GET /rest/api/3/issue/PROJ-1/transitions",
+		"POST /rest/api/3/issue/PROJ-1/transitions",
+	}
+	if got := f.requests(); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("requests = %v, want %v", got, want)
+	}
+	if f.putBody != `{"accountId":"me-1"}` {
+		t.Errorf("assignee body = %s", f.putBody)
+	}
+}
+
+func TestSetStatusKeepsOwnAssignment(t *testing.T) {
+	f := newAssignJira(t, `{"accountId":"me-1","displayName":"Me"}`)
+	if err := assignProvider(f, nil).SetStatus(context.Background(), "PROJ-1", "IN_PROGRESS"); err != nil {
+		t.Fatal(err)
+	}
+	if f.has("PUT") {
+		t.Errorf("unexpected assignment: %v", f.requests())
+	}
+	if !f.has("POST /rest/api/3/issue/PROJ-1/transitions") {
+		t.Errorf("card not moved: %v", f.requests())
+	}
+}
+
+func TestSetStatusAssigneeConflict(t *testing.T) {
+	for _, tc := range []struct{ name, assignee, want string }{
+		{"display name", `{"accountId":"pat-1","displayName":"Pat Lee"}`, "Pat Lee"},
+		{"account ID fallback", `{"accountId":"pat-1"}`, "pat-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAssignJira(t, tc.assignee)
+			err := assignProvider(f, nil).SetStatus(context.Background(), "PROJ-1", "IN_PROGRESS")
+			var conflict *taskmanager.AssigneeConflictError
+			if !errors.As(err, &conflict) {
+				t.Fatalf("err = %v, want AssigneeConflictError", err)
+			}
+			if conflict.Key != "PROJ-1" || conflict.Assignee != tc.want {
+				t.Errorf("conflict = %+v", conflict)
+			}
+			if f.has("PUT") || f.has("POST") {
+				t.Errorf("card was changed: %v", f.requests())
+			}
+		})
+	}
+}
+
+func TestAssigneeConflictErrorMessage(t *testing.T) {
+	err := &taskmanager.AssigneeConflictError{Key: "AIN-12", Assignee: "Pat Lee"}
+	if got := err.Error(); got != "card AIN-12 is already assigned to Pat Lee" {
+		t.Errorf("Error() = %q", got)
+	}
+}
+
+func TestSetStatusAssignsWithBlankInProgressMapping(t *testing.T) {
+	f := newAssignJira(t, "null")
+	p := assignProvider(f, func(c *config.JiraConfig) { c.StatusMap["IN_PROGRESS"] = []string{" "} })
+	if err := p.SetStatus(context.Background(), "PROJ-1", "IN_PROGRESS"); err != nil {
+		t.Fatal(err)
+	}
+	if !f.has("PUT /rest/api/3/issue/PROJ-1/assignee") || f.has("POST") {
+		t.Errorf("requests = %v", f.requests())
+	}
+}
+
+func TestSetStatusResolvesTokenUserOnce(t *testing.T) {
+	f := newAssignJira(t, `{"accountId":"me-1"}`)
+	p := assignProvider(f, nil)
+	for range 2 {
+		if err := p.SetStatus(context.Background(), "PROJ-1", "IN_PROGRESS"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n := 0
+	for _, r := range f.requests() {
+		if r == "GET /rest/api/3/myself" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("myself requests = %d, want 1", n)
+	}
+}
+
+func TestSetStatusRetriesTokenUserAfterFailure(t *testing.T) {
+	f := newAssignJira(t, `{"accountId":"me-1"}`)
+	f.myselfCode = http.StatusInternalServerError
+	p := assignProvider(f, nil)
+	err := p.SetStatus(context.Background(), "PROJ-1", "IN_PROGRESS")
+	var conflict *taskmanager.AssigneeConflictError
+	if err == nil || errors.As(err, &conflict) {
+		t.Fatalf("err = %v, want ordinary failure", err)
+	}
+	f.mu.Lock()
+	f.myselfCode = http.StatusOK
+	f.mu.Unlock()
+	if err := p.SetStatus(context.Background(), "PROJ-1", "IN_PROGRESS"); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, r := range f.requests() {
+		if r == "GET /rest/api/3/myself" {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("myself requests = %d, want 2", n)
+	}
+}
+
+func TestSetStatusAssignForbiddenIsNotConflict(t *testing.T) {
+	f := newAssignJira(t, "null")
+	f.putCode = http.StatusForbidden
+	err := assignProvider(f, nil).SetStatus(context.Background(), "PROJ-1", "IN_PROGRESS")
+	var conflict *taskmanager.AssigneeConflictError
+	if err == nil || errors.As(err, &conflict) {
+		t.Fatalf("err = %v, want ordinary failure", err)
+	}
+	if f.has("POST") {
+		t.Errorf("card moved after failed assignment: %v", f.requests())
+	}
+}
+
+func TestSetStatusAssignsOnlyForInProgress(t *testing.T) {
+	for _, status := range []string{"TODO", "DONE", "CANCELLED"} {
+		t.Run(status, func(t *testing.T) {
+			f := newAssignJira(t, "null")
+			p := assignProvider(f, func(c *config.JiraConfig) { c.CanceledStatus = "Cancelled" })
+			if err := p.SetStatus(context.Background(), "PROJ-1", status); err != nil {
+				t.Fatal(err)
+			}
+			for _, r := range f.requests() {
+				if strings.Contains(r, "myself") || strings.HasSuffix(r, "/assignee") {
+					t.Errorf("unexpected request %s", r)
+				}
+			}
+		})
 	}
 }

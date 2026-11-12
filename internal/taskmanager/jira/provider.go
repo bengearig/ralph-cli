@@ -45,8 +45,9 @@ type Provider struct {
 	lookup     func(string) (string, bool)
 	httpClient *http.Client
 
-	mu     sync.Mutex
-	client *Client
+	mu          sync.Mutex
+	client      *Client
+	currentUser *User
 }
 
 // NewProvider never fails and never reads credentials; the client is built on
@@ -191,6 +192,11 @@ func (p *Provider) Update(ctx context.Context, key string, req taskmanager.CardR
 // SetStatus moves the card through the Jira statuses mapped to the ralph
 // status; a blank or missing mapping does nothing.
 func (p *Provider) SetStatus(ctx context.Context, key, status string) error {
+	if p.cfg.AssignOnStart && status == string(domain.StatusInProgress) {
+		if err := p.assignToTokenUser(ctx, key); err != nil {
+			return err
+		}
+	}
 	var raw []string
 	if status == string(domain.StatusCancelled) {
 		raw = []string{p.cfg.CanceledStatus}
@@ -215,6 +221,49 @@ func (p *Provider) SetStatus(ctx context.Context, key, status string) error {
 		prepare = func(ctx context.Context) error { return c.EnsureOriginalEstimate(ctx, key, p.estimateFor) }
 	}
 	return c.MoveIssue(ctx, key, path, prepare)
+}
+
+// assignToTokenUser assigns an unassigned card to the token's user and never
+// overwrites another assignee.
+func (p *Provider) assignToTokenUser(ctx context.Context, key string) error {
+	c, err := p.getClient()
+	if err != nil {
+		return err
+	}
+	me, err := p.tokenUser(ctx, c)
+	if err != nil {
+		return err
+	}
+	holder, err := c.Assignee(ctx, key)
+	if err != nil {
+		return err
+	}
+	switch {
+	case holder == nil:
+		return c.AssignIssue(ctx, key, me.AccountID)
+	case holder.AccountID == me.AccountID:
+		return nil
+	}
+	name := holder.DisplayName
+	if name == "" {
+		name = holder.AccountID
+	}
+	return &taskmanager.AssigneeConflictError{Key: key, Assignee: name}
+}
+
+// tokenUser caches only a successful lookup.
+func (p *Provider) tokenUser(ctx context.Context, c *Client) (User, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.currentUser != nil {
+		return *p.currentUser, nil
+	}
+	u, err := c.CurrentUser(ctx)
+	if err != nil {
+		return User{}, err
+	}
+	p.currentUser = &u
+	return u, nil
 }
 
 // LinkPullRequest shows the pull request on the card as a remote link.
