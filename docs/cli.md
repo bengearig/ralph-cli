@@ -449,7 +449,8 @@ derives it from `loop.branch_template` only when none is recorded. The destinati
 The checks run first, and each refuses with exit code `3`: the milestone's initiative must not be archived, the
 local base branch must not be stale after fetching `pr.base_branch` from `pr.remote` (see
 [The staleness guard](loop.md#the-staleness-guard)), the branch must be exactly as recorded, and the milestones it
-depends on must be merged. `--force` skips only the stale-base check and the dependency check. Then:
+depends on must be merged, and the milestone must be ready (see [The readiness check](#the-readiness-check)). `--force`
+skips the stale-base check, the dependency check, and the readiness check. Then:
 
 1. **Already recorded.** If the milestone records a pull request, it prints `exists <link>` and does nothing else: no
    push, no provider call. Use `ralph pr unlink` to open another.
@@ -465,8 +466,7 @@ depends on must be merged. `--force` skips only the stale-base check and the dep
 The record is written only after the provider confirms the pull request. If writing it fails, the command prints the
 link, exits `1`, and says that rerunning adopts the pull request. Rerunning after any failure is safe: pushing again
 changes nothing when the remote is up to date, and the provider is asked for an existing pull request before one is
-created. A milestone that is not `DONE` gets a `warning:` on standard error but still proceeds, since a draft of
-unfinished work is useful.
+created.
 
 Only `ralph pr create` pushes. `ralph milestone merge`, `ralph sync`, and the loop push nothing.
 
@@ -487,7 +487,7 @@ there is no card or no task manager. `--dry-run` links nothing, and a failed pus
 | Exit code | Meaning |
 | --- | --- |
 | `0` | The pull request was opened, adopted, or already recorded. |
-| `3` | The branch has drifted, a dependency is unmerged, or the push failed: a person is needed. |
+| `3` | The branch has drifted, a dependency is unmerged, the milestone is not ready, or the push failed: a person is needed. |
 | `1` | Anything else, such as a provider error or a failure to record the pull request. |
 
 Before it pushes or calls the provider, `ralph pr create` runs the drift check (see
@@ -512,6 +512,34 @@ When the milestone records a pull request it adds `pull request: <link> (already
 opened)`. When the branch has drifted, the `drift:` line is followed by the task table, and a failed check is a warning.
 After a blank line comes the pull request description. With `--json` the dry run includes `push` (`remote` and
 `branch`), `pull_request` when one is recorded, and the drift report as `drift`, or the failure as `drift_error`.
+
+### The readiness check
+
+A pull request opened while the milestone's last work is not yet committed misses that work: an agent marks a task
+`DONE` before the loop commits it, so a pull request opened in between lacks the last commit, and the drift check
+cannot see it. `ralph pr create` therefore refuses a milestone that is not ready. Every reason that applies is
+reported, not only the first. A milestone is not ready when any of these holds:
+
+| Condition | What to do |
+| --- | --- |
+| A loop is running in the project. The lock is project-wide, so a loop on any milestone counts. The reason names the holder (`pid`, milestone) when known. | Wait for the loop to exit, then rerun. |
+| The milestone's branch is the checked-out branch and has uncommitted changes. The reason lists the first few paths and how many more there are. A dirty working tree on another branch is not counted. | Commit or discard the changes, or let the loop commit them. |
+| A task is `DONE` with no recorded commit. Checked only when `loop.commit_per_task` is on; cancelled tasks never count. | Let the loop commit the task by rerunning it, or, if the task legitimately changed no files, pass `--force`. |
+| The milestone is not `DONE`. The reason gives its status. | Finish the milestone, or pass `--force` to open a draft of unfinished work. |
+
+A refusal exits with code `3`, lists the reasons, ends with how to proceed (wait for the loop and rerun, or pass
+`--force`), and pushes nothing and calls no provider. The check runs after the drift and dependency checks and before
+the provider is built. It is skipped when the milestone already records a pull request, since `pr create` then only
+prints `exists` and does nothing, and it is skipped by `--force`. Stashed unfinished work that the loop set aside is not
+detected.
+
+`--dry-run` never refuses: it prints each reason as a `warning:` line on standard error, and `--json` adds them as a
+`readiness_warnings` array of strings beside `base_warnings` and `dependency_warnings`. A check that cannot be made is
+reported as a warning in a dry run and as an error otherwise.
+
+`--force` is one flag for every guard: it skips the stale-base check, the dependency check, and the readiness check. It
+does not skip the drift check or the archived-initiative check. The decision is in
+[ADR 42](adr/0042-refuse-pr-create-for-a-milestone-that-is-not-ready.md).
 
 ### Milestone dependencies
 
