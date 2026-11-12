@@ -514,3 +514,116 @@ func TestCardsReconcileHelp(t *testing.T) {
 		t.Errorf("cards help lacks reconcile: %q", out)
 	}
 }
+
+func reconcileApplyEnv(t *testing.T, canceledStatus string) (*testEnv, *tmfake.Provider) {
+	t.Helper()
+	h, p := syncEnv(t)
+	if canceledStatus != "" {
+		t.Setenv("RALPH_TASK_MANAGER__JIRA__CANCELED_STATUS", canceledStatus)
+	}
+	p.SetCandidates([]taskmanager.CardCandidate{
+		{Key: "FAKE-90", URL: "https://x/browse/FAKE-90", Summary: "T-99: Gone", Status: "To Do"},
+		{Key: "FAKE-91", URL: "https://x/browse/FAKE-91", Summary: "No id here", Status: "To Do"},
+		{Key: "FAKE-92", URL: "https://x/browse/FAKE-92", Summary: "M-98: Also gone", Status: "To Do"},
+	})
+	return h, p
+}
+
+func setStatusKeys(p *tmfake.Provider) []string {
+	var keys []string
+	for _, c := range p.Calls() {
+		if c.Method == "SetStatus" {
+			if c.Request.Status != "CANCELLED" {
+				keys = append(keys, "bad status "+c.Request.Status)
+			}
+			keys = append(keys, c.Key)
+		}
+	}
+	return keys
+}
+
+func TestCardsReconcileApply(t *testing.T) {
+	h, p := reconcileApplyEnv(t, "Canceled")
+	out, errOut, err := h.run("", "cards", "reconcile", "--apply", "--created-after", "2026-01-15")
+	if err != nil {
+		t.Fatalf("apply: %v\n%s", err, errOut)
+	}
+	if got := strings.Join(setStatusKeys(p), ","); got != "FAKE-90,FAKE-92" {
+		t.Errorf("SetStatus calls = %q", got)
+	}
+	for _, want := range []string{`(?m)^cancelled\s+T-99\s+FAKE-90\b`, `(?m)^cancelled\s+M-98\s+FAKE-92\b`, `(?m)^skipped\s+FAKE-91\b`} {
+		if !regexp.MustCompile(want).MatchString(out) {
+			t.Errorf("stdout lacks %s: %q", want, out)
+		}
+	}
+	if !strings.Contains(out, "orphans 2, cancelled 2, skipped 1, failed 0\n") {
+		t.Errorf("totals missing: %q", out)
+	}
+	if !strings.Contains(errOut, "cancelled T-99 FAKE-90\n") || !strings.Contains(errOut, "cancelled M-98 FAKE-92\n") {
+		t.Errorf("progress missing: %q", errOut)
+	}
+}
+
+func TestCardsReconcileApplyNeedsScope(t *testing.T) {
+	h, p := reconcileApplyEnv(t, "Canceled")
+	_, _, err := h.run("", "cards", "reconcile", "--apply")
+	if err == nil || !errors.Is(err, domain.ErrInvalid) ||
+		!strings.Contains(err.Error(), "--apply needs --created-after YYYY-MM-DD, so that only cards created since this repository started using ralph are considered") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(p.Searches()) != 0 || len(setStatusKeys(p)) != 0 {
+		t.Errorf("made calls: searches %v, calls %v", p.Searches(), p.Calls())
+	}
+}
+
+func TestCardsReconcileApplyNeedsCanceledStatus(t *testing.T) {
+	h, p := reconcileApplyEnv(t, "")
+	_, _, err := h.run("", "cards", "reconcile", "--apply", "--created-after", "2026-01-15")
+	if err == nil || !errors.Is(err, domain.ErrInvalid) ||
+		!strings.Contains(err.Error(), "--apply needs task_manager.jira.canceled_status to be set; cards would not be moved") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(p.Searches()) != 0 || len(p.Calls()) != 0 {
+		t.Errorf("made calls: searches %v, calls %v", p.Searches(), p.Calls())
+	}
+}
+
+func TestCardsReconcileApplyFailure(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		h, p := reconcileApplyEnv(t, "Canceled")
+		p.SetHook(func(_ int, method string, req taskmanager.CardRequest) error {
+			if method == "SetStatus" && req.ID == "FAKE-90" {
+				return errors.New("no transition to Canceled")
+			}
+			return nil
+		})
+		args := []string{"cards", "reconcile", "--apply", "--created-after", "2026-01-15"}
+		if asJSON {
+			args = append([]string{"--json"}, args...)
+		}
+		out, _, err := h.run("", args...)
+		if err == nil || !errors.Is(err, errs.ErrNeedsHuman) || !strings.Contains(err.Error(), "1 card(s) could not be cancelled") {
+			t.Fatalf("json=%v: err = %v", asJSON, err)
+		}
+		if got := strings.Join(setStatusKeys(p), ","); got != "FAKE-92" {
+			t.Errorf("json=%v: SetStatus calls = %q", asJSON, got)
+		}
+		if asJSON {
+			var r service.ReconcileReport
+			if e := json.Unmarshal([]byte(out), &r); e != nil || r.Failed != 1 || r.Cancelled != 1 {
+				t.Errorf("report = %+v (%v)", r, e)
+			}
+		} else if !regexp.MustCompile(`(?m)^failed\s+FAKE-90\s+no transition to Canceled$`).MatchString(out) ||
+			!strings.Contains(out, "orphans 2, cancelled 1, skipped 1, failed 1\n") {
+			t.Errorf("report = %q", out)
+		}
+	}
+}
+
+func TestCardsReconcileWithoutApplyCancelsNothing(t *testing.T) {
+	h, p := reconcileApplyEnv(t, "Canceled")
+	h.ok("cards", "reconcile", "--created-after", "2026-01-15")
+	if len(setStatusKeys(p)) != 0 {
+		t.Errorf("dry run cancelled: %v", p.Calls())
+	}
+}
