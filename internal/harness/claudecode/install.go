@@ -28,11 +28,14 @@ const (
 
 	sectionBegin = "<!-- ralph:begin -->"
 	sectionEnd   = "<!-- ralph:end -->"
+
+	ignoredNote = "ignored by init.ignore"
 )
 
 // Install registers the MCP server, allows its tools, installs the RALPH
 // slash commands, and adds a CLAUDE.md section. It is idempotent: unchanged
-// files are not rewritten.
+// files are not rewritten. With opts.DryRun it returns the same changes and
+// writes nothing.
 func (h *Harness) Install(root string, opts harness.InstallOptions) ([]harness.Change, error) {
 	if opts.RalphCommand == "" {
 		opts.RalphCommand = "ralph"
@@ -40,8 +43,8 @@ func (h *Harness) Install(root string, opts harness.InstallOptions) ([]harness.C
 	var changes []harness.Change
 	steps := []func() (harness.Change, error){
 		func() (harness.Change, error) { return installMCP(root, opts) },
-		func() (harness.Change, error) { return installPermission(root) },
-		func() (harness.Change, error) { return installClaudeMD(root) },
+		func() (harness.Change, error) { return installPermission(root, opts) },
+		func() (harness.Change, error) { return syncClaudeMD(root, opts) },
 	}
 	for _, step := range steps {
 		c, err := step()
@@ -50,9 +53,19 @@ func (h *Harness) Install(root string, opts harness.InstallOptions) ([]harness.C
 		}
 		changes = append(changes, c)
 	}
-	cmds, err := installCommands(root, opts.Force)
+	cmds, err := installCommands(root, opts)
 	changes = append(changes, cmds...)
 	return changes, err
+}
+
+func ignored(opts harness.InstallOptions, relPath string) bool {
+	return slices.Contains(opts.Ignore, filepath.ToSlash(relPath))
+}
+
+func ignoredChange(c harness.Change) harness.Change {
+	c.Action = harness.Unchanged
+	c.Note = ignoredNote
+	return c
 }
 
 func rel(root, p string) string {
@@ -118,6 +131,9 @@ func MCPServerEntry(command string) map[string]any {
 func installMCP(root string, opts harness.InstallOptions) (harness.Change, error) {
 	p := filepath.Join(root, ".mcp.json")
 	c := harness.Change{Path: rel(root, p)}
+	if ignored(opts, c.Path) {
+		return ignoredChange(c), nil
+	}
 	obj, existed, err := readJSONObject(p)
 	if err != nil {
 		return c, err
@@ -128,7 +144,7 @@ func installMCP(root string, opts harness.InstallOptions) (harness.Change, error
 	}
 	want := MCPServerEntry(opts.RalphCommand)
 	if cur, ok := servers[ServerName]; ok {
-		if reflect.DeepEqual(cur, want) {
+		if reflect.DeepEqual(cur, want) || (opts.KeepMCPCommand && isStdioMCP(cur)) {
 			c.Action = harness.Unchanged
 			return c, nil
 		}
@@ -139,19 +155,29 @@ func installMCP(root string, opts harness.InstallOptions) (harness.Change, error
 		}
 	}
 	servers[ServerName] = want
-	if err := writeJSON(p, obj); err != nil {
-		return c, err
-	}
 	c.Action = harness.Created
 	if existed {
 		c.Action = harness.Updated
 	}
-	return c, nil
+	if opts.DryRun {
+		return c, nil
+	}
+	return c, writeJSON(p, obj)
 }
 
-func installPermission(root string) (harness.Change, error) {
+// isStdioMCP reports whether an entry launches `<command> mcp` over stdio,
+// whatever the command is.
+func isStdioMCP(entry any) bool {
+	m, ok := entry.(map[string]any)
+	return ok && m["type"] == "stdio" && reflect.DeepEqual(m["args"], []any{"mcp"})
+}
+
+func installPermission(root string, opts harness.InstallOptions) (harness.Change, error) {
 	p := filepath.Join(root, ".claude", "settings.json")
 	c := harness.Change{Path: rel(root, p)}
+	if ignored(opts, c.Path) {
+		return ignoredChange(c), nil
+	}
 	obj, existed, err := readJSONObject(p)
 	if err != nil {
 		return c, err
@@ -173,14 +199,14 @@ func installPermission(root string) (harness.Change, error) {
 		return c, nil
 	}
 	perms["allow"] = append(allow, PermissionRule)
-	if err := writeJSON(p, obj); err != nil {
-		return c, err
-	}
 	c.Action = harness.Created
 	if existed {
 		c.Action = harness.Updated
 	}
-	return c, nil
+	if opts.DryRun {
+		return c, nil
+	}
+	return c, writeJSON(p, obj)
 }
 
 // ClaudeMDSection returns the managed CLAUDE.md block, markers included.
@@ -193,12 +219,22 @@ func ClaudeMDSection() string {
 }
 
 func installClaudeMD(root string) (harness.Change, error) {
+	return syncClaudeMD(root, harness.InstallOptions{})
+}
+
+func syncClaudeMD(root string, opts harness.InstallOptions) (harness.Change, error) {
 	p := filepath.Join(root, "CLAUDE.md")
 	c := harness.Change{Path: rel(root, p)}
+	if ignored(opts, c.Path) {
+		return ignoredChange(c), nil
+	}
 	section := ClaudeMDSection()
 	data, err := os.ReadFile(p)
 	if errors.Is(err, fs.ErrNotExist) {
 		c.Action = harness.Created
+		if opts.DryRun {
+			return c, nil
+		}
 		return c, os.WriteFile(p, []byte(section), 0o644)
 	}
 	if err != nil {
@@ -230,13 +266,18 @@ func installClaudeMD(root string) (harness.Change, error) {
 		return c, nil
 	}
 	c.Action = harness.Updated
+	if opts.DryRun {
+		return c, nil
+	}
 	return c, os.WriteFile(p, []byte(updated), 0o644)
 }
 
-func installCommands(root string, force bool) ([]harness.Change, error) {
+func installCommands(root string, opts harness.InstallOptions) ([]harness.Change, error) {
 	dir := filepath.Join(root, ".claude", "commands", "ralph")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
+	if !opts.DryRun {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, err
+		}
 	}
 	var changes []harness.Change
 	for _, w := range workflow.List() {
@@ -247,6 +288,10 @@ func installCommands(root string, force bool) ([]harness.Change, error) {
 		}
 		p := filepath.Join(dir, file)
 		c := harness.Change{Path: rel(root, p)}
+		if ignored(opts, c.Path) {
+			changes = append(changes, ignoredChange(c))
+			continue
+		}
 		cur, err := os.ReadFile(p)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
@@ -258,13 +303,13 @@ func installCommands(root string, force bool) ([]harness.Change, error) {
 		case shippedEarlier(file, cur):
 			c.Action = harness.Updated
 			c.Note = "updated from an earlier ralph version"
-		case force:
+		case opts.Force:
 			c.Action = harness.Updated
 		default:
 			c.Action = harness.Skipped
 			c.Note = "locally modified; use --force to overwrite"
 		}
-		if c.Action == harness.Created || c.Action == harness.Updated {
+		if !opts.DryRun && (c.Action == harness.Created || c.Action == harness.Updated) {
 			if err := os.WriteFile(p, want, 0o644); err != nil {
 				return changes, err
 			}

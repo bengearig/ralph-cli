@@ -99,6 +99,16 @@ type InstallOptions struct {
 	RalphCommand string
 	// Force overwrites files the user may have customized.
 	Force bool
+	// DryRun returns the changes a real run would make without writing any
+	// file or creating any directory. Errors a real run would return are
+	// returned too.
+	DryRun bool
+	// KeepMCPCommand treats an existing ralph MCP entry of type stdio with
+	// args ["mcp"] as up to date whatever its command is.
+	KeepMCPCommand bool
+	// Ignore lists project-relative, slash-separated paths the installer
+	// leaves alone; each is reported unchanged whatever its state.
+	Ignore []string
 }
 
 // Installer wires a harness into a project so interactive sessions can use
