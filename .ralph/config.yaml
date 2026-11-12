@@ -91,6 +91,7 @@
 pr:
   provider: github
   base_branch: main
+  stale_base: sync
   draft: false
   github:
     owner: bengearig
