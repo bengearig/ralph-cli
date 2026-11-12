@@ -103,6 +103,7 @@ task_manager:
   jira:
     base_url: https://autoclubgroup-sandbox.atlassian.net
     project_key: AIN
+    token_env: RALPH_JIRA_SANDBOX_TOKEN
     issue_types:
       initiative: Feature
     labels:
@@ -120,3 +121,4 @@ task_manager:
 loop:
   commit_template: "{{.Task.CardKeyPrefix}}{{.Task.ID}}: {{.Task.Title}}"
   commit_card_trailer: true
+  branch_template: "ralph/{{.Milestone.CardKeyPrefix}}{{.Milestone.ID}}-{{.Milestone.Slug}}"
