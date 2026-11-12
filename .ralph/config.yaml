@@ -104,6 +104,7 @@ task_manager:
     base_url: https://autoclubgroup-sandbox.atlassian.net
     project_key: AIN
     token_env: RALPH_JIRA_SANDBOX_TOKEN
+    canceled_status: Canceled
     issue_types:
       initiative: Feature
     labels:
