@@ -22,6 +22,10 @@ const (
 	issuePath       = "/rest/api/3/issue"
 	projectPath     = "/rest/api/3/project"
 	myselfPath      = "/rest/api/3/myself"
+	searchPath      = "/rest/api/3/search/jql"
+	searchPageSize  = 100
+	maxSearchPages  = 1000
+	jiraTimeLayout  = "2006-01-02T15:04:05.000-0700"
 	maxResponseBody = 1 << 20
 	maxBodySnippet  = 200
 )
@@ -263,6 +267,89 @@ func (c *Client) AssignIssue(ctx context.Context, key, accountID string) error {
 	}
 	_, err = c.do(ctx, http.MethodPut, issuePath+"/"+url.PathEscape(key)+"/assignee", body)
 	return err
+}
+
+// FoundIssue is a card returned by SearchOpenCards. Created is zero when Jira's
+// timestamp could not be parsed.
+type FoundIssue struct {
+	Key     string
+	Summary string
+	Status  string
+	Created time.Time
+}
+
+func jqlQuote(v string) string {
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(v) + `"`
+}
+
+// SearchOpenCards lists the cards in project that carry every label and whose
+// status category is not Done, oldest first. A non-zero createdAfter keeps only
+// cards created on or after that date.
+func (c *Client) SearchOpenCards(ctx context.Context, project string, labels []string, createdAfter time.Time) ([]FoundIssue, error) {
+	if strings.TrimSpace(project) == "" {
+		return nil, fmt.Errorf("jira: search: project is empty")
+	}
+	if len(labels) == 0 {
+		return nil, fmt.Errorf("jira: search: no labels given")
+	}
+	clauses := []string{"project = " + jqlQuote(project)}
+	for _, l := range labels {
+		clauses = append(clauses, "labels = "+jqlQuote(l))
+	}
+	clauses = append(clauses, "statusCategory != Done")
+	if !createdAfter.IsZero() {
+		clauses = append(clauses, "created >= "+jqlQuote(createdAfter.Format("2006-01-02")))
+	}
+	jql := strings.Join(clauses, " AND ") + " ORDER BY created ASC"
+
+	type searchRequest struct {
+		JQL           string   `json:"jql"`
+		Fields        []string `json:"fields"`
+		MaxResults    int      `json:"maxResults"`
+		NextPageToken string   `json:"nextPageToken,omitempty"`
+	}
+	var found []FoundIssue
+	token := ""
+	for page := 0; ; page++ {
+		if page >= maxSearchPages {
+			return nil, fmt.Errorf("jira: POST %s: more than %d result pages", searchPath, maxSearchPages)
+		}
+		body, err := json.Marshal(searchRequest{JQL: jql, Fields: []string{"summary", "status", "created"}, MaxResults: searchPageSize, NextPageToken: token})
+		if err != nil {
+			return nil, fmt.Errorf("jira: encode search request: %w", err)
+		}
+		data, err := c.do(ctx, http.MethodPost, searchPath, body)
+		if err != nil {
+			return nil, err
+		}
+		var resp struct {
+			Issues []struct {
+				Key    string `json:"key"`
+				Fields struct {
+					Summary string `json:"summary"`
+					Status  struct {
+						Name string `json:"name"`
+					} `json:"status"`
+					Created string `json:"created"`
+				} `json:"fields"`
+			} `json:"issues"`
+			NextPageToken string `json:"nextPageToken"`
+		}
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return nil, fmt.Errorf("jira: POST %s: response is not valid JSON: %w", searchPath, err)
+		}
+		for _, i := range resp.Issues {
+			created, _ := time.Parse(jiraTimeLayout, i.Fields.Created)
+			found = append(found, FoundIssue{Key: i.Key, Summary: i.Fields.Summary, Status: i.Fields.Status.Name, Created: created})
+		}
+		if resp.NextPageToken == "" {
+			return found, nil
+		}
+		if resp.NextPageToken == token {
+			return nil, fmt.Errorf("jira: POST %s: next page token repeated", searchPath)
+		}
+		token = resp.NextPageToken
+	}
 }
 
 func (c *Client) issueStatus(ctx context.Context, key string) (string, error) {
