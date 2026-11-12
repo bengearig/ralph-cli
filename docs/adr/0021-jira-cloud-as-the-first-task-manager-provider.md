@@ -26,7 +26,8 @@ what an update may change.
   can retry later without holding anything open.
 - **Update sends only the summary and description.** Those are the fields ralph owns. Labels, status, assignee, and
   everything else are left as people set them. The footer on each description says ralph manages the card and
-  overwrites those two fields.
+  overwrites those two fields. An opt-in setting assigns cards to the token's user as an exception; see
+  [ADR 40](0040-assign-jira-cards-to-the-tokens-user.md).
 
 ## Alternatives considered
 
