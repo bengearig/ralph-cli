@@ -148,7 +148,7 @@ func TestCreateWithStatusOrderAndPartialFailure(t *testing.T) {
 	}
 	p.SetHook(nil)
 	n := len(p.Calls())
-	if r, w := e.svc.syncCard(ctx, domain.KindTask, id, modeExisting, e.svc.cardClaimStale); r != updated || w != "" {
+	if r, w, _ := e.svc.syncCard(ctx, domain.KindTask, id, modeExisting, e.svc.cardClaimStale); r != updated || w != "" {
 		t.Fatalf("sync = %v %q", r, w)
 	}
 	if got := methods(p.Calls()[n:]); !eq(got, []string{"Update:FAKE-3", "SetStatus:FAKE-3:PROPOSED"}) {
@@ -221,5 +221,99 @@ func TestSetTaskStatusNoRowOrInTxMakesNoCalls(t *testing.T) {
 	e.svc.taskManager = nil
 	if _, err := e.svc.SetTaskStatus(ctx, tID, domain.StatusDone, ""); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSetTaskStatusReportsAssigneeConflict(t *testing.T) {
+	const taskKey, milestoneKey = "FAKE-3", "FAKE-2"
+	cases := []struct {
+		name     string
+		failKeys map[string]error
+		warn     bool
+		want     func(tID int64) *CardConflictView
+	}{
+		{"task card", map[string]error{taskKey: &taskmanager.AssigneeConflictError{Key: taskKey, Assignee: "Pat"}}, true,
+			func(tID int64) *CardConflictView {
+				return &CardConflictView{Card: taskKey, Resource: domain.FormatID(domain.KindTask, tID), Assignee: "Pat"}
+			}},
+		{"milestone card", map[string]error{milestoneKey: &taskmanager.AssigneeConflictError{Key: milestoneKey, Assignee: "Pat"}}, true,
+			func(int64) *CardConflictView {
+				return &CardConflictView{Card: milestoneKey, Resource: domain.FormatID(domain.KindMilestone, 1), Assignee: "Pat"}
+			}},
+		{"both", map[string]error{
+			taskKey:      &taskmanager.AssigneeConflictError{Key: taskKey, Assignee: "Pat"},
+			milestoneKey: &taskmanager.AssigneeConflictError{Key: milestoneKey, Assignee: "Sam"},
+		}, true, func(tID int64) *CardConflictView {
+			return &CardConflictView{Card: taskKey, Resource: domain.FormatID(domain.KindTask, tID), Assignee: "Pat"}
+		}},
+		{"other error", map[string]error{taskKey: errors.New("nope")}, true, func(int64) *CardConflictView { return nil }},
+		{"no error", nil, false, func(int64) *CardConflictView { return nil }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			e, p, _, tID := statusFixture(t)
+			if _, err := e.svc.SetTaskStatus(ctx, tID, domain.StatusTodo, "ready"); err != nil {
+				t.Fatal(err)
+			}
+			p.SetHook(func(_ int, method string, req taskmanager.CardRequest) error {
+				if method == "SetStatus" {
+					return tc.failKeys[req.ID]
+				}
+				return nil
+			})
+			v, err := e.svc.SetTaskStatus(ctx, tID, domain.StatusInProgress, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if v.Status != "IN_PROGRESS" {
+				t.Errorf("status = %s", v.Status)
+			}
+			stored, err := e.svc.store.GetTask(ctx, tID)
+			if err != nil || stored.Status != domain.StatusInProgress {
+				t.Errorf("stored = %v, %v", stored.Status, err)
+			}
+			if (v.CardWarning != "") != tc.warn {
+				t.Errorf("warning = %q", v.CardWarning)
+			}
+			want := tc.want(tID)
+			if (v.CardConflict == nil) != (want == nil) || (want != nil && *v.CardConflict != *want) {
+				t.Errorf("conflict = %+v, want %+v", v.CardConflict, want)
+			}
+		})
+	}
+}
+
+func TestAssigneeConflictLeavesCardPending(t *testing.T) {
+	ctx := context.Background()
+	e, p, _, tID := statusFixture(t)
+	if _, err := e.svc.SetTaskStatus(ctx, tID, domain.StatusTodo, "ready"); err != nil {
+		t.Fatal(err)
+	}
+	conflict := &taskmanager.AssigneeConflictError{Key: "FAKE-3", Assignee: "Pat"}
+	p.SetHook(func(_ int, method string, req taskmanager.CardRequest) error {
+		if method == "SetStatus" && req.ID == "FAKE-3" {
+			return conflict
+		}
+		return nil
+	})
+	v, err := e.svc.SetTaskStatus(ctx, tID, domain.StatusInProgress, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "fake card FAKE-3 for T-1 status not set: " + conflict.Error(); v.CardWarning != want {
+		t.Errorf("warning = %q, want %q", v.CardWarning, want)
+	}
+	row, _ := e.svc.store.GetCard(ctx, domain.KindTask, tID, "fake")
+	req, _ := buildCardRequest(ctx, e.svc.store, domain.KindTask, tID, "FAKE-2")
+	if row.ContentHash == req.Hash() || row.LastError != conflict.Error() {
+		t.Errorf("row = %+v", row)
+	}
+	ix, err := e.svc.loadCards(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cv := ix.view(ctx, domain.KindTask, tID, cardID{domain.KindMilestone, 1}); cv == nil || cv.Pending != "update" {
+		t.Errorf("card = %+v", cv)
 	}
 }

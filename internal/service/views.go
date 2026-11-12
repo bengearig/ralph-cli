@@ -75,6 +75,8 @@ type TaskView struct {
 	IndexWarning       string     `json:"index_warning,omitempty"`
 	CardWarning        string     `json:"card_warning,omitempty"`
 	Card               *CardView  `json:"card,omitempty"`
+	// CardConflict is set only by SetTaskStatus, when another person holds a card it tried to move.
+	CardConflict *CardConflictView `json:"card_conflict,omitempty"`
 }
 
 type NoteView struct {

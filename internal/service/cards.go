@@ -183,19 +183,35 @@ func (s *Service) createCard(ctx context.Context, kind domain.Kind, id int64, st
 	return ""
 }
 
+// CardConflictView names a card held by someone else, which blocks moving it.
+type CardConflictView struct {
+	Card     string `json:"card"`
+	Resource string `json:"resource"`
+	Assignee string `json:"assignee"`
+}
+
 // statusWarning is a created card whose status could not be set.
-type statusWarning struct{ msg string }
+type statusWarning struct {
+	msg      string
+	conflict *CardConflictView
+}
 
 func (e statusWarning) Error() string { return e.msg }
 
-func (s *Service) statusNotSet(ctx context.Context, kind domain.Kind, id int64, key string, cause error) string {
+// statusNotSet records a failed status push and returns its warning, plus the
+// conflict when another person holds the card.
+func (s *Service) statusNotSet(ctx context.Context, kind domain.Kind, id int64, key string, cause error) (string, *CardConflictView) {
 	name := domain.FormatID(kind, id)
 	warn := fmt.Sprintf("%s card %s for %s status not set: %v", s.taskManager.Name(), key, name, cause)
 	if rerr := s.RecordCardFailure(ctx, kind, id, s.taskManager.Name(), cause); rerr != nil {
 		s.log.Error("recording card failure", "id", name, "error", rerr)
 		warn += fmt.Sprintf(" (recording the failure also failed: %v)", rerr)
 	}
-	return warn
+	var conflict *taskmanager.AssigneeConflictError
+	if errors.As(cause, &conflict) {
+		return warn, &CardConflictView{Card: conflict.Key, Resource: name, Assignee: conflict.Assignee}
+	}
+	return warn, nil
 }
 
 func (s *Service) ensureCard(ctx context.Context, kind domain.Kind, id int64, stale time.Duration) (string, error) {
@@ -244,7 +260,8 @@ func (s *Service) ensureCard(ctx context.Context, kind domain.Kind, id int64, st
 			return card.Key, fmt.Errorf("created %s but recording it failed: %w", card.Key, err)
 		}
 		if err := p.SetStatus(ctx, card.Key, req.Status); err != nil {
-			return card.Key, statusWarning{s.statusNotSet(ctx, kind, id, card.Key, err)}
+			warn, conflict := s.statusNotSet(ctx, kind, id, card.Key, err)
+			return card.Key, statusWarning{msg: warn, conflict: conflict}
 		}
 	}
 	if err := s.RecordCard(ctx, kind, id, p.Name(), card.Key, card.URL, hash); err != nil {
@@ -274,11 +291,12 @@ const (
 )
 
 // syncCard brings the resource's card up to date and reports what it did,
-// with a warning when it failed. The provider is called only outside
+// with a warning when it failed and the conflict when another person holds the
+// card. The provider is called only outside
 // transactions; errors recording the outcome are logged and folded into the warning.
-func (s *Service) syncCard(ctx context.Context, kind domain.Kind, id int64, mode cardMode, stale time.Duration) (cardResult, string) {
+func (s *Service) syncCard(ctx context.Context, kind domain.Kind, id int64, mode cardMode, stale time.Duration) (cardResult, string, *CardConflictView) {
 	if s.taskManager == nil || s.inTx {
-		return skipped, ""
+		return skipped, "", nil
 	}
 	p := s.taskManager
 	name := domain.FormatID(kind, id)
@@ -286,44 +304,44 @@ func (s *Service) syncCard(ctx context.Context, kind domain.Kind, id int64, mode
 	missing := errors.Is(err, store.ErrNotFound)
 	if err != nil && !missing {
 		s.log.Error("loading card", "id", name, "error", err)
-		return failed, fmt.Sprintf("%s card for %s not synced: %v", p.Name(), name, err)
+		return failed, fmt.Sprintf("%s card for %s not synced: %v", p.Name(), name, err), nil
 	}
 	if missing && mode == modeExisting {
-		return skipped, ""
+		return skipped, "", nil
 	}
 	if missing || row.Key == "" {
 		if _, err := s.ensureCard(ctx, kind, id, stale); err != nil {
 			if errors.Is(err, errCardClaimed) {
-				return skipped, ""
+				return skipped, "", nil
 			}
 			var sw statusWarning
 			if errors.As(err, &sw) {
-				return failed, sw.msg
+				return failed, sw.msg, sw.conflict
 			}
-			return failed, fmt.Sprintf("%s card for %s not created: %v", p.Name(), name, err)
+			return failed, fmt.Sprintf("%s card for %s not created: %v", p.Name(), name, err), nil
 		}
-		return created, ""
+		return created, "", nil
 	}
 
 	parentKey := ""
 	if kind != domain.KindInitiative {
 		pk, pid, err := s.cardParent(ctx, kind, id)
 		if err != nil {
-			return failed, fmt.Sprintf("%s card %s for %s not updated: %v", p.Name(), row.Key, name, err)
+			return failed, fmt.Sprintf("%s card %s for %s not updated: %v", p.Name(), row.Key, name, err), nil
 		}
 		if pr, err := s.store.GetCard(ctx, pk, pid, p.Name()); err == nil {
 			parentKey = pr.Key
 		} else if !errors.Is(err, store.ErrNotFound) {
-			return failed, fmt.Sprintf("%s card %s for %s not updated: %v", p.Name(), row.Key, name, err)
+			return failed, fmt.Sprintf("%s card %s for %s not updated: %v", p.Name(), row.Key, name, err), nil
 		}
 	}
 	req, err := buildCardRequest(ctx, s.store, kind, id, parentKey)
 	if err != nil {
-		return failed, fmt.Sprintf("%s card %s for %s not updated: %v", p.Name(), row.Key, name, err)
+		return failed, fmt.Sprintf("%s card %s for %s not updated: %v", p.Name(), row.Key, name, err), nil
 	}
 	hash := req.Hash()
 	if row.ContentHash == hash {
-		return inSync, ""
+		return inSync, "", nil
 	}
 	if err := p.Update(ctx, row.Key, req); err != nil {
 		warn := fmt.Sprintf("%s card %s for %s not updated: %v", p.Name(), row.Key, name, err)
@@ -331,18 +349,19 @@ func (s *Service) syncCard(ctx context.Context, kind domain.Kind, id int64, mode
 			s.log.Error("recording card failure", "id", name, "error", rerr)
 			warn += fmt.Sprintf(" (recording the failure also failed: %v)", rerr)
 		}
-		return failed, warn
+		return failed, warn, nil
 	}
 	if req.Status != "" {
 		if err := p.SetStatus(ctx, row.Key, req.Status); err != nil {
-			return failed, s.statusNotSet(ctx, kind, id, row.Key, err)
+			warn, conflict := s.statusNotSet(ctx, kind, id, row.Key, err)
+			return failed, warn, conflict
 		}
 	}
 	if err := s.RecordCard(ctx, kind, id, p.Name(), row.Key, row.URL, hash); err != nil {
 		s.log.Error("recording card", "id", name, "key", row.Key, "error", err)
-		return updated, fmt.Sprintf("%s card %s for %s updated but recording it failed: %v", p.Name(), row.Key, name, err)
+		return updated, fmt.Sprintf("%s card %s for %s updated but recording it failed: %v", p.Name(), row.Key, name, err), nil
 	}
-	return updated, ""
+	return updated, "", nil
 }
 
 // failCard records cause on the card row and returns it, adding any error from recording.
@@ -630,7 +649,7 @@ func (s *Service) syncOne(ctx context.Context, kind domain.Kind, id int64, cance
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	res, warn := s.syncCard(ctx, kind, id, modeCreateMissing, s.cardTimeout)
+	res, warn, _ := s.syncCard(ctx, kind, id, modeCreateMissing, s.cardTimeout)
 	row, err = s.store.GetCard(ctx, kind, id, p)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.log.Error("loading card", "id", name, "error", err)
