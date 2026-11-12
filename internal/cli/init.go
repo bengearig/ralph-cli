@@ -21,7 +21,7 @@ import (
 )
 
 func (a *app) newInitCommand() *cobra.Command {
-	var force, noHarness bool
+	var force, noHarness, dryRun bool
 	var ralphCommand string
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -31,7 +31,11 @@ wires the configured harness into the project. For Claude Code that means
 registering the MCP server in .mcp.json, allowing its tools in
 .claude/settings.json, installing the /ralph:* slash commands, and adding a
 RALPH section to CLAUDE.md. Safe to rerun; files you customized are left alone
-unless --force is given.`,
+unless --force is given.
+
+With --dry-run, nothing is written: the same table shows what a real run would
+do, and the exit code is 0 even when changes would be made. The embedding
+provider is not checked.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			root, err := a.initRoot(cmd.Context())
@@ -54,20 +58,29 @@ unless --force is given.`,
 				RalphCommand: ralphCommand,
 				Force:        force,
 				NoHarness:    noHarness,
+				DryRun:       dryRun,
 			})
 			if err != nil {
 				return err
 			}
 
-			hints := a.initHints(cmd.Context(), cfg)
+			var hints []string
+			if !dryRun {
+				hints = a.initHints(cmd.Context(), cfg)
+			}
 			if a.jsonOut {
 				return a.writeJSON(struct {
 					Root    string           `json:"root"`
 					Changes []harness.Change `json:"changes"`
 					Hints   []string         `json:"hints,omitempty"`
-				}{root, changes, hints})
+					DryRun  bool             `json:"dry_run,omitempty"`
+				}{root, changes, hints, dryRun})
 			}
-			if err := a.printf("initialized ralph in %s\n\n", root); err != nil {
+			header := fmt.Sprintf("initialized ralph in %s", root)
+			if dryRun {
+				header = "dry run: nothing was written"
+			}
+			if err := a.printf("%s\n\n", header); err != nil {
 				return err
 			}
 			rows := make([][]string, 0, len(changes))
@@ -85,6 +98,7 @@ unless --force is given.`,
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite the config template and customized integration files")
 	cmd.Flags().BoolVar(&noHarness, "no-harness", false, "skip installing the harness integration")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would change without writing anything")
 	cmd.Flags().StringVar(&ralphCommand, "ralph-command", "ralph", "command the harness runs to start `ralph mcp` (use an absolute path if ralph is not on PATH)")
 	return cmd
 }

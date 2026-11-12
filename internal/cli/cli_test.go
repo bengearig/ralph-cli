@@ -11,8 +11,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1780,4 +1782,159 @@ func TestPullRequestDisplay(t *testing.T) {
 	if out := h.ok("milestone", "show", "M-1"); !strings.Contains(out, "pull request: other ns/repo#3\n") {
 		t.Errorf("no-url show = %q", out)
 	}
+}
+
+func dirFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	var files []string
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			rel, _ := filepath.Rel(dir, p)
+			files = append(files, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
+
+type initResult struct {
+	Root    string
+	DryRun  bool `json:"dry_run"`
+	Changes []struct{ Path, Action, Note string }
+}
+
+func (r initResult) actions() map[string]string {
+	m := map[string]string{}
+	for _, c := range r.Changes {
+		m[c.Path] = c.Action
+	}
+	return m
+}
+
+func TestInitDryRun(t *testing.T) {
+	t.Run("empty repository", func(t *testing.T) {
+		h := newTestEnv(t, false)
+		if err := os.Mkdir(filepath.Join(h.dir, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		before := dirFiles(t, h.dir)
+
+		out := h.ok("init", "--dry-run")
+		if !strings.HasPrefix(out, "dry run: nothing was written\n\n") || strings.Contains(out, "initialized ralph") {
+			t.Errorf("output:\n%s", out)
+		}
+		for _, col := range []string{"ACTION", "PATH", "NOTE"} {
+			if !strings.Contains(out, col) {
+				t.Errorf("table lacks %s:\n%s", col, out)
+			}
+		}
+		if after := dirFiles(t, h.dir); !slices.Equal(before, after) {
+			t.Errorf("dry run wrote files: before %v, after %v", before, after)
+		}
+		for _, p := range []string{".ralph", ".mcp.json", ".claude", "CLAUDE.md", ".gitignore"} {
+			if _, err := os.Stat(filepath.Join(h.dir, p)); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("%s exists after a dry run: %v", p, err)
+			}
+		}
+
+		var dry, real initResult
+		h.json(&dry, "init", "--dry-run")
+		h.json(&real, "init")
+		if !dry.DryRun || real.DryRun {
+			t.Errorf("dry_run: dry %v, real %v", dry.DryRun, real.DryRun)
+		}
+		if len(dry.Changes) == 0 || !reflect.DeepEqual(dry.Changes, real.Changes) {
+			t.Errorf("dry run changes differ from the real run:\n dry  %+v\n real %+v", dry.Changes, real.Changes)
+		}
+		for _, c := range real.Changes {
+			if c.Action == "unchanged" {
+				t.Errorf("fresh repository reported %s unchanged", c.Path)
+			}
+		}
+	})
+
+	t.Run("initialized project", func(t *testing.T) {
+		h := newTestEnv(t, false)
+		h.ok("init", "--ralph-command", "ralph")
+		receive := filepath.Join(h.dir, ".claude", "commands", "ralph", "receive.md")
+		status := filepath.Join(h.dir, ".claude", "commands", "ralph", "status.md")
+		earlier, err := os.ReadFile(filepath.Join("testdata", "receive.earlier.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(receive, earlier, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(status, []byte("my own status\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		snapshot := func() map[string]string {
+			m := map[string]string{}
+			for _, f := range dirFiles(t, h.dir) {
+				if strings.HasPrefix(f, "xdg") || strings.HasPrefix(f, ".ralph/ralph.db") {
+					continue
+				}
+				data, _ := os.ReadFile(filepath.Join(h.dir, f))
+				m[f] = string(data)
+			}
+			return m
+		}
+		before := snapshot()
+		rel := func(name string) string { return filepath.Join(".claude", "commands", "ralph", name) }
+
+		var plain, forced, noHarness initResult
+		h.json(&plain, "init", "--dry-run")
+		if a := plain.actions(); a[rel("receive.md")] != "updated" || a[rel("status.md")] != "skipped" {
+			t.Errorf("plain dry run actions: %v", a)
+		}
+		h.json(&forced, "init", "--dry-run", "--force")
+		if a := forced.actions(); a[rel("status.md")] != "updated" {
+			t.Errorf("forced dry run actions: %v", a)
+		}
+		h.json(&noHarness, "init", "--dry-run", "--no-harness")
+		for p := range noHarness.actions() {
+			if strings.HasPrefix(p, ".claude") || p == ".mcp.json" || p == "CLAUDE.md" {
+				t.Errorf("--no-harness reported %s", p)
+			}
+		}
+		if !reflect.DeepEqual(before, snapshot()) {
+			t.Error("dry runs changed the project")
+		}
+
+		var real initResult
+		h.json(&real, "init")
+		if a := real.actions(); a[rel("receive.md")] != "updated" || a[rel("status.md")] != "skipped" {
+			t.Errorf("real run after dry runs: %v", a)
+		}
+	})
+
+	t.Run("no ollama request", func(t *testing.T) {
+		h := newTestEnv(t, false)
+		var requests atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			requests.Add(1)
+		}))
+		defer srv.Close()
+		t.Setenv("RALPH_EMBEDDINGS__PROVIDER", "ollama")
+		t.Setenv("RALPH_EMBEDDINGS__OLLAMA__BASE_URL", srv.URL)
+
+		var res initResult
+		h.json(&res, "init", "--dry-run", "--no-harness")
+		if !res.DryRun || len(res.Changes) == 0 {
+			t.Errorf("result = %+v", res)
+		}
+		if n := requests.Load(); n != 0 {
+			t.Errorf("dry run made %d Ollama requests", n)
+		}
+		h.ok("init", "--no-harness")
+		if requests.Load() == 0 {
+			t.Error("the fake Ollama server is not reached by a real init, so the check above proves nothing")
+		}
+	})
 }
