@@ -1,14 +1,11 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -17,7 +14,7 @@ import (
 	"github.com/bengearig/ralph/internal/embed/ollama"
 	"github.com/bengearig/ralph/internal/harness"
 	"github.com/bengearig/ralph/internal/project"
-	"github.com/bengearig/ralph/internal/store/sqlite"
+	"github.com/bengearig/ralph/internal/setup"
 
 	// Register harness implementations.
 	_ "github.com/bengearig/ralph/internal/harness/claudecode"
@@ -41,60 +38,25 @@ unless --force is given.`,
 			if err != nil {
 				return err
 			}
-			p := project.Project{Root: root}
-			var changes []harness.Change
-
-			if err := os.MkdirAll(p.Dir(), 0o755); err != nil {
-				return err
-			}
-			c, err := writeIfAbsent(root, p.ConfigPath(), config.ProjectTemplate(), force)
-			if err != nil {
-				return err
-			}
-			changes = append(changes, c)
-
-			a.proj, a.projErr = &p, nil
-			l, err := a.loadConfig()
-			if err != nil {
-				return err
-			}
-			cfg := l.Config
-
-			dbPath := cfg.StoragePath(root)
-			c = harness.Change{Path: relPath(root, dbPath), Action: harness.Unchanged}
-			if _, err := os.Stat(dbPath); errors.Is(err, fs.ErrNotExist) {
-				c.Action = harness.Created
-			}
-			st, err := sqlite.Open(cmd.Context(), dbPath)
-			if err != nil {
-				return err
-			}
-			if err := st.Close(); err != nil {
-				return err
-			}
-			changes = append(changes, c)
-
-			c, err = ensureGitignore(root, dbPath)
-			if err != nil {
-				return err
-			}
-			changes = append(changes, c)
-
-			if !noHarness {
-				h, err := harness.New(cfg.Harness.Default, cfg)
-				if err != nil {
-					return err
-				}
-				inst, ok := h.(harness.Installer)
-				if !ok {
-					a.warn(fmt.Sprintf("harness %s has no project integration to install", h.Name()))
-				} else {
-					hc, err := inst.Install(root, harness.InstallOptions{RalphCommand: ralphCommand, Force: force})
-					changes = append(changes, hc...)
+			var cfg *config.Config
+			changes, err := setup.Run(cmd.Context(), setup.Options{
+				Root: root,
+				LoadConfig: func() (*config.Config, error) {
+					a.proj, a.projErr = &project.Project{Root: root}, nil
+					l, err := a.loadConfig()
 					if err != nil {
-						return err
+						return nil, err
 					}
-				}
+					cfg = l.Config
+					return cfg, nil
+				},
+				Warn:         a.warn,
+				RalphCommand: ralphCommand,
+				Force:        force,
+				NoHarness:    noHarness,
+			})
+			if err != nil {
+				return err
 			}
 
 			hints := a.initHints(cmd.Context(), cfg)
@@ -158,78 +120,6 @@ func (a *app) initRoot(ctx context.Context) (string, error) {
 		return wd, nil
 	}
 	return root, nil
-}
-
-func relPath(root, p string) string {
-	if r, err := filepath.Rel(root, p); err == nil {
-		return r
-	}
-	return p
-}
-
-func writeIfAbsent(root, p string, content []byte, force bool) (harness.Change, error) {
-	c := harness.Change{Path: relPath(root, p)}
-	_, err := os.Stat(p)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		c.Action = harness.Created
-	case err != nil:
-		return c, err
-	case force:
-		c.Action = harness.Updated
-	default:
-		c.Action = harness.Unchanged
-		return c, nil
-	}
-	return c, os.WriteFile(p, content, 0o644)
-}
-
-// ensureGitignore ignores ralph's local files: the database and its WAL
-// files (when stored inside the project), loop run logs, and the loop lock.
-func ensureGitignore(root, dbPath string) (harness.Change, error) {
-	patterns := []string{
-		"/" + project.DirName + "/runs/",
-		"/" + project.DirName + "/loop.lock",
-	}
-	if r, err := filepath.Rel(root, dbPath); err == nil && r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)) {
-		patterns = append([]string{"/" + filepath.ToSlash(r) + "*"}, patterns...)
-	}
-	p := filepath.Join(root, ".gitignore")
-	c := harness.Change{Path: ".gitignore"}
-
-	data, err := os.ReadFile(p)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return c, err
-	}
-	present := map[string]bool{}
-	sc := bufio.NewScanner(strings.NewReader(string(data)))
-	for sc.Scan() {
-		present[strings.TrimSpace(sc.Text())] = true
-	}
-	var missing []string
-	for _, pat := range patterns {
-		if !present[pat] {
-			missing = append(missing, pat)
-		}
-	}
-	if len(missing) == 0 {
-		c.Action = harness.Unchanged
-		return c, nil
-	}
-	c.Action = harness.Updated
-	if data == nil {
-		c.Action = harness.Created
-	}
-	prefix := ""
-	if len(data) > 0 && !strings.HasSuffix(string(data), "\n") {
-		prefix = "\n"
-	}
-	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return c, err
-	}
-	_, werr := fmt.Fprintf(f, "%s# ralph local files (database, loop logs, loop lock)\n%s\n", prefix, strings.Join(missing, "\n"))
-	return c, errors.Join(werr, f.Close())
 }
 
 // initHints checks the embedding provider so problems surface at setup time
