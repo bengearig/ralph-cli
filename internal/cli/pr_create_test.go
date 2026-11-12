@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -10,7 +11,9 @@ import (
 	"github.com/bengearig/ralph/internal/config"
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/errs"
+	"github.com/bengearig/ralph/internal/looplock"
 	"github.com/bengearig/ralph/internal/pr"
+	"github.com/bengearig/ralph/internal/project"
 	"github.com/bengearig/ralph/internal/service"
 )
 
@@ -377,5 +380,159 @@ func TestPRCreateDryRunPrefixesCardKey(t *testing.T) {
 	}
 	if strings.ReplaceAll(after, "[AIN-3604] ", "") != before {
 		t.Errorf("dry run differs beyond the title:\n%s\n---\n%s", before, after)
+	}
+}
+
+type notReady struct {
+	name, want string
+	apply      func(t *testing.T, f *prCreateFixture)
+}
+
+func notReadyCases() []notReady {
+	return []notReady{
+		{"dirty tree", "uncommitted changes", func(t *testing.T, f *prCreateFixture) {
+			if err := os.WriteFile(filepath.Join(f.h.dir, "wip.txt"), []byte("wip"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"done task without a commit", "DONE with no recorded commit (T-2)", func(t *testing.T, f *prCreateFixture) {
+			f.h.ok("task", "create", "--milestone", "M-1", "--title", "Extra", "--description", "d", "--criteria", "c")
+			f.h.ok("task", "status", "T-2", "TODO")
+			f.h.ok("task", "status", "T-2", "IN_PROGRESS")
+			f.h.ok("task", "status", "T-2", "DONE", "--reason", "done")
+		}},
+		{"milestone not done", "M-1 is ", func(t *testing.T, f *prCreateFixture) {
+			f.h.ok("task", "create", "--milestone", "M-1", "--title", "Extra", "--description", "d", "--criteria", "c")
+		}},
+	}
+}
+
+func (f *prCreateFixture) holdLoopLock(t *testing.T) {
+	t.Helper()
+	lock, err := looplock.Acquire(filepath.Join(f.h.dir, project.DirName, "loop.lock"), "milestone M-9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = lock.Release() })
+}
+
+func (f *prCreateFixture) wantRefused(t *testing.T, wants ...string) {
+	t.Helper()
+	_, _, err := f.h.run("", "pr", "create", "--milestone", "M-1")
+	if !errors.Is(err, errs.ErrNeedsHuman) {
+		t.Fatalf("err = %v, want ErrNeedsHuman", err)
+	}
+	for _, w := range append(wants, "M-1", "--force") {
+		if !strings.Contains(err.Error(), w) {
+			t.Errorf("error lacks %q: %v", w, err)
+		}
+	}
+	if f.fake.finds != 0 || f.fake.created != 0 || remoteHasBranch(t, f.remote, "ralph/login") || !f.recorded(t).IsZero() {
+		t.Errorf("refusal had effects: finds %d, created %d, pushed %t", f.fake.finds, f.fake.created, remoteHasBranch(t, f.remote, "ralph/login"))
+	}
+}
+
+func TestPRCreateRefusesWhileLoopHoldsLock(t *testing.T) {
+	f := newPRCreateFixture(t)
+	f.holdLoopLock(t)
+	f.wantRefused(t, "pid ", "milestone M-9")
+}
+
+func TestPRCreateRefusesEachNotReadyCondition(t *testing.T) {
+	for _, c := range notReadyCases() {
+		t.Run(c.name, func(t *testing.T) {
+			f := newPRCreateFixture(t)
+			c.apply(t, f)
+			f.wantRefused(t, c.want)
+		})
+	}
+}
+
+func TestPRCreateListsEveryReason(t *testing.T) {
+	f := newPRCreateFixture(t)
+	f.holdLoopLock(t)
+	var wants []string
+	for _, c := range notReadyCases() {
+		c.apply(t, f)
+		wants = append(wants, c.want)
+	}
+	f.wantRefused(t, wants...)
+}
+
+func TestPRCreateForceSkipsReadiness(t *testing.T) {
+	for _, c := range notReadyCases() {
+		t.Run(c.name, func(t *testing.T) {
+			f := newPRCreateFixture(t)
+			c.apply(t, f)
+			if out := f.h.ok("pr", "create", "--milestone", "M-1", "--force"); !strings.HasPrefix(out, "opened ") {
+				t.Errorf("out = %q", out)
+			}
+			if !remoteHasBranch(t, f.remote, "ralph/login") || f.fake.created != 1 {
+				t.Errorf("pushed %t, created %d", remoteHasBranch(t, f.remote, "ralph/login"), f.fake.created)
+			}
+		})
+	}
+	t.Run("loop lock", func(t *testing.T) {
+		f := newPRCreateFixture(t)
+		f.holdLoopLock(t)
+		f.h.ok("pr", "create", "--milestone", "M-1", "--force")
+		if f.fake.created != 1 {
+			t.Errorf("created %d", f.fake.created)
+		}
+	})
+}
+
+func TestPRCreateDryRunReportsReadiness(t *testing.T) {
+	f := newPRCreateFixture(t)
+	var ready struct {
+		Warnings []string `json:"readiness_warnings"`
+	}
+	f.h.json(&ready, "pr", "create", "--milestone", "M-1", "--dry-run")
+	if len(ready.Warnings) != 0 {
+		t.Errorf("ready milestone has warnings: %v", ready.Warnings)
+	}
+
+	f.holdLoopLock(t)
+	for _, c := range notReadyCases() {
+		c.apply(t, f)
+	}
+	_, errOut, err := f.h.run("", "pr", "create", "--milestone", "M-1", "--dry-run")
+	if err != nil {
+		t.Fatalf("dry run refused: %v", err)
+	}
+	var got struct {
+		Warnings []string `json:"readiness_warnings"`
+	}
+	f.h.json(&got, "pr", "create", "--milestone", "M-1", "--dry-run")
+	if len(got.Warnings) != 4 {
+		t.Fatalf("readiness_warnings = %v", got.Warnings)
+	}
+	for _, w := range got.Warnings {
+		if !strings.Contains(errOut, w) {
+			t.Errorf("stderr lacks warning %q:\n%s", w, errOut)
+		}
+	}
+	if f.fake.finds != 0 || f.fake.created != 0 || remoteHasBranch(t, f.remote, "ralph/login") {
+		t.Error("dry run had effects")
+	}
+}
+
+func TestPRCreateRecordedSkipsReadiness(t *testing.T) {
+	f := newPRCreateFixture(t)
+	f.h.ok("pr", "create", "--milestone", "M-1")
+	f.holdLoopLock(t)
+	notReadyCases()[2].apply(t, f)
+	if out := f.h.ok("pr", "create", "--milestone", "M-1"); !strings.HasPrefix(out, "exists ") {
+		t.Errorf("out = %q", out)
+	}
+}
+
+func TestPRCreateHelpDescribesReadiness(t *testing.T) {
+	h := newTestEnv(t, true)
+	out := h.ok("pr", "create", "--help")
+	for _, w := range []string{"not ready", "a loop is", "the readiness check"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("help lacks %q:\n%s", w, out)
+		}
 	}
 }

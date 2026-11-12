@@ -296,6 +296,11 @@ optional `Card:` trailer's. See
 | Harness could not start, or a git failure | `1` | stays `IN_PROGRESS`; see the message |
 | A `DONE` task's commit failed (for example, a hook rejected it) | `1` | stays `DONE`; commit by hand, then rerun |
 
+Wait for the loop to exit before running `ralph pr create`. An agent marks a task `DONE` before the loop commits it, so
+a pull request opened while the loop is still running can miss the last commit. `ralph pr create` refuses while a loop
+holds the project lock, and for the other ways a milestone can be unready; see
+[The readiness check](cli.md#the-readiness-check).
+
 When it stops, the loop prints a one-line summary on stdout (`--json` prints the full outcome, with full commit
 hashes), and the feed on stderr explains what needs attention. Unfinished changes from the last task are left in the
 working tree, and the feed says so.

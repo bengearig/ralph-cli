@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/bengearig/ralph/internal/git"
 	"github.com/bengearig/ralph/internal/loop"
 	"github.com/bengearig/ralph/internal/pr"
+	"github.com/bengearig/ralph/internal/project"
 	"github.com/bengearig/ralph/internal/service"
 
 	// Register pull request providers.
@@ -51,7 +54,14 @@ refuses (exit code 3) and points at ralph milestone reconcile. --dry-run
 reports the drift instead of refusing.
 
 It also refuses (exit code 3) while a milestone this one depends on is not
-merged; --force skips that check, and --dry-run reports it as warnings.`,
+merged; --force skips that check, and --dry-run reports it as warnings.
+
+It also refuses (exit code 3) while the milestone is not ready: a loop is
+running in the project, the milestone's branch is checked out with uncommitted
+changes, a DONE task has no recorded commit (when loop.commit_per_task is on),
+or the milestone is not DONE. Every reason is listed. Wait for the loop to
+finish and rerun, or pass --force; --dry-run reports the reasons as warnings.
+A milestone that already records a pull request is not checked.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mID, err := parseIDArg(domain.KindMilestone, milestone)
@@ -94,9 +104,6 @@ merged; --force skips that check, and --dry-run reports it as warnings.`,
 				return err
 			}
 			req := pr.MilestoneRequest(l.Config, i, m, tasks, branch)
-			if !dryRun && m.Status != service.MilestoneDone {
-				a.warn("milestone " + m.ID + " is " + m.Status + ", not DONE")
-			}
 			baseWarnings, err := a.guardBase(cmd.Context(), l.Config, p.Root, force, dryRun)
 			if err != nil {
 				return err
@@ -124,6 +131,23 @@ merged; --force skips that check, and --dry-run reports it as warnings.`,
 					depWarnings = []string{"dependency check failed: " + err.Error()}
 				} else if len(depWarnings) > 0 && !dryRun {
 					return loop.DependencyRefusal(depWarnings)
+				}
+			}
+			var readyWarnings []string
+			if !force && m.PullRequest == nil {
+				lockPath := filepath.Join(p.Root, project.DirName, "loop.lock")
+				repo, err := loop.ResolveRepo(cmd.Context(), p.Root)
+				if err == nil {
+					readyWarnings, err = loop.Readiness(cmd.Context(), repo, lockPath, l.Config, m, tasks, branch)
+				}
+				if err != nil {
+					if !dryRun {
+						return err
+					}
+					readyWarnings = []string{"readiness check failed: " + err.Error()}
+				} else if len(readyWarnings) > 0 && !dryRun {
+					return fmt.Errorf("%w: milestone %s is not ready for a pull request:\n  - %s\nwait for the loop to finish and rerun: ralph pr create --milestone %s, or pass --force to open it anyway",
+						errs.ErrNeedsHuman, m.ID, strings.Join(readyWarnings, "\n  - "), m.ID)
 				}
 			}
 			provider, err := newPRProvider(l.Config)
@@ -162,9 +186,10 @@ merged; --force skips that check, and --dry-run reports it as warnings.`,
 						DriftError string                   `json:"drift_error,omitempty"`
 						BaseWarns  []string                 `json:"base_warnings,omitempty"`
 						DepWarns   []string                 `json:"dependency_warnings,omitempty"`
+						ReadyWarns []string                 `json:"readiness_warnings,omitempty"`
 						Push       pushPlan                 `json:"push"`
 						PR         *service.PullRequestView `json:"pull_request,omitempty"`
-					}{provider.Name(), req, validation, driftReport, driftError, baseWarnings, depWarnings, pushPlan{remote, branch}, recorded})
+					}{provider.Name(), req, validation, driftReport, driftError, baseWarnings, depWarnings, readyWarnings, pushPlan{remote, branch}, recorded})
 				}
 				if validation != "" {
 					a.warn("provider is not ready:\n" + validation)
@@ -173,6 +198,9 @@ merged; --force skips that check, and --dry-run reports it as warnings.`,
 					a.warn(w)
 				}
 				for _, w := range depWarnings {
+					a.warn(w)
+				}
+				for _, w := range readyWarnings {
 					a.warn(w)
 				}
 				driftLine := "not checked"
@@ -234,7 +262,7 @@ merged; --force skips that check, and --dry-run reports it as warnings.`,
 		},
 	}
 	create.Flags().StringVar(&milestone, "milestone", "", "milestone ID, e.g. M-1 (required)")
-	create.Flags().BoolVar(&force, "force", false, "ignore unmerged milestone dependencies and the stale-base check")
+	create.Flags().BoolVar(&force, "force", false, "skip the unmerged-dependency check, the stale-base check, and the readiness check")
 	create.Flags().BoolVar(&dryRun, "dry-run", false, "print the request without sending it")
 	_ = create.MarkFlagRequired("milestone")
 	cmd.AddCommand(create)
