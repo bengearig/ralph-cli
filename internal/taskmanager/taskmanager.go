@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bengearig/ralph/internal/config"
 	"github.com/bengearig/ralph/internal/domain"
@@ -84,6 +85,24 @@ type PullRequestLink struct {
 // link to a card. Callers skip a provider that does not implement it.
 type PullRequestLinker interface {
 	LinkPullRequest(ctx context.Context, key string, l PullRequestLink) error
+}
+
+// CardCandidate is an open card found by a search.
+type CardCandidate struct {
+	Key, URL, Summary, Status string
+	Created                   time.Time
+}
+
+// CardSearch narrows a search for open cards. The zero CreatedAfter means no
+// date scope.
+type CardSearch struct {
+	CreatedAfter time.Time
+}
+
+// CardFinder is implemented by providers that can find open cards carrying
+// ralph's labels. Callers skip a provider that does not implement it.
+type CardFinder interface {
+	FindOpenCards(ctx context.Context, s CardSearch) ([]CardCandidate, error)
 }
 
 // Factory builds a provider from configuration.

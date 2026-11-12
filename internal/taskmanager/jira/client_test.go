@@ -709,3 +709,189 @@ func TestForbiddenOnCreateKeepsHint(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+type searchReq struct {
+	JQL           string   `json:"jql"`
+	Fields        []string `json:"fields"`
+	MaxResults    int      `json:"maxResults"`
+	NextPageToken string   `json:"nextPageToken"`
+}
+
+func searchServer(t *testing.T, reqs *[]searchReq, respond func(n int, r searchReq) (int, string)) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/rest/api/3/search/jql" {
+			t.Errorf("got %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != authValue() {
+			t.Errorf("auth header = %q", r.Header.Get("Authorization"))
+		}
+		var sr searchReq
+		if err := json.NewDecoder(r.Body).Decode(&sr); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		*reqs = append(*reqs, sr)
+		status, body := respond(len(*reqs), sr)
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+const searchJQL = `project = "ACGL" AND labels = "ralph" AND labels = "automation-platform" AND statusCategory != Done ORDER BY created ASC`
+
+var searchLabels = []string{"ralph", "automation-platform"}
+
+func TestSearchOpenCardsOnePage(t *testing.T) {
+	var reqs []searchReq
+	srv := searchServer(t, &reqs, func(int, searchReq) (int, string) {
+		return 200, `{"issues":[{"key":"ACGL-1","fields":{"summary":"T-1: a","status":{"name":"To Do"},"created":"2026-11-10T14:03:22.123+0000"}},{"key":"ACGL-2","fields":{"summary":"T-2: b","status":{"name":"In Progress"},"created":"2026-11-11T09:00:00.000-0500"}}]}`
+	})
+	got, err := newTestClient(t, srv.URL, time.Second).SearchOpenCards(context.Background(), "ACGL", searchLabels, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reqs) != 1 {
+		t.Fatalf("requests = %d", len(reqs))
+	}
+	r := reqs[0]
+	if r.JQL != searchJQL || r.MaxResults != 100 || r.NextPageToken != "" || strings.Join(r.Fields, ",") != "summary,status,created" {
+		t.Errorf("request = %+v", r)
+	}
+	want := []FoundIssue{
+		{"ACGL-1", "T-1: a", "To Do", time.Date(2026, 11, 10, 14, 3, 22, 123e6, time.UTC)},
+		{"ACGL-2", "T-2: b", "In Progress", time.Date(2026, 11, 11, 14, 0, 0, 0, time.UTC)},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v", got)
+	}
+	for i := range want {
+		g := got[i]
+		if g.Key != want[i].Key || g.Summary != want[i].Summary || g.Status != want[i].Status || !g.Created.Equal(want[i].Created) {
+			t.Errorf("issue %d = %+v, want %+v", i, g, want[i])
+		}
+	}
+}
+
+func TestSearchOpenCardsCreatedAfter(t *testing.T) {
+	var reqs []searchReq
+	srv := searchServer(t, &reqs, func(int, searchReq) (int, string) { return 200, `{"issues":[]}` })
+	c := newTestClient(t, srv.URL, time.Second)
+	if _, err := c.SearchOpenCards(context.Background(), "ACGL", searchLabels, time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	want := `project = "ACGL" AND labels = "ralph" AND labels = "automation-platform" AND statusCategory != Done AND created >= "2026-01-15" ORDER BY created ASC`
+	if reqs[0].JQL != want {
+		t.Errorf("jql = %s", reqs[0].JQL)
+	}
+}
+
+func TestSearchOpenCardsTwoPages(t *testing.T) {
+	var reqs []searchReq
+	srv := searchServer(t, &reqs, func(n int, _ searchReq) (int, string) {
+		if n == 1 {
+			return 200, `{"issues":[{"key":"ACGL-1","fields":{}}],"nextPageToken":"tok1"}`
+		}
+		return 200, `{"issues":[{"key":"ACGL-2","fields":{}}],"nextPageToken":""}`
+	})
+	got, err := newTestClient(t, srv.URL, time.Second).SearchOpenCards(context.Background(), "ACGL", searchLabels, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reqs) != 2 || reqs[0].NextPageToken != "" || reqs[1].NextPageToken != "tok1" || reqs[1].JQL != searchJQL {
+		t.Errorf("requests = %+v", reqs)
+	}
+	if len(got) != 2 || got[0].Key != "ACGL-1" || got[1].Key != "ACGL-2" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestSearchOpenCardsRepeatedToken(t *testing.T) {
+	var reqs []searchReq
+	srv := searchServer(t, &reqs, func(n int, _ searchReq) (int, string) {
+		return 200, `{"issues":[],"nextPageToken":"same"}`
+	})
+	_, err := newTestClient(t, srv.URL, time.Second).SearchOpenCards(context.Background(), "ACGL", searchLabels, time.Time{})
+	if err == nil || !strings.Contains(err.Error(), "repeated") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(reqs) != 2 {
+		t.Errorf("requests = %d", len(reqs))
+	}
+}
+
+func TestSearchOpenCardsPageLimit(t *testing.T) {
+	var reqs []searchReq
+	srv := searchServer(t, &reqs, func(n int, _ searchReq) (int, string) {
+		return 200, `{"issues":[],"nextPageToken":"t` + strings.Repeat("x", n%7) + string(rune('a'+n%26)) + strings.Repeat("y", n/26) + `"}`
+	})
+	_, err := newTestClient(t, srv.URL, time.Second).SearchOpenCards(context.Background(), "ACGL", searchLabels, time.Time{})
+	if err == nil || !strings.Contains(err.Error(), "result pages") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(reqs) != maxSearchPages {
+		t.Errorf("requests = %d, want %d", len(reqs), maxSearchPages)
+	}
+}
+
+func TestSearchOpenCardsEscapesLabels(t *testing.T) {
+	var reqs []searchReq
+	srv := searchServer(t, &reqs, func(int, searchReq) (int, string) { return 200, `{"issues":[]}` })
+	c := newTestClient(t, srv.URL, time.Second)
+	if _, err := c.SearchOpenCards(context.Background(), `P"Q`, []string{`a"b`, `c\d`}, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	want := `project = "P\"Q" AND labels = "a\"b" AND labels = "c\\d" AND statusCategory != Done ORDER BY created ASC`
+	if reqs[0].JQL != want {
+		t.Errorf("jql = %s", reqs[0].JQL)
+	}
+}
+
+func TestSearchOpenCardsRejectsEmptyInput(t *testing.T) {
+	var reqs []searchReq
+	srv := searchServer(t, &reqs, func(int, searchReq) (int, string) { return 200, `{"issues":[]}` })
+	c := newTestClient(t, srv.URL, time.Second)
+	if _, err := c.SearchOpenCards(context.Background(), "ACGL", nil, time.Time{}); err == nil {
+		t.Error("no labels: want error")
+	}
+	if _, err := c.SearchOpenCards(context.Background(), "", searchLabels, time.Time{}); err == nil {
+		t.Error("empty project: want error")
+	}
+	if len(reqs) != 0 {
+		t.Errorf("requests = %d", len(reqs))
+	}
+}
+
+func TestSearchOpenCardsErrors(t *testing.T) {
+	var reqs []searchReq
+	srv := searchServer(t, &reqs, func(int, searchReq) (int, string) {
+		return 400, `{"errorMessages":["bad jql"]}`
+	})
+	_, err := newTestClient(t, srv.URL, time.Second).SearchOpenCards(context.Background(), "ACGL", searchLabels, time.Time{})
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 400 {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(err.Error(), testToken) || strings.Contains(err.Error(), authValue()) {
+		t.Errorf("error leaks credentials: %v", err)
+	}
+
+	reqs = nil
+	srv2 := searchServer(t, &reqs, func(int, searchReq) (int, string) { return 200, `not json` })
+	_, err = newTestClient(t, srv2.URL, time.Second).SearchOpenCards(context.Background(), "ACGL", searchLabels, time.Time{})
+	if err == nil || !strings.Contains(err.Error(), "response is not valid JSON") || strings.Contains(err.Error(), testToken) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestSearchOpenCardsBadCreated(t *testing.T) {
+	var reqs []searchReq
+	srv := searchServer(t, &reqs, func(int, searchReq) (int, string) {
+		return 200, `{"issues":[{"key":"ACGL-1","fields":{"summary":"s","status":{"name":"To Do"},"created":"yesterday"}}]}`
+	})
+	got, err := newTestClient(t, srv.URL, time.Second).SearchOpenCards(context.Background(), "ACGL", searchLabels, time.Time{})
+	if err != nil || len(got) != 1 || !got[0].Created.IsZero() || got[0].Key != "ACGL-1" {
+		t.Fatalf("got %+v err=%v", got, err)
+	}
+}

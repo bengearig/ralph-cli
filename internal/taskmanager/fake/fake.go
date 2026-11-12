@@ -28,6 +28,8 @@ type Provider struct {
 	mu          sync.Mutex
 	calls       []Call
 	links       []LinkCall
+	candidates  []taskmanager.CardCandidate
+	searches    []taskmanager.CardSearch
 	n           int
 	attempts    int
 	err         error
@@ -42,6 +44,7 @@ var (
 	_ taskmanager.Preflighter = (*Provider)(nil)
 
 	_ taskmanager.PullRequestLinker = (*Provider)(nil)
+	_ taskmanager.CardFinder        = (*Provider)(nil)
 )
 
 // New returns an empty fake provider.
@@ -83,7 +86,8 @@ func (p *Provider) Preflight(context.Context) error {
 	return p.preflight
 }
 
-// SetError makes every Create, Update, SetStatus, and LinkPullRequest return err; nil clears it.
+// SetError makes every Create, Update, SetStatus, LinkPullRequest, and
+// FindOpenCards return err; nil clears it.
 func (p *Provider) SetError(err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -154,6 +158,32 @@ func (p *Provider) LinkPullRequest(_ context.Context, key string, l taskmanager.
 	}
 	p.links = append(p.links, LinkCall{Key: key, Link: l})
 	return nil
+}
+
+// SetCandidates sets the cards FindOpenCards returns.
+func (p *Provider) SetCandidates(c []taskmanager.CardCandidate) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.candidates = append([]taskmanager.CardCandidate(nil), c...)
+}
+
+// Searches returns a copy of the FindOpenCards searches in order.
+func (p *Provider) Searches() []taskmanager.CardSearch {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]taskmanager.CardSearch(nil), p.searches...)
+}
+
+// FindOpenCards records the search and returns the configured candidates. It
+// bypasses the call hook and does not count toward the hook's n.
+func (p *Provider) FindOpenCards(_ context.Context, s taskmanager.CardSearch) ([]taskmanager.CardCandidate, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.searches = append(p.searches, s)
+	if p.err != nil {
+		return nil, p.err
+	}
+	return append([]taskmanager.CardCandidate(nil), p.candidates...), nil
 }
 
 func (p *Provider) check(method string, req taskmanager.CardRequest) error {
