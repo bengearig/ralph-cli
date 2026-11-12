@@ -54,7 +54,7 @@ func TestDefaults(t *testing.T) {
 	if tm.Provider != TaskManagerNone || tm.Timeout != 10*time.Second {
 		t.Errorf("task_manager defaults = %+v", tm)
 	}
-	if j := tm.Jira; j.EmailEnv != "RALPH_JIRA_EMAIL" || j.TokenEnv != "RALPH_JIRA_TOKEN" || j.CanceledStatus != "" || len(j.Labels) != 0 || j.OriginalEstimate != (JiraEstimates{}) ||
+	if j := tm.Jira; j.EmailEnv != "RALPH_JIRA_EMAIL" || j.TokenEnv != "RALPH_JIRA_TOKEN" || j.CanceledStatus != "" || len(j.Labels) != 0 || j.OriginalEstimate != (JiraEstimates{}) || j.AssignOnStart ||
 		j.IssueTypes != (JiraIssueTypes{Initiative: "Epic", Milestone: "Task", Task: "Sub-task"}) {
 		t.Errorf("jira defaults = %+v", j)
 	}
@@ -112,6 +112,14 @@ func TestValidateTaskManager(t *testing.T) {
 		{"original_estimate", func(c *Config) {
 			complete(c)
 			c.TaskManager.Jira.OriginalEstimate = JiraEstimates{Task: "5m", Milestone: "1h 30m", Initiative: "2d"}
+		}, nil},
+		{"assign_on_start true", func(c *Config) {
+			complete(c)
+			c.TaskManager.Jira.AssignOnStart = true
+		}, nil},
+		{"assign_on_start false", func(c *Config) {
+			complete(c)
+			c.TaskManager.Jira.AssignOnStart = false
 		}, nil},
 		{"original_estimate invalid", func(c *Config) {
 			complete(c)
@@ -192,6 +200,33 @@ func TestTaskManagerLayers(t *testing.T) {
 	typo := writeFile(t, t.TempDir(), "typo.yaml", "task_manager:\n  jira:\n    issue_type: {}\n")
 	if _, err := Load(Sources{ProjectFile: typo}); err == nil || !strings.Contains(err.Error(), "issue_type") {
 		t.Errorf("err = %v, want an unknown-key error naming issue_type", err)
+	}
+}
+
+func TestJiraAssignOnStartLayers(t *testing.T) {
+	project := writeFile(t, t.TempDir(), "p.yaml", "task_manager:\n  jira:\n    assign_on_start: true\n")
+	l, err := Load(Sources{ProjectFile: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !l.Config.TaskManager.Jira.AssignOnStart {
+		t.Error("assign_on_start in a file should load as true")
+	}
+	l, err = Load(Sources{ProjectFile: project, Environ: []string{"RALPH_TASK_MANAGER__JIRA__ASSIGN_ON_START=false"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Config.TaskManager.Jira.AssignOnStart {
+		t.Error("env false should override the file's true")
+	}
+
+	off := writeFile(t, t.TempDir(), "off.yaml", "task_manager:\n  jira:\n    assign_on_start: false\n")
+	l, err = Load(Sources{ProjectFile: off, Environ: []string{"RALPH_TASK_MANAGER__JIRA__ASSIGN_ON_START=true"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !l.Config.TaskManager.Jira.AssignOnStart {
+		t.Error("RALPH_TASK_MANAGER__JIRA__ASSIGN_ON_START=true should override the file")
 	}
 }
 

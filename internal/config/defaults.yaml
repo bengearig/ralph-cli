@@ -167,6 +167,9 @@ task_manager:
       initiative: ""
       milestone: ""
       task: ""
+    # When true, a card is assigned to the API token's own user when its card
+    # is moved to in progress. A card held by someone else is never reassigned.
+    assign_on_start: false
     # Maps a ralph status (task or milestone) to the Jira status its card
     # moves to: one name, or a list of names to pass through in order for
     # workflows that do not allow the jump (for example [To Do, In Progress,
