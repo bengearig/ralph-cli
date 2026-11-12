@@ -181,8 +181,22 @@ func (r Runner) Run(ctx context.Context, plan Plan) (Outcome, error) {
 			leftover = nil
 		}
 		if next.Status == string(domain.StatusTodo) {
-			if _, err := r.Service.SetTaskStatus(ctx, taskID, domain.StatusInProgress, ""); err != nil {
+			started, err := r.Service.SetTaskStatus(ctx, taskID, domain.StatusInProgress, "")
+			if err != nil {
 				return out, err
+			}
+			if c := started.CardConflict; c != nil {
+				reason := fmt.Sprintf("Jira card %s (%s) is already assigned to %s; reassign or unassign it in Jira, then move the task back to TODO",
+					c.Card, c.Resource, c.Assignee)
+				blocked, err := r.Service.SetTaskStatus(ctx, taskID, domain.StatusBlocked, reason)
+				if err != nil {
+					return out, err
+				}
+				out.Blocked = append(out.Blocked, TaskRef{ID: blocked.ID, Title: blocked.Title, Reason: reason})
+				out.StopReason = StopNeedsHuman
+				f.printf("✗ %s BLOCKED: %s\n", blocked.ID, reason)
+				return out, fmt.Errorf("%w: %s is BLOCKED by an assignee conflict; see `ralph task get %s`",
+					errs.ErrNeedsHuman, blocked.ID, blocked.ID)
 			}
 		}
 		task, err := r.Service.GetTask(ctx, taskID)
