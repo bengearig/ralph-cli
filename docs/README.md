@@ -22,6 +22,7 @@
 - [Bitbucket Cloud](bitbucket-cloud.md): setting up the Bitbucket Cloud pull request provider, its credentials, and how to check it by hand.
 - [Installing and updating](installing.md): the install scripts, `ralph update`, and what each does and refuses.
 - [Releasing](releasing.md): how to cut a release from a version tag, and the names and contents of the release assets.
+- [Testing](testing.md): how to run the tests, find the slow ones, and the conventions that keep the suite fast.
 - [Roadmap](roadmap.md): what is stubbed and what comes next.
 
 ## Decisions
@@ -49,5 +50,6 @@ provider, [ADR 22](adr/0022-create-cards-when-resources-are-created.md) records 
 [ADR 42](adr/0042-refuse-pr-create-for-a-milestone-that-is-not-ready.md) records why `ralph pr create` refuses a milestone that is not ready, and
 [ADR 43](adr/0043-share-init-setup-code-and-preview-with-dry-run.md) records the shared setup code and `ralph init --dry-run`, and
 [ADR 44](adr/0044-report-progress-on-stderr-through-service-callbacks.md) records how progress is reported, and
-[ADR 45](adr/0045-choose-which-kinds-get-jira-cards.md) records how the kinds that get Jira cards are chosen. Add a new
+[ADR 45](adr/0045-choose-which-kinds-get-jira-cards.md) records how the kinds that get Jira cards are chosen, and
+[ADR 46](adr/0046-keep-the-test-suite-fast.md) records how the test suite is kept fast. Add a new
 record rather than editing an accepted one; mark the old record superseded.
