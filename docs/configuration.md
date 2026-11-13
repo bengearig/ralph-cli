@@ -128,6 +128,20 @@ commands, so their overrides take effect once ralph launches those sessions itse
 |---|---|---|
 | `import.max_file_bytes` | `1048576` | Largest file, in bytes, that `ralph import` queues. Larger files are skipped and listed with a reason. Must be at least 1. |
 
+### `init`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `init.update` | `auto` | `auto` or `manual`. Controls how ralph keeps the integration files that `ralph init` writes current after a ralph upgrade. Every project command checks them and warns on standard error when they are out of date. Auto mode is described with the update behavior in [Claude Code integration](claude-code.md#keeping-the-integration-files-current). Override with `RALPH_INIT_UPDATE`. |
+| `init.ignore` | `[]` | Project-relative paths, with forward slashes, of integration files you customized on purpose, such as `.claude/commands/ralph/receive.md`. The check leaves them alone and does not report them. Each entry must be relative and must not contain `..`. |
+
+```yaml
+init:
+  update: manual
+  ignore:
+    - .claude/commands/ralph/receive.md
+```
+
 ### `loop`
 
 | Key | Default | Meaning |

@@ -1938,3 +1938,37 @@ func TestInitDryRun(t *testing.T) {
 		}
 	})
 }
+
+// installHarness runs ralph init so the integration files exist.
+func (h *testEnv) installHarness() {
+	h.t.Helper()
+	h.ok("init")
+}
+
+func (h *testEnv) write(rel, content string) {
+	h.t.Helper()
+	p := filepath.Join(h.dir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		h.t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+func (h *testEnv) snapshot() map[string]string {
+	h.t.Helper()
+	snap := map[string]string{}
+	err := filepath.WalkDir(h.dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || strings.HasSuffix(p, ".db") || strings.Contains(p, ".db-") {
+			return err
+		}
+		data, err := os.ReadFile(p)
+		snap[p] = string(data)
+		return err
+	})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return snap
+}

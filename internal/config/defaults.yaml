@@ -77,6 +77,14 @@ import:
   # Largest file `ralph import` will queue, in bytes; bigger files are skipped.
   max_file_bytes: 1048576
 
+init:
+  # auto | manual. auto brings ralph's integration files up to date by itself
+  # when a newer ralph needs it; manual only warns and leaves ralph init to you.
+  update: auto
+  # Project-relative paths of integration files you customized on purpose; the
+  # freshness check and the update never touch or report them.
+  ignore: []
+
 loop:
   # Hard cap on iterations in one loop run.
   max_iterations: 50

@@ -46,6 +46,8 @@ type app struct {
 	log     *slog.Logger
 	svc     *service.Service
 	tmErr   error
+
+	integration *integrationState
 }
 
 // Execute runs the ralph command tree with the given arguments.
@@ -67,8 +69,9 @@ func (a *app) newRootCommand() *cobra.Command {
 		Long: `ralph standardizes the RALPH workflow: receive instructions, articulate a
 solution as documents, milestones, and tasks, loop an agent over the tasks,
 open a pull request, and hand off to humans for review.`,
-		SilenceUsage:  true,
-		SilenceErrors: true,
+		SilenceUsage:      true,
+		SilenceErrors:     true,
+		PersistentPreRunE: a.checkIntegration,
 	}
 	pf := cmd.PersistentFlags()
 	pf.StringVar(&a.projectDir, "project-dir", "", "project directory (default: nearest ancestor containing .ralph/)")

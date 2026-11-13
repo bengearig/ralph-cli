@@ -20,6 +20,11 @@ Commit hashes recorded by the loop are shown shortened in text output and in ful
 
 `ralph <command> --help` is the authoritative reference; this page gives an overview.
 
+Commands that find a project also check that its integration files are current. When they are not, the command
+still runs and prints a warning on standard error, never on standard output, so `--json` is unaffected. `init`,
+`version`, `help`, and `completion` do not check. See
+[Keeping the integration files current](claude-code.md#keeping-the-integration-files-current).
+
 ## Setup
 
 | Command | Purpose |
@@ -43,6 +48,21 @@ do.
 
 With `--json`, the output has the same `root` and `changes` keys as a real run, plus `"dry_run": true`. A real run
 leaves `dry_run` out.
+
+### Out-of-date integration files
+
+When another command finds integration files that `ralph init` would change, it warns on standard error:
+
+```
+warning: the integration files in this repository are out of date: .claude/commands/ralph/import.md, CLAUDE.md
+         run `ralph init` to update them
+warning: these customized files are left alone: .claude/commands/ralph/receive.md
+         `ralph init --force` overwrites them; add them to init.ignore to stop this warning
+```
+
+Run `ralph init` to update the files, or list a file you customized on purpose in
+[`init.ignore`](configuration.md#init). Projects set up with `ralph init --no-harness` are never checked.
+`ralph init --dry-run` shows the same changes as a table.
 
 ### `ralph update`
 
