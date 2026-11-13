@@ -31,6 +31,7 @@ var (
 
 	_ taskmanager.PullRequestLinker = (*Provider)(nil)
 	_ taskmanager.CardFinder        = (*Provider)(nil)
+	_ taskmanager.SprintAdder       = (*Provider)(nil)
 )
 
 func init() {
@@ -291,6 +292,41 @@ func (p *Provider) LinkPullRequest(ctx context.Context, key string, l taskmanage
 		return err
 	}
 	return c.AddRemoteLink(ctx, key, l)
+}
+
+// AddToSprint puts a milestone card in the board's active sprint. It does
+// nothing, without a request, when sprints are off or the kind or moment is not
+// the configured one. A card already in an open sprint is left alone.
+func (p *Provider) AddToSprint(ctx context.Context, key string, r taskmanager.SprintRequest) (string, error) {
+	board := p.cfg.Sprint.Board
+	if board == 0 || r.Kind != domain.KindMilestone || r.Moment != p.cfg.Sprint.When {
+		return "", nil
+	}
+	c, err := p.getClient()
+	if err != nil {
+		return "", err
+	}
+	current, err := c.CardSprint(ctx, key)
+	if err != nil {
+		return "", err
+	}
+	if current != nil && !strings.EqualFold(current.State, "closed") {
+		return "", nil
+	}
+	active, err := c.BoardSprints(ctx, board, "active")
+	if err != nil {
+		return "", err
+	}
+	if len(active) == 0 {
+		return "", fmt.Errorf("board %d has no active sprint; the card stays in the backlog", board)
+	}
+	chosen := active[0]
+	for _, s := range active[1:] {
+		if s.StartDate.After(chosen.StartDate) || (s.StartDate.Equal(chosen.StartDate) && s.ID > chosen.ID) {
+			chosen = s
+		}
+	}
+	return "", c.AddToSprint(ctx, chosen.ID, key)
 }
 
 // FindOpenCards lists the open cards in the project that carry every

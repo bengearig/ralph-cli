@@ -325,3 +325,45 @@ func TestFakeIsCardFinder(t *testing.T) {
 		t.Error("fake does not implement CardFinder")
 	}
 }
+
+func TestSprintAdderRecordsCallsInOrder(t *testing.T) {
+	var _ taskmanager.SprintAdder = New()
+	p := New()
+	a := taskmanager.SprintRequest{Kind: domain.KindMilestone, Moment: taskmanager.SprintMomentCreated}
+	b := taskmanager.SprintRequest{Kind: domain.KindMilestone, Moment: taskmanager.SprintMomentStarted, Sprint: "S"}
+	if _, err := p.AddToSprint(ctx, "K-1", a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.AddToSprint(ctx, "K-2", b); err != nil {
+		t.Fatal(err)
+	}
+	got := p.SprintCalls()
+	if len(got) != 2 || got[0] != (SprintCall{"K-1", a}) || got[1] != (SprintCall{"K-2", b}) {
+		t.Fatalf("calls = %+v", got)
+	}
+}
+
+func TestSprintAdderResultAndHookCounting(t *testing.T) {
+	p := New()
+	var ns []int
+	p.SetHook(func(n int, _ string, _ taskmanager.CardRequest) error { ns = append(ns, n); return nil })
+	boom := errors.New("boom")
+	p.SetSprintResult("fell back", boom)
+	note, err := p.AddToSprint(ctx, "K-1", taskmanager.SprintRequest{})
+	if note != "fell back" || err != boom {
+		t.Fatalf("got %q, %v", note, err)
+	}
+	p.SetSprintResult("", nil)
+	if note, err := p.AddToSprint(ctx, "K-1", taskmanager.SprintRequest{}); note != "" || err != nil {
+		t.Fatalf("got %q, %v", note, err)
+	}
+	if _, err := p.Create(ctx, req("T-1")); err != nil {
+		t.Fatal(err)
+	}
+	if len(ns) != 1 || ns[0] != 1 {
+		t.Fatalf("hook counts = %v, want [1]", ns)
+	}
+	if len(p.Calls()) != 1 {
+		t.Fatalf("calls = %v", p.Calls())
+	}
+}

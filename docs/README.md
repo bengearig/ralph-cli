@@ -56,5 +56,6 @@ provider, [ADR 22](adr/0022-create-cards-when-resources-are-created.md) records 
 the release notes, and
 [ADR 48](adr/0048-watch-lists-with-a-flag-on-list.md) records how lists are watched, and
 [ADR 49](adr/0049-attach-initiative-cards-to-a-chosen-parent-card.md) records how initiative cards are attached to a parent card, and
-[ADR 50](adr/0050-stamp-cards-with-a-store-identifier.md) records why cards are stamped with a per-clone store identifier. Add a new
+[ADR 50](adr/0050-stamp-cards-with-a-store-identifier.md) records why cards are stamped with a per-clone store identifier, and
+[ADR 51](adr/0051-add-milestone-cards-to-the-boards-active-sprint.md) records how milestone cards are added to the board's active sprint. Add a new
 record rather than editing an accepted one; mark the old record superseded.

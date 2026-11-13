@@ -23,11 +23,20 @@ type LinkCall struct {
 	Link taskmanager.PullRequestLink
 }
 
+// SprintCall is a recorded AddToSprint call.
+type SprintCall struct {
+	Key     string
+	Request taskmanager.SprintRequest
+}
+
 // Provider records calls and hands out sequential keys.
 type Provider struct {
 	mu          sync.Mutex
 	calls       []Call
 	links       []LinkCall
+	sprints     []SprintCall
+	sprintNote  string
+	sprintErr   error
 	candidates  []taskmanager.CardCandidate
 	searches    []taskmanager.CardSearch
 	n           int
@@ -45,6 +54,7 @@ var (
 
 	_ taskmanager.PullRequestLinker = (*Provider)(nil)
 	_ taskmanager.CardFinder        = (*Provider)(nil)
+	_ taskmanager.SprintAdder       = (*Provider)(nil)
 )
 
 // New returns an empty fake provider.
@@ -158,6 +168,29 @@ func (p *Provider) LinkPullRequest(_ context.Context, key string, l taskmanager.
 	}
 	p.links = append(p.links, LinkCall{Key: key, Link: l})
 	return nil
+}
+
+// SetSprintResult sets what AddToSprint returns.
+func (p *Provider) SetSprintResult(note string, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sprintNote, p.sprintErr = note, err
+}
+
+// SprintCalls returns a copy of the AddToSprint calls in order.
+func (p *Provider) SprintCalls() []SprintCall {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]SprintCall(nil), p.sprints...)
+}
+
+// AddToSprint records the call and returns the configured result. It bypasses
+// the call hook and SetError, and does not count toward the hook's n.
+func (p *Provider) AddToSprint(_ context.Context, key string, r taskmanager.SprintRequest) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sprints = append(p.sprints, SprintCall{Key: key, Request: r})
+	return p.sprintNote, p.sprintErr
 }
 
 // SetCandidates sets the cards FindOpenCards returns.

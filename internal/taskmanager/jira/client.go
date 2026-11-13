@@ -588,6 +588,15 @@ func (e *APIError) Error() string {
 
 func (e *APIError) hint() string {
 	switch e.Status {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		if strings.HasPrefix(e.path, agileBoardPrefix) {
+			return "check task_manager.jira.sprint.board, and that the board belongs to a Jira Software project the token's user can see"
+		}
+		if e.Status == http.StatusForbidden && isSprintAddPath(e.path) {
+			return "check that the token's user has permission to schedule issues in the project"
+		}
+	}
+	switch e.Status {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		if strings.HasSuffix(e.path, "/assignee") {
 			return "check the email and API token, and that the token's user has the Assign Issues permission in the project"

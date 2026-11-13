@@ -92,6 +92,28 @@ type PullRequestLinker interface {
 	LinkPullRequest(ctx context.Context, key string, l PullRequestLink) error
 }
 
+// The moments a card can be added to a sprint: when it is created and when its
+// work starts.
+const (
+	SprintMomentCreated = "created"
+	SprintMomentStarted = "started"
+)
+
+// SprintRequest says which card kind and moment triggered a sprint add. Sprint
+// is the initiative's named sprint, empty for none.
+type SprintRequest struct {
+	Kind   domain.Kind
+	Moment string
+	Sprint string
+}
+
+// SprintAdder is implemented by providers that can put a card in a sprint.
+// Callers skip a provider that does not implement it. A non-empty note means
+// the card was added with a caveat; an error means it was not added.
+type SprintAdder interface {
+	AddToSprint(ctx context.Context, key string, r SprintRequest) (note string, err error)
+}
+
 // CardCandidate is an open card found by a search.
 type CardCandidate struct {
 	Key, URL, Summary, Status string

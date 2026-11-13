@@ -834,3 +834,19 @@ func TestCardTimeoutBoundsStalledProvider(t *testing.T) {
 		t.Errorf("command took %v, the configured timeout was ignored", elapsed)
 	}
 }
+
+func TestSprintHookSyncReportShowsCreatedWarning(t *testing.T) {
+	var out strings.Builder
+	a := &app{streams: Streams{Out: &out, Err: &strings.Builder{}}}
+	r := service.SyncReport{Items: []service.SyncItem{
+		{ID: "M-1", Outcome: "created", Key: "FAKE-2", URL: "https://x/FAKE-2", Error: "fake card FAKE-2 for M-1: not added to a sprint: no board"},
+		{ID: "I-1", Outcome: "created", Key: "FAKE-1", URL: "https://x/FAKE-1"},
+	}}
+	if err := a.printSyncReport(r, false); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if !strings.HasSuffix(lines[0], "  (fake card FAKE-2 for M-1: not added to a sprint: no board)") || strings.Contains(lines[1], "(") {
+		t.Errorf("out = %q", out.String())
+	}
+}

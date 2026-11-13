@@ -41,6 +41,9 @@ const (
 
 	UIProgressAuto  = "auto"
 	UIProgressNever = "never"
+
+	SprintWhenCreated = "created"
+	SprintWhenStarted = "started"
 )
 
 var storeIDRE = regexp.MustCompile(`^[a-z0-9]{2,6}$`)
@@ -69,6 +72,7 @@ var (
 	knownTaskManagers   = []string{TaskManagerNone, TaskManagerJira}
 	knownInitUpdates    = []string{InitUpdateAuto, InitUpdateManual}
 	knownUIProgress     = []string{UIProgressAuto, UIProgressNever}
+	knownSprintWhens    = []string{SprintWhenCreated, SprintWhenStarted}
 	knownLogLevels      = []string{"debug", "info", "warn", "error"}
 	knownLogFormats     = []string{"text", "json"}
 )
@@ -241,6 +245,13 @@ type JiraConfig struct {
 	Labels           []string            `koanf:"labels"`
 	OriginalEstimate JiraEstimates       `koanf:"original_estimate"`
 	AssignOnStart    bool                `koanf:"assign_on_start"`
+	Sprint           JiraSprintConfig    `koanf:"sprint"`
+}
+
+// JiraSprintConfig turns on adding a milestone card to a board's active sprint; Board 0 means off.
+type JiraSprintConfig struct {
+	Board int    `koanf:"board"`
+	When  string `koanf:"when"`
 }
 
 // JiraEstimates are the original estimates given to cards that have none before they move; empty means none.
@@ -484,6 +495,10 @@ func (c *Config) Validate() error {
 				bad("task_manager.jira.original_estimate."+f.key, "%q is not a Jira duration such as 5m, 2h, or 1d 4h", f.val)
 			}
 		}
+		if j.Sprint.Board < 0 {
+			bad("task_manager.jira.sprint.board", "must not be negative")
+		}
+		oneOf("task_manager.jira.sprint.when", j.Sprint.When, knownSprintWhens)
 		for _, l := range j.Labels {
 			if strings.TrimSpace(l) == "" || strings.ContainsAny(l, " \t\r\n") {
 				bad("task_manager.jira.labels", "%q must not be empty or contain whitespace", l)

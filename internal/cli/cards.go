@@ -96,12 +96,8 @@ Exit code 3 means at least one item failed and a person needs to look.`,
 func (a *app) printSyncReport(r service.SyncReport, verbose bool) error {
 	for _, it := range r.Items {
 		switch it.Outcome {
-		case "created":
-			if err := a.printf("%-8s %s  %s  %s\n", "created", it.ID, it.Key, it.URL); err != nil {
-				return err
-			}
-		case "updated":
-			line := fmt.Sprintf("%-8s %s  %s  %s", "updated", it.ID, it.Key, it.URL)
+		case "created", "updated":
+			line := fmt.Sprintf("%-8s %s  %s  %s", it.Outcome, it.ID, it.Key, it.URL)
 			if it.Error != "" {
 				line += "  (" + it.Error + ")"
 			}

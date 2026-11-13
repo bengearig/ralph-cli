@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/bengearig/ralph/internal/domain"
@@ -192,9 +193,13 @@ func (s *Service) createCard(ctx context.Context, kind domain.Kind, id int64, st
 	if s.taskManager == nil || s.inTx || !s.cardKindEnabled(kind) {
 		return ""
 	}
-	if _, err := s.ensureCard(ctx, kind, id, stale); err != nil {
+	if _, err := s.ensureCard(ctx, kind, id, stale, true); err != nil {
 		if errors.Is(err, errCardClaimed) {
 			return ""
+		}
+		var spw sprintWarning
+		if errors.As(err, &spw) {
+			return spw.msg
 		}
 		var sw statusWarning
 		if errors.As(err, &sw) {
@@ -236,7 +241,31 @@ func (s *Service) statusNotSet(ctx context.Context, kind domain.Kind, id int64, 
 	return warn, nil
 }
 
-func (s *Service) ensureCard(ctx context.Context, kind domain.Kind, id int64, stale time.Duration) (string, error) {
+// sprintWarning is a created card that could not be added to a sprint, or was
+// added with a caveat. The card is fully recorded.
+type sprintWarning struct{ msg string }
+
+func (e sprintWarning) Error() string { return e.msg }
+
+// addToSprint asks the provider to put a milestone card in a sprint and returns
+// a warning, or empty. It never touches the card row, so nothing is retried.
+func (s *Service) addToSprint(ctx context.Context, kind domain.Kind, key string, req taskmanager.CardRequest, moment string) string {
+	adder, ok := s.taskManager.(taskmanager.SprintAdder)
+	if !ok {
+		return ""
+	}
+	note, err := adder.AddToSprint(ctx, key, taskmanager.SprintRequest{Kind: kind, Moment: moment})
+	prefix := fmt.Sprintf("%s card %s for %s", s.taskManager.Name(), key, req.ID)
+	switch {
+	case err != nil:
+		return fmt.Sprintf("%s: not added to a sprint: %v", prefix, err)
+	case note != "":
+		return fmt.Sprintf("%s: added to a sprint: %s", prefix, note)
+	}
+	return ""
+}
+
+func (s *Service) ensureCard(ctx context.Context, kind domain.Kind, id int64, stale time.Duration, sprint bool) (string, error) {
 	p := s.taskManager
 	if c, err := s.store.GetCard(ctx, kind, id, p.Name()); err == nil && c.Key != "" {
 		return c.Key, nil
@@ -254,7 +283,12 @@ func (s *Service) ensureCard(ctx context.Context, kind domain.Kind, id int64, st
 			err := fmt.Errorf("parent %s has no card: %s cards are not enabled", domain.FormatID(pk, pid), pk)
 			return "", s.failCard(ctx, kind, id, err)
 		}
-		parentKey, err = s.ensureCard(ctx, pk, pid, stale)
+		parentKey, err = s.ensureCard(ctx, pk, pid, stale, sprint)
+		var spw sprintWarning
+		if errors.As(err, &spw) {
+			s.log.Warn("parent card sprint", "id", domain.FormatID(pk, pid), "warning", spw.msg)
+			err = nil
+		}
 		if parentKey == "" {
 			if err == nil || errors.Is(err, errCardClaimed) {
 				err = errors.New("its creation is in progress or recently failed")
@@ -280,6 +314,7 @@ func (s *Service) ensureCard(ctx context.Context, kind domain.Kind, id int64, st
 		return "", s.failCard(ctx, kind, id, err)
 	}
 	hash := req.Hash()
+	var warnings []string
 	if req.Status != "" {
 		if err := s.RecordCard(ctx, kind, id, p.Name(), card.Key, card.URL, ""); err != nil {
 			s.log.Error("recording card", "id", req.ID, "key", card.Key, "error", err)
@@ -289,6 +324,11 @@ func (s *Service) ensureCard(ctx context.Context, kind domain.Kind, id int64, st
 			warn, conflict := s.statusNotSet(ctx, kind, id, card.Key, err)
 			return card.Key, statusWarning{msg: warn, conflict: conflict}
 		}
+		if sprint && kind == domain.KindMilestone && req.Status == domain.MilestoneInProgress {
+			if w := s.addToSprint(ctx, kind, card.Key, req, taskmanager.SprintMomentStarted); w != "" {
+				warnings = append(warnings, w)
+			}
+		}
 	}
 	if err := s.RecordCard(ctx, kind, id, p.Name(), card.Key, card.URL, hash); err != nil {
 		s.log.Error("recording card", "id", req.ID, "key", card.Key, "error", err)
@@ -296,6 +336,14 @@ func (s *Service) ensureCard(ctx context.Context, kind domain.Kind, id int64, st
 	}
 	if err := s.recordSentParent(ctx, kind, id, req); err != nil {
 		return card.Key, fmt.Errorf("created %s but recording its parent failed: %w", card.Key, err)
+	}
+	if sprint && kind == domain.KindMilestone {
+		if w := s.addToSprint(ctx, kind, card.Key, req, taskmanager.SprintMomentCreated); w != "" {
+			warnings = append(warnings, w)
+		}
+	}
+	if len(warnings) > 0 {
+		return card.Key, sprintWarning{msg: strings.Join(warnings, "; ")}
 	}
 	return card.Key, nil
 }
@@ -354,9 +402,13 @@ func (s *Service) syncCard(ctx context.Context, kind domain.Kind, id int64, mode
 		return skipped, "", nil
 	}
 	if missing || row.Key == "" {
-		if _, err := s.ensureCard(ctx, kind, id, stale); err != nil {
+		if _, err := s.ensureCard(ctx, kind, id, stale, !missing); err != nil {
 			if errors.Is(err, errCardClaimed) {
 				return skipped, "", nil
+			}
+			var spw sprintWarning
+			if errors.As(err, &spw) {
+				return created, spw.msg, nil
 			}
 			var sw statusWarning
 			if errors.As(err, &sw) {
@@ -398,10 +450,14 @@ func (s *Service) syncCard(ctx context.Context, kind domain.Kind, id int64, mode
 		}
 		return failed, warn, nil
 	}
+	var sprintWarn string
 	if req.Status != "" {
 		if err := p.SetStatus(ctx, row.Key, req.Status); err != nil {
 			warn, conflict := s.statusNotSet(ctx, kind, id, row.Key, err)
 			return failed, warn, conflict
+		}
+		if kind == domain.KindMilestone && req.Status == domain.MilestoneInProgress {
+			sprintWarn = s.addToSprint(ctx, kind, row.Key, req, taskmanager.SprintMomentStarted)
 		}
 	}
 	if err := s.RecordCard(ctx, kind, id, p.Name(), row.Key, row.URL, hash); err != nil {
@@ -411,7 +467,7 @@ func (s *Service) syncCard(ctx context.Context, kind domain.Kind, id int64, mode
 	if err := s.recordSentParent(ctx, kind, id, req); err != nil {
 		return updated, fmt.Sprintf("%s card %s for %s updated but recording its parent failed: %v", p.Name(), row.Key, name, err), nil
 	}
-	return updated, "", nil
+	return updated, sprintWarn, nil
 }
 
 // failCard records cause on the card row and returns it, adding any error from recording.
@@ -764,7 +820,7 @@ func (s *Service) syncOne(ctx context.Context, kind domain.Kind, id int64, cance
 	default:
 		it.Outcome = "failed"
 	}
-	if res == failed || res == updated {
+	if res == failed || res == updated || res == created {
 		it.Error = warn
 	}
 	report.add(it)
