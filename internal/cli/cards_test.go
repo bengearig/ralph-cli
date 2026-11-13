@@ -638,7 +638,7 @@ func TestCardsReconcileNotConfigured(t *testing.T) {
 func TestCardsReconcileHelp(t *testing.T) {
 	h := newTestEnv(t, true)
 	flat := strings.Join(strings.Fields(h.ok("cards", "reconcile", "--help")), " ")
-	for _, want := range []string{"changes nothing", "other people's or other repos' cards", "--created-after"} {
+	for _, want := range []string{"changes nothing", "other people's or other repos' cards", "stamped with another store's identifier", "--created-after"} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("help lacks %q: %q", want, flat)
 		}

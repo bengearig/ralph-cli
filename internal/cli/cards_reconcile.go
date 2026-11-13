@@ -36,6 +36,10 @@ The labels identify the Jira project, not this ralph store, so other people's
 or other repos' cards with the same labels can look like orphans. Review the
 list, and scope the search with --created-after.
 
+Cards stamped with another store's identifier, as in "[ab] T-12: Title", are
+skipped and never cancelled. Unstamped cards, created before stamping existed,
+are classified as before and still deserve review.
+
 --created-after takes a date (YYYY-MM-DD). Only the date is sent to Jira, which
 reads it in the Jira user's time zone.`,
 		Args: cobra.NoArgs,
