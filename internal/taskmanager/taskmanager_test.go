@@ -150,3 +150,12 @@ func TestHashStoreID(t *testing.T) {
 		t.Error("hash is not stable for the same StoreID")
 	}
 }
+
+func TestHashSprintCarryIgnored(t *testing.T) {
+	r := CardRequest{Kind: domain.KindMilestone, ID: "M-1", Title: "m"}
+	withSprint := r
+	withSprint.Sprint = "Sprint 42"
+	if r.Hash() != withSprint.Hash() {
+		t.Error("hash depends on Sprint")
+	}
+}
