@@ -242,8 +242,15 @@ func TestSummaryLabelsParent(t *testing.T) {
 	if _, err := p.Create(ctx, taskmanager.CardRequest{Kind: domain.KindInitiative, ID: "I-1", Title: "x", ParentKey: "PROJ-5"}); err != nil {
 		t.Fatal(err)
 	}
+	if got := f.last(t).fields()["parent"].(map[string]any)["key"]; got != "PROJ-5" {
+		t.Errorf("initiative parent %v", got)
+	}
+
+	if _, err := p.Create(ctx, taskmanager.CardRequest{Kind: domain.KindInitiative, ID: "I-2", Title: "x"}); err != nil {
+		t.Fatal(err)
+	}
 	if _, ok := f.last(t).fields()["parent"]; ok {
-		t.Error("initiative sent a parent")
+		t.Error("initiative without a parent sent one")
 	}
 }
 

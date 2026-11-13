@@ -120,6 +120,7 @@ func buildCardRequest(ctx context.Context, st store.Store, kind domain.Kind, id 
 			return req, err
 		}
 		req.Title, req.Description = i.Title, i.Brief
+		req.ParentKey = i.ParentCard
 	case domain.KindMilestone:
 		m, err := st.GetMilestone(ctx, id)
 		if err != nil {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/bengearig/ralph/internal/domain"
+	"github.com/bengearig/ralph/internal/taskmanager"
 )
 
 func TestCreateInitiativeParentCard(t *testing.T) {
@@ -119,5 +120,91 @@ func TestUpdateArchivedInitiativeParentCardRefused(t *testing.T) {
 	p := "ABC-7"
 	if _, err := e.svc.UpdateInitiative(ctx, id, InitiativePatch{ParentCard: &p}); !errors.Is(err, ErrArchived) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestInitiativeCardCreatedUnderParent(t *testing.T) {
+	ctx := context.Background()
+	e, p := withProvider(newEnv(t))
+	i, err := e.svc.CreateInitiative(ctx, InitiativeInput{Title: "Init", Brief: "b", ParentCard: "PROJ-12"})
+	if err != nil || i.CardWarning != "" {
+		t.Fatalf("%v %q", err, i.CardWarning)
+	}
+	m, err := e.svc.CreateMilestone(ctx, MilestoneInput{InitiativeID: iid(t, i.ID), Title: "M"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.CreateTask(ctx, TaskInput{MilestoneID: mid(t, m.ID), Title: "T"}); err != nil {
+		t.Fatal(err)
+	}
+	calls := creates(p.Calls())
+	if len(calls) != 3 {
+		t.Fatalf("creates = %+v", calls)
+	}
+	for n, want := range []string{"PROJ-12", "FAKE-1", "FAKE-2"} {
+		if calls[n].Request.ParentKey != want {
+			t.Errorf("create %d (%s) parent = %q, want %q", n, calls[n].Request.ID, calls[n].Request.ParentKey, want)
+		}
+	}
+
+	plain, err := e.svc.CreateInitiative(ctx, InitiativeInput{Title: "Plain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = creates(p.Calls())
+	if last := calls[len(calls)-1]; last.Request.ID != plain.ID || last.Request.ParentKey != "" {
+		t.Errorf("plain initiative create = %+v", last)
+	}
+}
+
+func TestSyncCardsCreatesInitiativeUnderParent(t *testing.T) {
+	ctx := context.Background()
+	e, p := withProvider(newEnv(t))
+	e.svc.taskManager = nil
+	i, err := e.svc.CreateInitiative(ctx, InitiativeInput{Title: "Init", ParentCard: "PROJ-12"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.svc.taskManager = p
+	r, err := e.svc.SyncCards(ctx, SyncOptions{})
+	if err != nil || r.Created != 1 {
+		t.Fatalf("report = %+v, %v", r, err)
+	}
+	calls := creates(p.Calls())
+	if len(calls) != 1 || calls[0].Request.ID != i.ID || calls[0].Request.ParentKey != "PROJ-12" {
+		t.Fatalf("creates = %+v", calls)
+	}
+}
+
+func TestInitiativeWithoutParentKeepsHash(t *testing.T) {
+	ctx := context.Background()
+	e, p := withProvider(newEnv(t))
+	i, err := e.svc.CreateInitiative(ctx, InitiativeInput{Title: "Init", Brief: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := iid(t, i.ID)
+	legacy := taskmanager.CardRequest{Kind: domain.KindInitiative, ID: i.ID, Title: "Init", Description: "b"}
+	c, err := e.svc.store.GetCard(ctx, domain.KindInitiative, id, "fake")
+	if err != nil || c.ContentHash != legacy.Hash() {
+		t.Fatalf("stored hash %q, %v", c.ContentHash, err)
+	}
+	req, err := buildCardRequest(ctx, e.svc.store, domain.KindInitiative, id, "")
+	if err != nil || req.Hash() != legacy.Hash() {
+		t.Fatalf("hash %q, %v", req.Hash(), err)
+	}
+	gi, err := e.svc.GetInitiative(ctx, id)
+	if err != nil || gi.Card == nil || gi.Card.Pending != "" {
+		t.Fatalf("card = %+v, %v", gi.Card, err)
+	}
+	before := len(p.Calls())
+	r, err := e.svc.SyncCards(ctx, SyncOptions{})
+	if err != nil || r.InSync != 1 || r.Updated != 0 {
+		t.Fatalf("report = %+v, %v", r, err)
+	}
+	for _, c := range p.Calls()[before:] {
+		if c.Method == "Update" || c.Method == "Create" {
+			t.Errorf("unexpected call %+v", c)
+		}
 	}
 }
