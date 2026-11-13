@@ -593,3 +593,164 @@ func TestSyncCardsProgressStopsWhenCancelled(t *testing.T) {
 		t.Errorf("last callback = %+v", last)
 	}
 }
+
+func kindOffItems(r SyncReport) map[string]SyncItem {
+	m := map[string]SyncItem{}
+	for _, it := range r.Items {
+		m[it.ID] = it
+	}
+	return m
+}
+
+func TestSyncCardsKindOffSkipsTasks(t *testing.T) {
+	ctx := context.Background()
+	e, tr, p := buildSyncTree(t)
+	e.svc.cardKinds = kindsWithoutTask
+	var l progressLog
+	r, err := e.svc.SyncCards(ctx, SyncOptions{Progress: l.record})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Created != 3 || r.Skipped != 3 || r.Failed != 0 {
+		t.Fatalf("%+v", r)
+	}
+	items := kindOffItems(r)
+	for _, ts := range tr.tasks {
+		for _, id := range ts {
+			it := items[domain.FormatID(domain.KindTask, id)]
+			if it.Outcome != "skipped" || it.Error != syncReasonKindOff {
+				t.Errorf("%+v", it)
+			}
+		}
+	}
+	for _, c := range creates(p.Calls()) {
+		if c.Request.Kind == domain.KindTask {
+			t.Errorf("task created: %s", c.Request.ID)
+		}
+	}
+	checkCounts(t, r)
+	l.check(t, len(tr.order()), r)
+}
+
+func TestSyncCardsKindOffIgnoresFailedParent(t *testing.T) {
+	ctx := context.Background()
+	e, tr, p := buildSyncTree(t)
+	e.svc.cardKinds = kindsWithoutTask
+	p.SetHook(func(_ int, method string, req taskmanager.CardRequest) error {
+		if method == "Create" && req.Kind == domain.KindMilestone {
+			return errors.New("boom")
+		}
+		return nil
+	})
+	r, err := e.svc.SyncCards(ctx, SyncOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Created != 1 || r.Failed != 2 || r.Skipped != 3 {
+		t.Fatalf("%+v", r)
+	}
+	items := kindOffItems(r)
+	for _, ts := range tr.tasks {
+		for _, id := range ts {
+			if it := items[domain.FormatID(domain.KindTask, id)]; it.Outcome != "skipped" || it.Error != syncReasonKindOff {
+				t.Errorf("%+v", it)
+			}
+		}
+	}
+	checkCounts(t, r)
+}
+
+func TestSyncCardsKindOffKeepsExistingCards(t *testing.T) {
+	ctx := context.Background()
+	e, tr, p := buildSyncTree(t)
+	if _, err := e.svc.SyncCards(ctx, SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.taskManager = nil
+	title := "Edited"
+	if _, err := e.svc.UpdateTask(ctx, tr.tasks[0][0], TaskPatch{Title: &title}); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.taskManager = p
+	e.svc.cardKinds = kindsWithoutTask
+	r, err := e.svc.SyncCards(ctx, SyncOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Updated != 1 || r.InSync != len(tr.order())-1 || r.Skipped != 0 || r.Failed != 0 {
+		t.Fatalf("%+v", r)
+	}
+	if it := kindOffItems(r)[domain.FormatID(domain.KindTask, tr.tasks[0][0])]; it.Outcome != "updated" {
+		t.Errorf("%+v", it)
+	}
+}
+
+func TestSyncCardsKindOffCancelledReportsKind(t *testing.T) {
+	ctx := context.Background()
+	e, tr, _ := buildSyncTree(t)
+	e.svc.cardKinds = kindsWithoutTask
+	id := tr.tasks[1][0]
+	if _, err := e.svc.SetTaskStatus(ctx, id, domain.StatusCancelled, ""); err != nil {
+		t.Fatal(err)
+	}
+	r, err := e.svc.SyncCards(ctx, SyncOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it := kindOffItems(r)[domain.FormatID(domain.KindTask, id)]; it.Outcome != "skipped" || it.Error != syncReasonKindOff {
+		t.Errorf("%+v", it)
+	}
+}
+
+func TestSyncCardsKindOnKeepsCancelledReason(t *testing.T) {
+	ctx := context.Background()
+	e, tr, p := buildSyncTree(t)
+	e.svc.cardKinds = []domain.Kind{domain.KindInitiative, domain.KindMilestone, domain.KindTask}
+	id := tr.tasks[1][0]
+	if _, err := e.svc.SetTaskStatus(ctx, id, domain.StatusCancelled, ""); err != nil {
+		t.Fatal(err)
+	}
+	r, err := e.svc.SyncCards(ctx, SyncOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it := kindOffItems(r)[domain.FormatID(domain.KindTask, id)]; it.Outcome != "skipped" || it.Error != syncReasonCancelled {
+		t.Errorf("%+v", it)
+	}
+	if got := len(creates(p.Calls())); got != len(tr.order())-2 {
+		t.Errorf("creates = %d", got)
+	}
+}
+
+func TestSyncCardsEmptyKindsSkipsAllButUpdatesExisting(t *testing.T) {
+	ctx := context.Background()
+	e, tr, p := buildSyncTree(t)
+	e.svc.cardKinds = []domain.Kind{}
+	r, err := e.svc.SyncCards(ctx, SyncOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Skipped != len(tr.order()) || r.Created != 0 || len(p.Calls()) != 0 {
+		t.Fatalf("%+v", r)
+	}
+	for _, it := range r.Items {
+		if it.Error != syncReasonKindOff {
+			t.Errorf("%+v", it)
+		}
+	}
+	e.svc.cardKinds = nil
+	if _, err := e.svc.SyncCards(ctx, SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.taskManager = nil
+	title := "Edited"
+	if _, err := e.svc.UpdateTask(ctx, tr.tasks[0][0], TaskPatch{Title: &title}); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.taskManager = p
+	e.svc.cardKinds = []domain.Kind{}
+	r, err = e.svc.SyncCards(ctx, SyncOptions{})
+	if err != nil || r.Updated != 1 || r.Skipped != 0 {
+		t.Fatalf("%v %+v", err, r)
+	}
+}

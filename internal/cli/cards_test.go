@@ -744,3 +744,40 @@ func TestCardsReconcileWithoutApplyCancelsNothing(t *testing.T) {
 		t.Errorf("dry run cancelled: %v", p.Calls())
 	}
 }
+
+func TestCardsSyncKindOffSkipsTasks(t *testing.T) {
+	h, p := syncEnv(t)
+	t.Setenv("RALPH_TASK_MANAGER__CARD_KINDS", "initiative,milestone")
+	out, errOut, err := h.run("", "cards", "sync")
+	if err != nil {
+		t.Fatalf("sync: %v\n%s", err, errOut)
+	}
+	if !regexp.MustCompile(`(?m)^skipped\s+T-1\s+kind not in task_manager\.card_kinds$`).MatchString(out) {
+		t.Errorf("no skipped line: %q", out)
+	}
+	if !strings.Contains(out, "created 2, updated 0, in sync 0, skipped 1, failed 0") {
+		t.Errorf("summary: %q", out)
+	}
+	for _, c := range p.Calls() {
+		if c.Method == "Create" && c.Request.ID == "T-1" {
+			t.Error("task created")
+		}
+	}
+	out, _, err = h.run("", "--json", "cards", "sync")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r service.SyncReport
+	if err := json.Unmarshal([]byte(out), &r); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, it := range r.Items {
+		if it.ID == "T-1" && it.Outcome == "skipped" && it.Error == "kind not in task_manager.card_kinds" {
+			found = true
+		}
+	}
+	if !found || r.Failed != 0 {
+		t.Errorf("json report: %+v", r)
+	}
+}

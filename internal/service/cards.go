@@ -549,6 +549,7 @@ type SyncReport struct {
 const (
 	syncReasonCancelled = "cancelled"
 	syncReasonInFlight  = "creation in progress"
+	syncReasonKindOff   = "kind not in task_manager.card_kinds"
 )
 
 func (r *SyncReport) add(it SyncItem) {
@@ -687,15 +688,20 @@ func (s *Service) syncOne(ctx context.Context, kind domain.Kind, id int64, cance
 	}
 	name := domain.FormatID(kind, id)
 	p := s.taskManager.Name()
-	if parent != nil {
-		cause := fmt.Sprintf("parent %s has no card: %s", parent.id, parent.cause)
-		report.add(SyncItem{ID: name, Outcome: "failed", Error: cause})
-		return &noCard{id: name, cause: cause}, nil
-	}
 	row, err := s.store.GetCard(ctx, kind, id, p)
 	hasRow := err == nil
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		cause := fmt.Sprintf("%s card for %s not synced: %v", p, name, err)
+		report.add(SyncItem{ID: name, Outcome: "failed", Error: cause})
+		return &noCard{id: name, cause: cause}, nil
+	}
+	hasKey := hasRow && row.Key != ""
+	if !hasKey && !s.cardKindEnabled(kind) {
+		report.add(SyncItem{ID: name, Outcome: "skipped", Error: syncReasonKindOff})
+		return nil, nil
+	}
+	if parent != nil {
+		cause := fmt.Sprintf("parent %s has no card: %s", parent.id, parent.cause)
 		report.add(SyncItem{ID: name, Outcome: "failed", Error: cause})
 		return &noCard{id: name, cause: cause}, nil
 	}

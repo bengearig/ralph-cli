@@ -32,8 +32,9 @@ pushes changes that are still pending, parents first.
 
 Sync is explicit: it is the only way work that existed before the task manager
 was configured gets cards, and ralph never runs it automatically. It is safe to
-rerun; work already in sync is left alone. Cancelled work with no card is
-skipped. Archived initiatives are skipped unless --include-archived is set.
+rerun; work already in sync is left alone. Cards are created only for the kinds
+in task_manager.card_kinds; existing cards are updated whatever their kind, and
+other resources are skipped. Cancelled work with no card is skipped. Archived initiatives are skipped unless --include-archived is set.
 
 Progress is shown on stderr while it runs: a live bar on a terminal, otherwise
 one line per item. --no-progress, --json and the ui.progress setting "never"

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/embed/fake"
 	"github.com/bengearig/ralph/internal/search"
 	"github.com/bengearig/ralph/internal/service"
@@ -84,5 +85,32 @@ func TestCardsSyncToolNotConfigured(t *testing.T) {
 	res := call(t, cs, "cards_sync", map[string]any{}, &out)
 	if !res.IsError || !strings.Contains(text(res), "task_manager.provider") {
 		t.Errorf("res = %+v %s", res.IsError, text(res))
+	}
+}
+
+func TestCardsSyncToolKindOff(t *testing.T) {
+	st, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "r.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	ix := &search.Index{Store: st, Embedder: fake.New(), Chunker: search.Chunker{MaxChars: 1000, OverlapChars: 100}}
+	seed := connectService(t, service.New(st, ix, service.Options{}), Options{})
+	seedDeletable(t, seed)
+
+	kinds := []domain.Kind{domain.KindInitiative, domain.KindMilestone}
+	cs := connectService(t, service.New(st, ix, service.Options{TaskManager: tmfake.New(), CardKinds: kinds}), Options{})
+	var r service.SyncReport
+	mustOK(t, cs, "cards_sync", map[string]any{}, &r)
+	if r.Skipped == 0 || r.Failed != 0 || r.Skipped+r.Created != len(r.Items) {
+		t.Fatalf("report = %+v", r)
+	}
+	for _, it := range r.Items {
+		if it.Outcome == "skipped" && it.Error != "kind not in task_manager.card_kinds" {
+			t.Errorf("%+v", it)
+		}
+		if strings.HasPrefix(it.ID, "T-") && it.Outcome != "skipped" {
+			t.Errorf("%+v", it)
+		}
 	}
 }
