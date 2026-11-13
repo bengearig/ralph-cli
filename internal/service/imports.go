@@ -55,23 +55,36 @@ func hashContent(content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// ImportProgress is called once before the first file with done 0 and an empty
+// path, then after each file is handled, with done reaching total (the number
+// of files given). With no files it is called once with (0, 0, ""). It must not
+// call back into the service.
+type ImportProgress func(done, total int, path string)
+
 // QueueImports queues files in one transaction, applying change detection
-// against any existing record for each path.
-func (s *Service) QueueImports(ctx context.Context, files []ImportFile) ([]ImportOutcome, error) {
+// against any existing record for each path. A nil progress means no callbacks;
+// if the transaction fails and rolls back, no further callbacks happen.
+func (s *Service) QueueImports(ctx context.Context, files []ImportFile, progress ImportProgress) ([]ImportOutcome, error) {
 	for _, f := range files {
 		if err := ValidateImportPath(f.Path); err != nil {
 			return nil, err
 		}
 	}
 	out := make([]ImportOutcome, 0, len(files))
+	if progress != nil {
+		progress(0, len(files), "")
+	}
 	err := s.InTx(ctx, func(tx *Service) error {
 		out = out[:0]
-		for _, f := range files {
+		for i, f := range files {
 			o, err := tx.queueImport(ctx, f)
 			if err != nil {
 				return err
 			}
 			out = append(out, ImportOutcome{Path: f.Path, Outcome: o})
+			if progress != nil {
+				progress(i+1, len(files), f.Path)
+			}
 		}
 		return nil
 	})
@@ -234,6 +247,9 @@ type AsNewOptions struct {
 	InitiativeID int64
 	// Again creates a new document even for files that were already imported.
 	Again bool
+	// Progress, if set, is called as described on ImportProgress, after every
+	// file including refused, skipped and failed ones.
+	Progress ImportProgress
 }
 
 // AsNewOutcome says what ImportAsNew did for one path.
@@ -261,7 +277,10 @@ func (s *Service) ImportAsNew(ctx context.Context, files []ImportFile, opts AsNe
 		}
 	}
 	out := make([]AsNewOutcome, 0, len(files))
-	for _, f := range files {
+	if opts.Progress != nil {
+		opts.Progress(0, len(files), "")
+	}
+	for i, f := range files {
 		var o AsNewOutcome
 		err := s.InTx(ctx, func(tx *Service) error {
 			var err error
@@ -272,6 +291,9 @@ func (s *Service) ImportAsNew(ctx context.Context, files []ImportFile, opts AsNe
 			o = AsNewOutcome{Path: f.Path, Outcome: AsNewFailed, Reason: err.Error()}
 		}
 		out = append(out, o)
+		if opts.Progress != nil {
+			opts.Progress(i+1, len(files), f.Path)
+		}
 	}
 	return out, nil
 }

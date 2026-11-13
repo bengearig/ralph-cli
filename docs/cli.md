@@ -269,7 +269,7 @@ its origin, shown as `from I-n` by `doc show` and `doc list`, and `ralph doc ret
 ## Progress
 
 Long-running commands report how far they are on standard error, so standard output and `--json` stay clean. `ralph
-cards sync` is the first command to do so. The total is counted before any work starts, and a mode is chosen once per
+cards sync` and `ralph import` show it. The total is counted before any work starts, and a mode is chosen once per
 command:
 
 | Mode | When | What is written |
@@ -468,8 +468,8 @@ behind it and [ADR 0025](adr/0025-import-documentation-into-ralph.md) for the de
 
 | Command | Purpose |
 |---|---|
-| `ralph import [--dir <path>]... [--file <path>]...` | Queue text files for import. At least one `--dir` or `--file` is required; both repeat. |
-| `ralph import ... --as-new [--kind <k>] [--initiative <id>] [--again]` | The fast path: create one document per file and mark its record done, with no integration. |
+| `ralph import [--dir <path>]... [--file <path>]... [--no-progress]` | Queue text files for import. At least one `--dir` or `--file` is required; both repeat. |
+| `ralph import ... --as-new [--kind <k>] [--initiative <id>] [--again] [--no-progress]` | The fast path: create one document per file and mark its record done, with no integration. |
 
 `--kind`, `--initiative` and `--again` are refused without `--as-new`.
 
@@ -518,6 +518,17 @@ the document is project-wide. The file's record is marked `done` with a `created
 | `failed` | The file could not be imported; the reason is shown. |
 
 `--again` creates a fresh document for every file, even one already imported, and updates its record.
+
+### Progress
+
+While it queues or imports files, `ralph import` shows [progress](#progress) on standard error, one step per file. On
+a terminal that is the live bar; otherwise it is a first line with the total and then one `[n/total] <path>` line per
+file. The label is `queueing files` for a plain run and `importing files` with `--as-new`.
+
+- Collecting the files comes first and shows nothing. Progress starts once the number of files is known.
+- `--json`, `--no-progress`, and `ui.progress: never` turn it off. It is written to standard error only, so the report
+  on standard output is unchanged, and any warnings are printed after the indicator is cleared.
+- The `import_queue` MCP tool and the other MCP import tools are unaffected.
 
 ### Output and exit codes
 
