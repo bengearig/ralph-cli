@@ -948,3 +948,30 @@ func TestRegisteredProviderIsCardFinder(t *testing.T) {
 		t.Errorf("%T does not implement CardFinder", p)
 	}
 }
+
+func TestSummaryStoreID(t *testing.T) {
+	f := newFakeJira(t)
+	p := newTestProvider(f.URL)
+	for _, tc := range []struct{ storeID, want string }{{"ab", "[ab] T-12: Title"}, {"", "T-12: Title"}} {
+		req := taskmanager.CardRequest{Kind: domain.KindTask, ID: "T-12", Title: "Title", StoreID: tc.storeID, ParentKey: "PROJ-1"}
+		if _, err := p.Create(context.Background(), req); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.last(t).fields()["summary"]; got != tc.want {
+			t.Errorf("create %q: summary %q", tc.storeID, got)
+		}
+		if err := p.Update(context.Background(), "PROJ-9", req); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.last(t).fields()["summary"]; got != tc.want {
+			t.Errorf("update %q: summary %q", tc.storeID, got)
+		}
+	}
+}
+
+func TestSummaryStoreIDTruncation(t *testing.T) {
+	s := summary(taskmanager.CardRequest{ID: "T-12", StoreID: "ab", Title: strings.Repeat("x", 400)})
+	if utf8.RuneCountInString(s) != 255 || !strings.HasSuffix(s, "…") || !strings.HasPrefix(s, "[ab] T-12: ") {
+		t.Errorf("summary %q", s)
+	}
+}

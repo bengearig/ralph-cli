@@ -330,3 +330,26 @@ func TestReconcileApplyContextCancelled(t *testing.T) {
 		t.Errorf("%+v", r)
 	}
 }
+
+func TestParseSummaryIDStoreID(t *testing.T) {
+	for in, want := range map[string]string{
+		"[ab] T-12: Title": "T-12", "T-12: Title": "T-12", "[abcdef] M-3: x": "M-3",
+		"[a] T-12: x": "", "[ab]T-12: x": "", "Fix the thing": "",
+	} {
+		if got := parseSummaryID(in); got != want {
+			t.Errorf("%q: got %q want %q", in, got, want)
+		}
+	}
+}
+
+func TestReconcileOrphanStoreID(t *testing.T) {
+	e, p, _, _, _ := reconcileFixture(t)
+	p.SetCandidates([]taskmanager.CardCandidate{cand("ZZ-1", "[ab] T-99: Gone")})
+	r, err := e.svc.ReconcileCards(context.Background(), ReconcileOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Orphans != 1 || len(r.Items) != 1 || r.Items[0].ID != "T-99" || r.Items[0].Outcome != "orphan" {
+		t.Errorf("%+v", r)
+	}
+}

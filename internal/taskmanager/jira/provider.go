@@ -383,7 +383,11 @@ func (p *Provider) labels() []string {
 }
 
 func summary(req taskmanager.CardRequest) string {
-	return truncateRunes(req.ID+": "+req.Title, maxSummaryRunes, "…")
+	text := req.ID + ": " + req.Title
+	if req.StoreID != "" {
+		text = "[" + req.StoreID + "] " + text
+	}
+	return truncateRunes(text, maxSummaryRunes, "…")
 }
 
 // truncateRunes cuts s to max runes total, ending with suffix when cut.
