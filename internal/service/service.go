@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -264,19 +265,37 @@ type InitiativeInput struct {
 	Title string
 	Slug  string
 	Brief string
+	// ParentCard is a Jira issue key; empty means none.
+	ParentCard string
 }
 
 type InitiativePatch struct {
 	Title *string
 	Brief *string
+	// ParentCard nil leaves the parent unchanged; a pointer to an empty string clears it.
+	ParentCard *string
+}
+
+var parentCardKey = regexp.MustCompile(`^[A-Z][A-Z0-9_]*-[0-9]+$`)
+
+func normalizeParentCard(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s != "" && !parentCardKey.MatchString(s) {
+		return "", fmt.Errorf("%w: parent_card %q is not a Jira key such as PROJ-123", domain.ErrInvalid, s)
+	}
+	return s, nil
 }
 
 func (s *Service) CreateInitiative(ctx context.Context, in InitiativeInput) (InitiativeView, error) {
 	if err := domain.RequireText("title", in.Title); err != nil {
 		return InitiativeView{}, err
 	}
-	i := domain.Initiative{Title: strings.TrimSpace(in.Title), Brief: strings.TrimSpace(in.Brief)}
-	err := createWithSlug(in.Slug, i.Title, "initiative", func(slug string) error {
+	parent, err := normalizeParentCard(in.ParentCard)
+	if err != nil {
+		return InitiativeView{}, err
+	}
+	i := domain.Initiative{Title: strings.TrimSpace(in.Title), Brief: strings.TrimSpace(in.Brief), ParentCard: parent}
+	err = createWithSlug(in.Slug, i.Title, "initiative", func(slug string) error {
 		i.Slug = slug
 		return s.store.CreateInitiative(ctx, &i)
 	})
@@ -343,6 +362,13 @@ func (s *Service) UpdateInitiative(ctx context.Context, id int64, p InitiativePa
 	}
 	if b := trimmed(p.Brief); b != nil {
 		i.Brief = *b
+	}
+	if p.ParentCard != nil {
+		parent, err := normalizeParentCard(*p.ParentCard)
+		if err != nil {
+			return InitiativeView{}, err
+		}
+		i.ParentCard = parent
 	}
 	if err := s.store.UpdateInitiative(ctx, &i); err != nil {
 		return InitiativeView{}, err

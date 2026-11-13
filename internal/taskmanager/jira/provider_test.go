@@ -242,8 +242,15 @@ func TestSummaryLabelsParent(t *testing.T) {
 	if _, err := p.Create(ctx, taskmanager.CardRequest{Kind: domain.KindInitiative, ID: "I-1", Title: "x", ParentKey: "PROJ-5"}); err != nil {
 		t.Fatal(err)
 	}
+	if got := f.last(t).fields()["parent"].(map[string]any)["key"]; got != "PROJ-5" {
+		t.Errorf("initiative parent %v", got)
+	}
+
+	if _, err := p.Create(ctx, taskmanager.CardRequest{Kind: domain.KindInitiative, ID: "I-2", Title: "x"}); err != nil {
+		t.Fatal(err)
+	}
 	if _, ok := f.last(t).fields()["parent"]; ok {
-		t.Error("initiative sent a parent")
+		t.Error("initiative without a parent sent one")
 	}
 }
 
@@ -374,6 +381,58 @@ func TestUpdate(t *testing.T) {
 	}
 	if !strings.Contains(r.description(), "body") || !strings.Contains(r.description(), "T-4") {
 		t.Errorf("description %s", r.description())
+	}
+}
+
+func TestUpdateParent(t *testing.T) {
+	tests := []struct {
+		name         string
+		kind         domain.Kind
+		parent, prev string
+		wantKey      string
+		wantNull     bool
+	}{
+		{"set", domain.KindInitiative, "PROJ-5", "", "PROJ-5", false},
+		{"unchanged", domain.KindInitiative, "PROJ-5", "PROJ-5", "", false},
+		{"changed", domain.KindInitiative, "PROJ-6", "PROJ-5", "PROJ-6", false},
+		{"clear", domain.KindInitiative, "", "PROJ-5", "", true},
+		{"never had one", domain.KindInitiative, "", "", "", false},
+		{"milestone ignores", domain.KindMilestone, "PROJ-5", "", "", false},
+		{"milestone ignores change", domain.KindMilestone, "PROJ-6", "PROJ-5", "", false},
+		{"task ignores", domain.KindTask, "PROJ-5", "PROJ-4", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFakeJira(t)
+			p := newTestProvider(f.URL)
+			req := taskmanager.CardRequest{Kind: tt.kind, ID: "X-1", Title: "t", ParentKey: tt.parent, PreviousParentKey: tt.prev}
+			if err := p.Update(context.Background(), "PROJ-9", req); err != nil {
+				t.Fatal(err)
+			}
+			r := f.last(t)
+			fl := r.fields()
+			if _, ok := fl["summary"]; !ok {
+				t.Errorf("no summary: %v", fl)
+			}
+			if _, ok := fl["description"]; !ok {
+				t.Errorf("no description: %v", fl)
+			}
+			par, has := fl["parent"]
+			switch {
+			case tt.wantKey != "":
+				if m, _ := par.(map[string]any); !has || m["key"] != tt.wantKey {
+					t.Errorf("parent = %v", par)
+				}
+			case tt.wantNull:
+				if !has || par != nil {
+					t.Errorf("parent = %v (present %v), want null", par, has)
+				}
+			default:
+				if has {
+					t.Errorf("unexpected parent %v", par)
+				}
+			}
+		})
 	}
 }
 

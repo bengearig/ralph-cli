@@ -14,6 +14,7 @@ type InitiativeView struct {
 	Slug         string    `json:"slug"`
 	Title        string    `json:"title"`
 	Brief        string    `json:"brief"`
+	ParentCard   string    `json:"parent_card,omitempty"`
 	CreatedAt    string    `json:"created_at"`
 	UpdatedAt    string    `json:"updated_at"`
 	ArchivedAt   string    `json:"archived_at,omitempty"`
@@ -144,6 +145,7 @@ func initiativeView(i domain.Initiative) InitiativeView {
 		Slug:       i.Slug,
 		Title:      i.Title,
 		Brief:      i.Brief,
+		ParentCard: i.ParentCard,
 		CreatedAt:  ts(i.CreatedAt),
 		UpdatedAt:  ts(i.UpdatedAt),
 		ArchivedAt: tsIfSet(i.ArchivedAt),

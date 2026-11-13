@@ -83,12 +83,14 @@ func ParseID(k Kind, s string) (int64, error) {
 // Initiative is one set of received instructions and everything articulated
 // from it.
 type Initiative struct {
-	ID        int64
-	Slug      string
-	Title     string
-	Brief     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID    int64
+	Slug  string
+	Title string
+	Brief string
+	// ParentCard is the Jira key of the card this initiative's card is attached to; empty means none.
+	ParentCard string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 	// ArchivedAt is zero when the initiative is not archived.
 	ArchivedAt time.Time
 }
@@ -290,4 +292,6 @@ type Card struct {
 	LastError   string
 	AttemptedAt time.Time
 	SyncedAt    time.Time
+	// ParentKey is the parent card key last sent for this card; empty means none was sent.
+	ParentKey string
 }

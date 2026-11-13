@@ -183,6 +183,12 @@ func (p *Provider) Update(ctx context.Context, key string, req taskmanager.CardR
 	if err != nil {
 		return err
 	}
+	if req.Kind == domain.KindInitiative && req.ParentKey != req.PreviousParentKey {
+		fields.ParentChange = ParentSet
+		if req.ParentKey == "" {
+			fields.ParentChange = ParentClear
+		}
+	}
 	c, err := p.getClient()
 	if err != nil {
 		return err
@@ -353,12 +359,8 @@ func (p *Provider) mapRequest(req taskmanager.CardRequest) (IssueFields, error) 
 	default:
 		return IssueFields{}, fmt.Errorf("jira: %s has unsupported kind %q", req.ID, req.Kind)
 	}
-	parent := ""
-	if req.Kind != domain.KindInitiative {
-		if req.ParentKey == "" {
-			return IssueFields{}, fmt.Errorf("jira: %s needs its parent card; create the parent first", req.ID)
-		}
-		parent = req.ParentKey
+	if req.Kind != domain.KindInitiative && req.ParentKey == "" {
+		return IssueFields{}, fmt.Errorf("jira: %s needs its parent card; create the parent first", req.ID)
 	}
 	return IssueFields{
 		Project:     p.cfg.ProjectKey,
@@ -366,7 +368,7 @@ func (p *Provider) mapRequest(req taskmanager.CardRequest) (IssueFields, error) 
 		Summary:     summary(req),
 		Description: adf.FromMarkdown(body(req)).JSON(),
 		Labels:      p.labels(),
-		ParentKey:   parent,
+		ParentKey:   req.ParentKey,
 	}, nil
 }
 

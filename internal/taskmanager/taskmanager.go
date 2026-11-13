@@ -35,13 +35,16 @@ func (e *AssigneeConflictError) Error() string {
 }
 
 // CardRequest describes a card to create or update. ID is the display ID such
-// as T-12; ParentKey is empty for an initiative.
+// as T-12; ParentKey is the parent card an initiative was attached to, empty for none.
 type CardRequest struct {
 	Kind        domain.Kind
 	ID          string
 	Title       string
 	Description string
 	ParentKey   string
+	// PreviousParentKey is the parent card an initiative's card was last sent, empty for none.
+	// Update compares it with ParentKey to decide whether the parent changed; Hash ignores it.
+	PreviousParentKey string
 	// Status is the ralph status of a task or milestone; empty for an initiative.
 	Status string
 }

@@ -346,3 +346,102 @@ func TestClaimCardRace(t *testing.T) {
 		t.Errorf("winners = %d, want 1", won.Load())
 	}
 }
+
+func TestCardParentKey(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	c := card(domain.KindInitiative, 1, "jira", "P-1")
+	if err := s.SetCard(ctx, &c); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.GetCard(ctx, c.Kind, 1, "jira"); err != nil || got.ParentKey != "" {
+		t.Fatalf("new card = %+v, %v", got, err)
+	}
+	if err := s.SetCardParentKey(ctx, c.Kind, 1, "jira", "PROJ-12"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetCard(ctx, c.Kind, 1, "jira"); got.ParentKey != "PROJ-12" || got.Key != "P-1" {
+		t.Errorf("GetCard = %+v", got)
+	}
+	if all, err := s.ListCards(ctx, "jira"); err != nil || len(all) != 1 || all[0].ParentKey != "PROJ-12" {
+		t.Errorf("ListCards = %+v, %v", all, err)
+	}
+
+	c.ContentHash = "later"
+	if err := s.SetCard(ctx, &c); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetCard(ctx, c.Kind, 1, "jira"); got.ParentKey != "PROJ-12" || got.ContentHash != "later" {
+		t.Errorf("after SetCard = %+v", got)
+	}
+	if _, err := s.ClaimCard(ctx, c.Kind, 1, "jira", time.Nanosecond); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetCard(ctx, c.Kind, 1, "jira"); got.ParentKey != "PROJ-12" {
+		t.Errorf("after ClaimCard = %+v", got)
+	}
+
+	if err := s.SetCardParentKey(ctx, c.Kind, 1, "jira", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetCard(ctx, c.Kind, 1, "jira"); got.ParentKey != "" {
+		t.Errorf("cleared = %+v", got)
+	}
+	if err := s.SetCardParentKey(ctx, c.Kind, 2, "jira", "X-1"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("missing card err = %v", err)
+	}
+}
+
+func TestCardParentKeyMigration(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "old.db")
+	raw, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw.SetMaxOpenConns(1)
+	if _, err := raw.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	ms, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range ms {
+		if m.name == "0011_card_parent_key.sql" {
+			break
+		}
+		if _, err := raw.Exec(m.sql); err != nil {
+			t.Fatalf("applying %s: %v", m.name, err)
+		}
+		if _, err := raw.Exec(`INSERT INTO schema_migrations (version, applied_at) VALUES (?, '2026-01-01T00:00:00Z')`, m.version); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := raw.Exec(`INSERT INTO initiatives (slug, title, brief, created_at, updated_at)
+		VALUES ('a', 'A', 'brief', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO cards (kind, entity_id, provider, card_key) VALUES ('initiative', 1, 'jira', 'P-1')`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+	got, err := s.GetCard(ctx, domain.KindInitiative, 1, "jira")
+	if err != nil || got.Key != "P-1" || got.ParentKey != "" {
+		t.Errorf("existing card = %+v, %v", got, err)
+	}
+	var def string
+	if err := s.db.QueryRow(`SELECT dflt_value FROM pragma_table_info('cards') WHERE name = 'parent_key'`).Scan(&def); err != nil || def != "''" {
+		t.Errorf("parent_key default = %q, %v", def, err)
+	}
+	fresh := openTest(t)
+	if err := fresh.db.QueryRow(`SELECT dflt_value FROM pragma_table_info('cards') WHERE name = 'parent_key'`).Scan(&def); err != nil || def != "''" {
+		t.Errorf("fresh parent_key default = %q, %v", def, err)
+	}
+}

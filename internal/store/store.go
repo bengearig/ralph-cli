@@ -140,6 +140,9 @@ type Store interface {
 	GetCard(ctx context.Context, kind domain.Kind, entityID int64, provider string) (domain.Card, error)
 	// SetCard inserts the card or replaces the row with the same kind, entity, and provider.
 	SetCard(ctx context.Context, c *domain.Card) error
+	// SetCardParentKey sets only the parent card key last sent for the card, returning ErrNotFound when it has no row.
+	// SetCard never writes it.
+	SetCardParentKey(ctx context.Context, kind domain.Kind, entityID int64, provider, parentKey string) error
 	// ClaimCard atomically reserves creation of the entity's card: it inserts an empty-key row stamped now when there
 	// is none, or refreshes the stamp of an empty-key row last attempted more than staleAfter ago, and reports true.
 	// A row with a key, or an empty-key row attempted more recently, is left alone and reports false.
