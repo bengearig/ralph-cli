@@ -48,8 +48,10 @@ Exit code 3 means at least one item failed and a person needs to look.`,
 			}
 			opts := service.SyncOptions{InitiativeID: iID, IncludeArchived: includeArchived}
 			if !a.jsonOut {
-				opts.Progress = func(it service.SyncItem) {
-					fmt.Fprintf(a.streams.Err, "created %s %s\n", it.ID, it.Key)
+				opts.Progress = func(pr service.SyncProgress) {
+					if it := pr.Item; it != nil && it.Outcome == "created" {
+						fmt.Fprintf(a.streams.Err, "created %s %s\n", it.ID, it.Key)
+					}
 				}
 			}
 			report, err := svc.SyncCards(cmd.Context(), opts)

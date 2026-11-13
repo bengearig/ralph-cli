@@ -498,8 +498,15 @@ var ErrNoTaskManager = errors.New("no task manager is configured; set task_manag
 type SyncOptions struct {
 	InitiativeID    int64
 	IncludeArchived bool
-	// Progress, when set, is called with each item as soon as its card is created.
-	Progress func(SyncItem)
+	// Progress, when set, is called once with Done 0 and a nil Item after the
+	// total is known, then after every item added to the report.
+	Progress func(SyncProgress)
+}
+
+// SyncProgress is the state of a sync run. Item is nil for the initial call.
+type SyncProgress struct {
+	Done, Total int
+	Item        *SyncItem
 }
 
 // SyncItem is the outcome for one resource. For a skipped item, Error holds the reason.
@@ -520,7 +527,8 @@ type SyncReport struct {
 	Failed  int        `json:"failed"`
 	Items   []SyncItem `json:"items"`
 
-	progress func(SyncItem)
+	progress func(SyncProgress)
+	total    int
 }
 
 const (
@@ -542,8 +550,8 @@ func (r *SyncReport) add(it SyncItem) {
 		r.Failed++
 	}
 	r.Items = append(r.Items, it)
-	if it.Outcome == "created" && r.progress != nil {
-		r.progress(it)
+	if r.progress != nil {
+		r.progress(SyncProgress{Done: len(r.Items), Total: r.total, Item: &it})
 	}
 }
 
@@ -579,33 +587,64 @@ func (s *Service) SyncCards(ctx context.Context, opts SyncOptions) (SyncReport, 
 		}
 		initiatives = all
 	}
+	plans := make([]initiativePlan, 0, len(initiatives))
 	for _, i := range initiatives {
-		if err := s.syncInitiative(ctx, i.ID, &report); err != nil {
+		plan, err := s.planInitiative(ctx, i.ID)
+		if err != nil {
+			return report, err
+		}
+		report.total += plan.size()
+		plans = append(plans, plan)
+	}
+	if report.progress != nil {
+		report.progress(SyncProgress{Total: report.total})
+	}
+	for _, plan := range plans {
+		if err := s.syncInitiative(ctx, plan, &report); err != nil {
 			return report, err
 		}
 	}
 	return report, nil
 }
 
-func (s *Service) syncInitiative(ctx context.Context, id int64, report *SyncReport) error {
+// initiativePlan is an initiative with its milestones and tasks, loaded once.
+type initiativePlan struct {
+	id          int64
+	milestones  []domain.Milestone
+	byMilestone map[int64][]domain.Task
+	tasks       int
+}
+
+// size is the number of items the sync reports for the initiative.
+func (p initiativePlan) size() int { return 1 + len(p.milestones) + p.tasks }
+
+func (s *Service) planInitiative(ctx context.Context, id int64) (initiativePlan, error) {
 	ms, err := s.store.ListMilestones(ctx, id, false)
 	if err != nil {
-		return err
+		return initiativePlan{}, err
 	}
 	tasks, err := s.store.ListTasks(ctx, store.TaskFilter{InitiativeID: id})
 	if err != nil {
-		return err
+		return initiativePlan{}, err
 	}
 	byMilestone := map[int64][]domain.Task{}
 	for _, t := range tasks {
 		byMilestone[t.MilestoneID] = append(byMilestone[t.MilestoneID], t)
 	}
-	parent, err := s.syncOne(ctx, domain.KindInitiative, id, false, nil, report)
+	plan := initiativePlan{id: id, milestones: ms, byMilestone: byMilestone}
+	for _, m := range ms {
+		plan.tasks += len(byMilestone[m.ID])
+	}
+	return plan, nil
+}
+
+func (s *Service) syncInitiative(ctx context.Context, plan initiativePlan, report *SyncReport) error {
+	parent, err := s.syncOne(ctx, domain.KindInitiative, plan.id, false, nil, report)
 	if err != nil {
 		return err
 	}
-	for _, m := range ms {
-		mTasks := byMilestone[m.ID]
+	for _, m := range plan.milestones {
+		mTasks := plan.byMilestone[m.ID]
 		mParent, err := s.syncOne(ctx, domain.KindMilestone, m.ID, MilestoneStatus(mTasks) == MilestoneCancelled, parent, report)
 		if err != nil {
 			return err
@@ -628,6 +667,9 @@ type noCard struct {
 // syncOne syncs one resource and returns non-nil when it has no card afterwards because of a failure
 // or an in-flight creation. A non-nil parent means the resource is not attempted.
 func (s *Service) syncOne(ctx context.Context, kind domain.Kind, id int64, cancelled bool, parent *noCard, report *SyncReport) (*noCard, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	name := domain.FormatID(kind, id)
 	p := s.taskManager.Name()
 	if parent != nil {
@@ -645,9 +687,6 @@ func (s *Service) syncOne(ctx context.Context, kind domain.Kind, id int64, cance
 	if cancelled && !hasRow {
 		report.add(SyncItem{ID: name, Outcome: "skipped", Error: syncReasonCancelled})
 		return nil, nil
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
 	}
 	res, warn, _ := s.syncCard(ctx, kind, id, modeCreateMissing, s.cardTimeout)
 	row, err = s.store.GetCard(ctx, kind, id, p)
