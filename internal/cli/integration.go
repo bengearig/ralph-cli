@@ -130,3 +130,38 @@ func changePaths(cs []harness.Change) string {
 	}
 	return strings.Join(paths, ", ")
 }
+
+// loopLockHeld reports whether a loop holds the project lock; a lock that
+// cannot be probed counts as held.
+func (a *app) loopLockHeld(root string) bool {
+	_, held, err := looplock.Probe(filepath.Join(root, project.DirName, "loop.lock"))
+	return err != nil || held
+}
+
+// integrationNotice builds the text for the person about the integration
+// files: the server instructions notice (empty while a loop holds the lock,
+// so a headless agent is not prompted to touch the repository) and the line
+// for standard error.
+func integrationNotice(s *integrationState, loopLocked bool) (instructions, stderr string) {
+	if s == nil || s.err != nil {
+		return "", ""
+	}
+	switch {
+	case len(s.Updated) > 0:
+		paths := make([]string, len(s.Updated))
+		for i, c := range s.Updated {
+			paths[i] = c.Path
+		}
+		stderr = "ralph updated its integration files in this repository: " + strings.Join(paths, ", ") +
+			". They are uncommitted. Tell the user to commit them before running any loop (ralph loop)."
+	case len(s.result.Stale) > 0:
+		stderr = "ralph's integration files in this repository are out of date: " + changePaths(s.result.Stale) +
+			". Tell the user to run `ralph init` (and commit the result) before running any loop."
+	default:
+		return "", ""
+	}
+	if loopLocked {
+		return "", stderr
+	}
+	return stderr, stderr
+}

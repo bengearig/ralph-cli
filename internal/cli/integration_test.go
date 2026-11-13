@@ -9,8 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bengearig/ralph/internal/harness"
 	"github.com/bengearig/ralph/internal/looplock"
 	"github.com/bengearig/ralph/internal/project"
+	"github.com/bengearig/ralph/internal/setup"
 )
 
 const (
@@ -314,5 +316,53 @@ func TestIntegrationChecksOncePerCommandWithSubcommands(t *testing.T) {
 	_, errOut, err := h.run("", "task", "list")
 	if err != nil || strings.Count(errOut, outOfDateWarn) != 1 {
 		t.Errorf("err=%v stderr=%q", err, errOut)
+	}
+}
+
+func TestIntegrationNotice(t *testing.T) {
+	stale := []harness.Change{{Path: "a.md"}, {Path: "b.md"}}
+	updated := &integrationState{result: setup.CheckResult{Stale: stale}, Updated: stale}
+	manual := &integrationState{result: setup.CheckResult{Stale: stale}, mode: "manual"}
+	wantUpdated := "ralph updated its integration files in this repository: a.md, b.md. " +
+		"They are uncommitted. Tell the user to commit them before running any loop (ralph loop)."
+	wantStale := "ralph's integration files in this repository are out of date: a.md, b.md. " +
+		"Tell the user to run `ralph init` (and commit the result) before running any loop."
+
+	cases := []struct {
+		name       string
+		s          *integrationState
+		locked     bool
+		instr, err string
+	}{
+		{"updated", updated, false, wantUpdated, wantUpdated},
+		{"stale", manual, false, wantStale, wantStale},
+		{"updated locked", updated, true, "", wantUpdated},
+		{"stale locked", manual, true, "", wantStale},
+		{"nothing", &integrationState{}, false, "", ""},
+		{"nil", nil, false, "", ""},
+		{"check error", &integrationState{err: os.ErrInvalid, result: setup.CheckResult{Stale: stale}}, false, "", ""},
+	}
+	for _, c := range cases {
+		instr, errLine := integrationNotice(c.s, c.locked)
+		if instr != c.instr || errLine != c.err {
+			t.Errorf("%s: got (%q, %q), want (%q, %q)", c.name, instr, errLine, c.instr, c.err)
+		}
+	}
+}
+
+func TestIntegrationPreRunWritesNothingToStdout(t *testing.T) {
+	for _, mode := range []string{"manual", "auto"} {
+		h := staleEnv(t)
+		t.Setenv("RALPH_INIT__UPDATE", mode)
+		plain := func() string {
+			h2 := newTestEnv(t, true)
+			h2.installHarness()
+			o, _, _ := h2.run("", "status")
+			return o
+		}()
+		out, errOut, err := h.run("", "status")
+		if err != nil || out != plain || !strings.Contains(errOut, staleCmd) || strings.Contains(out, "integration") {
+			t.Errorf("%s: err=%v stdout=%q stderr=%q", mode, err, out, errOut)
+		}
 	}
 }
