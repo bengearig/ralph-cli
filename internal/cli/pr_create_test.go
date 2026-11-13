@@ -364,7 +364,7 @@ func TestPRCreateDryRunPrefixesCardKey(t *testing.T) {
 	f := newPRCreateFixture(t)
 	before := f.h.ok("pr", "create", "--milestone", "M-1", "--dry-run")
 	t.Setenv("RALPH_TASK_MANAGER__PROVIDER", "jira")
-	t.Setenv("RALPH_TASK_MANAGER__JIRA__BASE_URL", "http://127.0.0.1:1")
+	failingJira(t)
 	t.Setenv("RALPH_TASK_MANAGER__JIRA__PROJECT_KEY", "AIN")
 	t.Setenv("RALPH_JIRA_EMAIL", "me@example.com")
 	t.Setenv("RALPH_JIRA_TOKEN", "tok")

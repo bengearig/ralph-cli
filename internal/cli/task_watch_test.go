@@ -106,7 +106,7 @@ func TestTaskWatchUntilDoneFinished(t *testing.T) {
 			} else {
 				h.ok("task", "status", "T-1", "cancelled", "--reason", "no")
 			}
-			w := h.startWatch(false, "task", "watch", "T-1", "--until-done")
+			w := h.startWatch(false, "task", "watch", "T-1", "--until-done", "--interval", "100ms")
 			if err := w.finish(t); err != nil {
 				t.Fatal(err)
 			}
@@ -122,7 +122,7 @@ func TestTaskWatchUntilDoneStuck(t *testing.T) {
 	seedWatch(h)
 	h.ok("task", "status", "T-1", "in_progress")
 	h.ok("task", "status", "T-1", "blocked", "--reason", "need help")
-	w := h.startWatch(false, "task", "watch", "T-1", "--until-done")
+	w := h.startWatch(false, "task", "watch", "T-1", "--until-done", "--interval", "100ms")
 	if err := w.finish(t); !errors.Is(err, errs.ErrNeedsHuman) {
 		t.Fatalf("err = %v", err)
 	}
@@ -134,8 +134,8 @@ func TestTaskWatchUntilDoneWaits(t *testing.T) {
 	w := h.startWatch(false, "task", "watch", "T-1", "--until-done", "--interval", "100ms")
 	w.waitFor(t, time.Second, func() bool { return len(w.out.lines()) >= 1 })
 	select {
-	case err := <-w.done:
-		t.Fatalf("ended: %v", err)
+	case <-w.finished:
+		t.Fatalf("ended: %v", w.err)
 	case <-time.After(400 * time.Millisecond):
 	}
 	completeTask(h, "T-1")

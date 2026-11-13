@@ -104,24 +104,29 @@ func (s *syncBuf) lines() []string {
 type runningWatch struct {
 	out, errOut *syncBuf
 	cancel      context.CancelFunc
-	done        chan error
+	finished    chan struct{}
+	err         error
 }
 
 func (h *testEnv) startWatch(terminal bool, args ...string) *runningWatch {
 	h.t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	w := &runningWatch{out: &syncBuf{}, errOut: &syncBuf{}, cancel: cancel, done: make(chan error, 1)}
+	w := &runningWatch{out: &syncBuf{}, errOut: &syncBuf{}, cancel: cancel, finished: make(chan struct{})}
 	streams := Streams{Out: w.out, Err: w.errOut, OutIsTerminal: terminal}
 	if terminal {
 		streams.OutSize = func() (int, int, bool) { return 100, 40, true }
 	}
 	full := append([]string{"--project-dir", h.dir}, args...)
-	go func() { w.done <- Execute(ctx, streams, full) }()
+	go func() {
+		w.err = Execute(ctx, streams, full)
+		close(w.finished)
+	}()
 	h.t.Cleanup(func() {
 		cancel()
 		select {
-		case <-w.done:
+		case <-w.finished:
 		case <-time.After(5 * time.Second):
+			h.t.Errorf("watch did not stop after cancel")
 		}
 	})
 	return w
@@ -141,8 +146,8 @@ func (w *runningWatch) waitFor(t *testing.T, d time.Duration, cond func() bool) 
 func (w *runningWatch) finish(t *testing.T) error {
 	t.Helper()
 	select {
-	case err := <-w.done:
-		return err
+	case <-w.finished:
+		return w.err
 	case <-time.After(5 * time.Second):
 		t.Fatal("watch did not end")
 		return nil
@@ -247,7 +252,7 @@ func TestInitiativeWatchUntilDoneFinished(t *testing.T) {
 	h := newTestEnv(t, true)
 	seedWatch(h)
 	completeTask(h, "T-1")
-	w := h.startWatch(false, "initiative", "watch", "I-1", "--until-done")
+	w := h.startWatch(false, "initiative", "watch", "I-1", "--until-done", "--interval", "100ms")
 	if err := w.finish(t); err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +266,7 @@ func TestInitiativeWatchUntilDoneStuck(t *testing.T) {
 	seedWatch(h)
 	h.ok("task", "status", "T-1", "in_progress")
 	h.ok("task", "status", "T-1", "blocked", "--reason", "need help")
-	w := h.startWatch(false, "initiative", "watch", "I-1", "--until-done")
+	w := h.startWatch(false, "initiative", "watch", "I-1", "--until-done", "--interval", "100ms")
 	if err := w.finish(t); !errors.Is(err, errs.ErrNeedsHuman) {
 		t.Fatalf("err = %v", err)
 	}
@@ -273,8 +278,8 @@ func TestInitiativeWatchUntilDoneNoMilestones(t *testing.T) {
 	w := h.startWatch(false, "initiative", "watch", "I-1", "--until-done", "--interval", "100ms")
 	w.waitFor(t, time.Second, func() bool { return len(w.out.lines()) >= 1 })
 	select {
-	case err := <-w.done:
-		t.Fatalf("ended: %v", err)
+	case <-w.finished:
+		t.Fatalf("ended: %v", w.err)
 	case <-time.After(400 * time.Millisecond):
 	}
 	if err := w.stop(t); !errors.Is(err, errs.ErrInterrupted) {
@@ -289,7 +294,7 @@ func TestInitiativeWatchUntilDoneDoneAndCancelled(t *testing.T) {
 	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Second")
 	h.ok("task", "create", "--milestone", "M-2", "--title", "B", "--description", "d", "--criteria", "c")
 	h.ok("task", "status", "T-2", "cancelled", "--reason", "no")
-	w := h.startWatch(false, "initiative", "watch", "I-1", "--until-done")
+	w := h.startWatch(false, "initiative", "watch", "I-1", "--until-done", "--interval", "100ms")
 	if err := w.finish(t); err != nil {
 		t.Fatal(err)
 	}
@@ -302,8 +307,8 @@ func TestInitiativeWatchUntilDoneCancelledOnly(t *testing.T) {
 	w := h.startWatch(false, "initiative", "watch", "I-1", "--until-done", "--interval", "100ms")
 	w.waitFor(t, time.Second, func() bool { return len(w.out.lines()) >= 1 })
 	select {
-	case err := <-w.done:
-		t.Fatalf("ended: %v", err)
+	case <-w.finished:
+		t.Fatalf("ended: %v", w.err)
 	case <-time.After(300 * time.Millisecond):
 	}
 	_ = w.stop(t)
@@ -338,8 +343,8 @@ func TestInitiativeWatchArchived(t *testing.T) {
 	h.ok("initiative", "archive", "I-1", "--promote", "none")
 	w.waitFor(t, 2*time.Second, func() bool { return strings.Contains(w.out.String(), "archived") })
 	select {
-	case err := <-w.done:
-		t.Fatalf("ended: %v", err)
+	case <-w.finished:
+		t.Fatalf("ended: %v", w.err)
 	default:
 	}
 	_ = w.stop(t)
@@ -363,5 +368,20 @@ func TestInitiativeWatchFlags(t *testing.T) {
 	}
 	if _, _, err := h.run("", "initiative", "watch", "I-1", "I-2"); err == nil {
 		t.Error("two arguments accepted")
+	}
+}
+
+func TestRunningWatchFinishRepeatable(t *testing.T) {
+	h := newTestEnv(t, true)
+	h.ok("initiative", "create", "--title", "Empty")
+	w := h.startWatch(false, "initiative", "watch", "I-1", "--interval", "100ms")
+	first := w.stop(t)
+	start := time.Now()
+	second := w.finish(t)
+	if second != first {
+		t.Fatalf("second finish = %v, want %v", second, first)
+	}
+	if d := time.Since(start); d > 100*time.Millisecond {
+		t.Fatalf("second finish took %v", d)
 	}
 }
