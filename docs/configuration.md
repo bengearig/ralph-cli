@@ -128,6 +128,17 @@ commands, so their overrides take effect once ralph launches those sessions itse
 |---|---|---|
 | `import.max_file_bytes` | `1048576` | Largest file, in bytes, that `ralph import` queues. Larger files are skipped and listed with a reason. Must be at least 1. |
 
+### `ui`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `ui.progress` | `auto` | `auto` or `never`. With `auto`, commands that show [progress](cli.md#progress) draw a live line when standard error is a terminal and write one plain line per item otherwise. `never` shows no progress. `--json` always shows none, and `--no-progress` is the same as `never` for one run. Override with `RALPH_UI__PROGRESS`. |
+
+```yaml
+ui:
+  progress: never
+```
+
 ### `init`
 
 | Key | Default | Meaning |

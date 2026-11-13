@@ -127,7 +127,7 @@ held by someone else: it saves the change and prints the conflict as a warning. 
 
 | Command | Purpose |
 |---|---|
-| `ralph cards sync [--initiative <id>] [--include-archived] [--verbose]` | Create cards for work that has none and bring pending and out-of-date cards up to date, parents first. |
+| `ralph cards sync [--initiative <id>] [--include-archived] [--verbose] [--no-progress]` | Create cards for work that has none and bring pending and out-of-date cards up to date, parents first. |
 | `ralph cards reconcile [--created-after <YYYY-MM-DD>] [--apply]` | Find open cards whose ralph resource no longer exists, and with `--apply` move them to `canceled_status`. CLI only. |
 
 - Sync is explicit: it is the only way work that predates the task manager gets cards, and nothing runs it
@@ -136,6 +136,8 @@ held by someone else: it saves the change and prints the conflict as a warning. 
   and sit on adjacent hierarchy levels). If the check fails, nothing is synced and the command exits `1`.
 - `--initiative` limits it to one initiative, `--include-archived` also syncs archived initiatives, and `--verbose`
   also lists the items already in sync.
+- While it runs it shows [progress](#progress) on standard error. It no longer prints a `created <ID> <key>` line per
+  new card there; the final report on standard output is unchanged, and `--no-progress` turns the indicator off.
 - Output is one line per created, updated, failed, or skipped item, then a line of totals. With `--json` it is the
   report: counts named `created`, `updated`, `in_sync`, `skipped`, and `failed`, and `items` with each item's `id`,
   `outcome`, and `key`, `url`, or `error` where they apply.
@@ -243,6 +245,26 @@ its origin, shown as `from I-n` by `doc show` and `doc list`, and `ralph doc ret
   is refused with a message that names that document, and nothing is renamed implicitly. Repeat the command with
   `--slug <slug>` to apply a new slug as part of the move. `--slug` is not a general rename: it only takes effect
   as part of a promote or return.
+
+## Progress
+
+Long-running commands report how far they are on standard error, so standard output and `--json` stay clean. `ralph
+cards sync` is the first command to do so. The total is counted before any work starts, and a mode is chosen once per
+command:
+
+| Mode | When | What is written |
+|---|---|---|
+| live | Standard error is a terminal, `TERM` is not `dumb`, the output is not `--json`, and progress is not turned off. | One line rewritten in place: `[████████░░░░░░░░] 12/48  T-33`. The bar is a fixed width, the item is shortened with an ellipsis so the line fits, and the line is cleared when the command finishes. No colour. |
+| plain | Standard error is not a terminal (a pipe, CI, or a log file), the output is not `--json`, and progress is not turned off. | A first line such as `syncing cards: 48 items`, then one line per item, `[12/48] T-33`. No animation and no control characters. |
+| off | `--json`, `--no-progress`, or `ui.progress: never`. | Nothing. |
+
+- **The width** of a live line is the `COLUMNS` environment variable when it is a positive integer, otherwise 80.
+- **`TERM=dumb`** gets the plain mode even on a terminal, because it cannot rewrite a line.
+- **`--no-progress`** turns progress off for one run of a command that shows it. It is a flag of that command, not a
+  global one. The [`ui.progress`](configuration.md#ui) setting turns it off everywhere with `never`.
+- **The MCP tools** are unaffected: they return one result and write no progress.
+
+Any warning is written after the indicator is cleared, so a live line is never left half drawn.
 
 ## Watching
 

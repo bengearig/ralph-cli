@@ -23,6 +23,9 @@ type Streams struct {
 	// IsTerminal reports whether In is an interactive terminal.
 	IsTerminal bool
 
+	// ErrIsTerminal reports whether Err is an interactive terminal.
+	ErrIsTerminal bool
+
 	// OutIsTerminal reports whether Out is an interactive terminal.
 	OutIsTerminal bool
 	// OutSize returns the size of Out's terminal; ok is false when unknown.
@@ -36,6 +39,8 @@ type app struct {
 	configFile string
 	logLevel   string
 	jsonOut    bool
+
+	getTerm func() string
 
 	root    *cobra.Command
 	closers []func() error

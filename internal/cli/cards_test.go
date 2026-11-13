@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -325,8 +326,8 @@ func TestCardsSyncCreatesThenInSync(t *testing.T) {
 	if !strings.Contains(out, "created 3, updated 0, in sync 0, skipped 0, failed 0") {
 		t.Errorf("summary missing: %q", out)
 	}
-	if n := strings.Count(errOut, "created "); n != 3 {
-		t.Errorf("progress lines = %d in %q", n, errOut)
+	if strings.Contains(errOut, "created ") {
+		t.Errorf("old created lines on stderr: %q", errOut)
 	}
 
 	out, _, err = h.run("", "cards", "sync")
@@ -336,6 +337,114 @@ func TestCardsSyncCreatesThenInSync(t *testing.T) {
 	out, _, err = h.run("", "cards", "sync", "--verbose")
 	if err != nil || strings.Count(out, "in sync ") < 3 || !strings.Contains(out, "T-1") {
 		t.Errorf("verbose: err = %v, out = %q", err, out)
+	}
+}
+
+func (h *testEnv) runErrTerminal(args ...string) (string, string, error) {
+	h.t.Helper()
+	var out, errOut bytes.Buffer
+	full := append([]string{"--project-dir", h.dir}, args...)
+	err := Execute(context.Background(), Streams{In: strings.NewReader(""), Out: &out, Err: &errOut, ErrIsTerminal: true}, full)
+	return out.String(), errOut.String(), err
+}
+
+const syncPlainProgress = "syncing cards: 3 items\n[1/3] I-1\n[2/3] M-1\n[3/3] T-1\n"
+
+func TestCardsSyncPlainProgress(t *testing.T) {
+	h, _ := syncEnv(t)
+	out, errOut, err := h.run("", "cards", "sync")
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if errOut != syncPlainProgress {
+		t.Errorf("stderr = %q", errOut)
+	}
+	if strings.ContainsAny(errOut, "\r\x1b") {
+		t.Errorf("control characters in %q", errOut)
+	}
+	for _, id := range []string{"I-1", "M-1", "T-1"} {
+		if !regexp.MustCompile(`(?m)^created\s+` + id + `\s+FAKE-\d+`).MatchString(out) {
+			t.Errorf("no created line for %s in %q", id, out)
+		}
+	}
+	if !strings.HasSuffix(out, "created 3, updated 0, in sync 0, skipped 0, failed 0\n") {
+		t.Errorf("stdout = %q", out)
+	}
+}
+
+func TestCardsSyncLiveProgress(t *testing.T) {
+	h, _ := syncEnv(t)
+	t.Setenv("TERM", "xterm")
+	out, errOut, err := h.runErrTerminal("cards", "sync")
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if !strings.Contains(errOut, "\r\x1b[2K") || !strings.Contains(errOut, "█") || !strings.Contains(errOut, "3/3") || !strings.Contains(errOut, "T-1") {
+		t.Errorf("stderr = %q", errOut)
+	}
+	if !strings.HasSuffix(errOut, "\r\x1b[2K") {
+		t.Errorf("line not cleared at the end: %q", errOut)
+	}
+	if strings.Contains(errOut, "created ") {
+		t.Errorf("old created lines on stderr: %q", errOut)
+	}
+	if !strings.HasSuffix(out, "created 3, updated 0, in sync 0, skipped 0, failed 0\n") || strings.ContainsAny(out, "\r\x1b") {
+		t.Errorf("stdout = %q", out)
+	}
+}
+
+func TestCardsSyncProgressDisabled(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		cfg  bool
+	}{
+		{"flag", []string{"cards", "sync", "--no-progress"}, false},
+		{"json", []string{"--json", "cards", "sync"}, false},
+		{"setting", []string{"cards", "sync"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _ := syncEnv(t)
+			t.Setenv("TERM", "xterm")
+			if tc.cfg {
+				t.Setenv("RALPH_UI__PROGRESS", "never")
+			}
+			for _, terminal := range []bool{false, true} {
+				var out, errOut bytes.Buffer
+				full := append([]string{"--project-dir", h.dir}, tc.args...)
+				err := Execute(context.Background(), Streams{In: strings.NewReader(""), Out: &out, Err: &errOut, ErrIsTerminal: terminal}, full)
+				if err != nil {
+					t.Fatalf("sync: %v", err)
+				}
+				if errOut.Len() != 0 {
+					t.Errorf("terminal=%v: stderr = %q", terminal, errOut.String())
+				}
+				if out.Len() == 0 {
+					t.Error("empty stdout")
+				}
+			}
+		})
+	}
+}
+
+func TestCardsSyncFailureAfterProgress(t *testing.T) {
+	h, p := syncEnv(t)
+	p.SetHook(func(_ int, _ string, req taskmanager.CardRequest) error {
+		if req.ID == "T-1" {
+			return errors.New("boom")
+		}
+		return nil
+	})
+	t.Setenv("TERM", "xterm")
+	out, errOut, err := h.runErrTerminal("cards", "sync")
+	if !exitIs(err, errs.ErrNeedsHuman) {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.HasSuffix(errOut, "\r\x1b[2K") || !strings.Contains(errOut, "3/3") {
+		t.Errorf("stderr = %q", errOut)
+	}
+	if !strings.Contains(out, "failed 1") {
+		t.Errorf("stdout = %q", out)
 	}
 }
 
@@ -392,7 +501,7 @@ func TestCardsSyncFailureExit(t *testing.T) {
 	if e := json.Unmarshal([]byte(out), &r); e != nil || r.Created != 2 || r.Failed != 1 || len(r.Items) != 3 {
 		t.Errorf("json = %q (%v), report = %+v", out, e, r)
 	}
-	if strings.Contains(errOut, "created I-1") {
+	if errOut != "" {
 		t.Errorf("json mode printed progress: %q", errOut)
 	}
 }
@@ -402,6 +511,9 @@ func TestCardsSyncNotConfigured(t *testing.T) {
 	_, _, err := h.run("", "cards", "sync")
 	if err == nil || !strings.Contains(err.Error(), "task_manager.provider") || errors.Is(err, errs.ErrNeedsHuman) {
 		t.Errorf("none: err = %v", err)
+	}
+	if _, errOut, _ := h.run("", "cards", "sync"); strings.Contains(errOut, "syncing cards") || strings.Contains(errOut, "[") {
+		t.Errorf("progress without a task manager: %q", errOut)
 	}
 
 	h = jiraEnv(t, "")
@@ -415,7 +527,7 @@ func TestCardsSyncHelp(t *testing.T) {
 	h := newTestEnv(t, true)
 	out := h.ok("cards", "sync", "--help")
 	flat := strings.Join(strings.Fields(out), " ")
-	if !strings.Contains(flat, "explicit") || !strings.Contains(flat, "safe to rerun") {
+	if !strings.Contains(flat, "explicit") || !strings.Contains(flat, "safe to rerun") || !strings.Contains(flat, "--no-progress") {
 		t.Errorf("help = %q", out)
 	}
 }
@@ -493,6 +605,9 @@ func TestCardsReconcileNotConfigured(t *testing.T) {
 	_, _, err := h.run("", "cards", "reconcile")
 	if err == nil || !strings.Contains(err.Error(), "task_manager.provider") || errors.Is(err, errs.ErrNeedsHuman) {
 		t.Errorf("none: err = %v", err)
+	}
+	if _, errOut, _ := h.run("", "cards", "sync"); strings.Contains(errOut, "syncing cards") || strings.Contains(errOut, "[") {
+		t.Errorf("progress without a task manager: %q", errOut)
 	}
 
 	h = jiraEnv(t, "")

@@ -23,7 +23,7 @@ func (a *app) newCardsCommand() *cobra.Command {
 
 func (a *app) newCardsSyncCommand() *cobra.Command {
 	var initiative string
-	var includeArchived, verbose bool
+	var includeArchived, verbose, noProgress bool
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Create cards for existing work and retry pending ones",
@@ -34,6 +34,10 @@ Sync is explicit: it is the only way work that existed before the task manager
 was configured gets cards, and ralph never runs it automatically. It is safe to
 rerun; work already in sync is left alone. Cancelled work with no card is
 skipped. Archived initiatives are skipped unless --include-archived is set.
+
+Progress is shown on stderr while it runs: a live bar on a terminal, otherwise
+one line per item. --no-progress, --json and the ui.progress setting "never"
+turn it off.
 
 Exit code 3 means at least one item failed and a person needs to look.`,
 		Args: cobra.NoArgs,
@@ -47,12 +51,17 @@ Exit code 3 means at least one item failed and a person needs to look.`,
 				return err
 			}
 			opts := service.SyncOptions{InitiativeID: iID, IncludeArchived: includeArchived}
-			if !a.jsonOut {
-				opts.Progress = func(it service.SyncItem) {
-					fmt.Fprintf(a.streams.Err, "created %s %s\n", it.ID, it.Key)
+			rep := a.newProgress(noProgress)
+			defer rep.Finish()
+			opts.Progress = func(p service.SyncProgress) {
+				if p.Item == nil {
+					rep.Start("syncing cards", p.Total)
+					return
 				}
+				rep.Step(p.Item.ID)
 			}
 			report, err := svc.SyncCards(cmd.Context(), opts)
+			rep.Finish()
 			if errors.Is(err, service.ErrNoTaskManager) {
 				if a.tmErr != nil {
 					return fmt.Errorf("task manager disabled: %w", a.tmErr)
@@ -78,6 +87,7 @@ Exit code 3 means at least one item failed and a person needs to look.`,
 	cmd.Flags().StringVar(&initiative, "initiative", "", "only this initiative, for example I-8")
 	cmd.Flags().BoolVar(&includeArchived, "include-archived", false, "also sync archived initiatives")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "also list items that are already in sync")
+	addNoProgressFlag(cmd, &noProgress)
 	return cmd
 }
 

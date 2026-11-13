@@ -38,6 +38,9 @@ const (
 
 	InitUpdateAuto   = "auto"
 	InitUpdateManual = "manual"
+
+	UIProgressAuto  = "auto"
+	UIProgressNever = "never"
 )
 
 var jiraDurationRE = regexp.MustCompile(`^[0-9]+[wdhm]( [0-9]+[wdhm])*$`)
@@ -50,6 +53,7 @@ var (
 	knownBitbucketAuths = []string{BitbucketAuthBasic, BitbucketAuthBearer}
 	knownTaskManagers   = []string{TaskManagerNone, TaskManagerJira}
 	knownInitUpdates    = []string{InitUpdateAuto, InitUpdateManual}
+	knownUIProgress     = []string{UIProgressAuto, UIProgressNever}
 	knownLogLevels      = []string{"debug", "info", "warn", "error"}
 	knownLogFormats     = []string{"text", "json"}
 )
@@ -80,6 +84,7 @@ type Config struct {
 	Init       InitConfig       `koanf:"init"`
 	Loop       LoopConfig       `koanf:"loop"`
 	PR         PRConfig         `koanf:"pr"`
+	UI         UIConfig         `koanf:"ui"`
 
 	TaskManager TaskManagerConfig `koanf:"task_manager"`
 }
@@ -151,6 +156,10 @@ type ReceiveConfig struct {
 
 type ImportConfig struct {
 	MaxFileBytes int `koanf:"max_file_bytes"`
+}
+
+type UIConfig struct {
+	Progress string `koanf:"progress"`
 }
 
 type InitConfig struct {
@@ -358,6 +367,8 @@ func (c *Config) Validate() error {
 	if c.Import.MaxFileBytes < 1 {
 		bad("import.max_file_bytes", "must be at least 1")
 	}
+
+	oneOf("ui.progress", c.UI.Progress, knownUIProgress)
 
 	oneOf("init.update", c.Init.Update, knownInitUpdates)
 	for _, p := range c.Init.Ignore {

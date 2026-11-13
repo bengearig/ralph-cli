@@ -65,6 +65,9 @@ func TestDefaults(t *testing.T) {
 	if cfg.Import.MaxFileBytes != 1048576 {
 		t.Errorf("import.max_file_bytes = %d", cfg.Import.MaxFileBytes)
 	}
+	if cfg.UI.Progress != UIProgressAuto {
+		t.Errorf("ui.progress = %q", cfg.UI.Progress)
+	}
 	if cfg.Init.Update != InitUpdateAuto || len(cfg.Init.Ignore) != 0 {
 		t.Errorf("init defaults = %+v", cfg.Init)
 	}
@@ -390,6 +393,7 @@ func TestValidateReportsAllProblems(t *testing.T) {
 	cfg.Loop.CommitTemplate = "{{.Task"
 	cfg.Init.Update = "sometimes"
 	cfg.Init.Ignore = []string{"../x"}
+	cfg.UI.Progress = "always"
 
 	err = cfg.Validate()
 	if err == nil {
@@ -399,7 +403,7 @@ func TestValidateReportsAllProblems(t *testing.T) {
 		"log.level", "embeddings.provider", "embeddings.timeout", "embeddings.chunk.overlap_chars",
 		"search.limit", "import.max_file_bytes", "steps.loop.harness", "loop.stall_threshold", "loop.branch_template",
 		"pr.provider", "pr.base_branch", "pr.remote", "pr.stale_base", "harness.claude_code.max_budget_usd", "loop.commit_template",
-		"init.update", "init.ignore",
+		"init.update", "init.ignore", "ui.progress",
 	} {
 		if !strings.Contains(err.Error(), key+":") {
 			t.Errorf("missing problem for %s in:\n%v", key, err)
@@ -741,6 +745,40 @@ func TestImportMaxFileBytes(t *testing.T) {
 	}
 	if l.Config.Import.MaxFileBytes != 4096 {
 		t.Errorf("env: import.max_file_bytes = %d", l.Config.Import.MaxFileBytes)
+	}
+}
+
+func TestUIProgress(t *testing.T) {
+	project := writeFile(t, t.TempDir(), "p.yaml", "ui:\n  progress: never\n")
+	l, err := Load(Sources{ProjectFile: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Config.UI.Progress != UIProgressNever {
+		t.Errorf("file: ui.progress = %q", l.Config.UI.Progress)
+	}
+	other := writeFile(t, t.TempDir(), "q.yaml", "ui:\n  progress: auto\n")
+	l, err = Load(Sources{ProjectFile: other, Environ: []string{"RALPH_UI__PROGRESS=never"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Config.UI.Progress != UIProgressNever {
+		t.Errorf("env: ui.progress = %q", l.Config.UI.Progress)
+	}
+}
+
+func TestValidateUIProgress(t *testing.T) {
+	for _, v := range []string{UIProgressAuto, UIProgressNever} {
+		cfg, _ := Defaults()
+		cfg.UI.Progress = v
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("progress %q: %v", v, err)
+		}
+	}
+	cfg, _ := Defaults()
+	cfg.UI.Progress = "always"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "ui.progress:") || !strings.Contains(err.Error(), "auto, never") {
+		t.Errorf("progress err = %v", err)
 	}
 }
 

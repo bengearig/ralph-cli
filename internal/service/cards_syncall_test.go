@@ -434,3 +434,162 @@ func TestSyncCardsPreflightFailureCreatesNothing(t *testing.T) {
 		t.Errorf("err %v, report %+v, preflights %d", err, report, p.Preflights())
 	}
 }
+
+type progressLog struct {
+	calls []SyncProgress
+}
+
+func (l *progressLog) record(p SyncProgress) {
+	if p.Item != nil {
+		it := *p.Item
+		p.Item = &it
+	}
+	l.calls = append(l.calls, p)
+}
+
+func (l *progressLog) check(t *testing.T, total int, r SyncReport) {
+	t.Helper()
+	if len(l.calls) != len(r.Items)+1 {
+		t.Fatalf("%d callbacks for %d items", len(l.calls), len(r.Items))
+	}
+	if first := l.calls[0]; first.Done != 0 || first.Total != total || first.Item != nil {
+		t.Errorf("first callback = %+v, want Done 0 Total %d nil Item", first, total)
+	}
+	for n, c := range l.calls[1:] {
+		if c.Done != n+1 || c.Total != total || c.Item == nil || *c.Item != r.Items[n] {
+			t.Errorf("callback %d = %+v, want item %+v", n+1, c, r.Items[n])
+		}
+	}
+}
+
+func TestSyncCardsProgressCountsEveryItem(t *testing.T) {
+	ctx := context.Background()
+	e, tr, p := buildSyncTree(t)
+	e.svc.taskManager = nil
+	for n := 0; n < 2; n++ {
+		if _, err := e.svc.CreateTask(ctx, TaskInput{MilestoneID: tr.ms[1], Title: "More", Description: "d"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.svc.taskManager = p
+	var l progressLog
+	r, err := e.svc.SyncCards(ctx, SyncOptions{Progress: l.record})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Created != 8 || len(r.Items) != 8 {
+		t.Fatalf("report %+v", r)
+	}
+	l.check(t, 8, r)
+	checkCounts(t, r)
+
+	l = progressLog{}
+	r, err = e.svc.SyncCards(ctx, SyncOptions{Progress: l.record})
+	if err != nil || r.InSync != 8 {
+		t.Fatalf("%v %+v", err, r)
+	}
+	l.check(t, 8, r)
+}
+
+func TestSyncCardsProgressReportsSkippedAndFailed(t *testing.T) {
+	ctx := context.Background()
+	e, tr, p := buildSyncTree(t)
+	skippedTask := tr.tasks[0][0]
+	if _, err := e.svc.SetTaskStatus(ctx, skippedTask, domain.StatusCancelled, ""); err != nil {
+		t.Fatal(err)
+	}
+	badTask := domain.FormatID(domain.KindTask, tr.tasks[0][1])
+	badMilestone := domain.FormatID(domain.KindMilestone, tr.ms[1])
+	p.SetHook(func(_ int, method string, req taskmanager.CardRequest) error {
+		if method == "Create" && (req.ID == badTask || req.ID == badMilestone) {
+			return errors.New("nope")
+		}
+		return nil
+	})
+	var l progressLog
+	r, err := e.svc.SyncCards(ctx, SyncOptions{Progress: l.record})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Skipped != 1 || r.Failed != 3 || r.Created != 2 {
+		t.Fatalf("report %+v", r)
+	}
+	l.check(t, len(tr.order()), r)
+	outcomes := map[string]string{}
+	for _, c := range l.calls[1:] {
+		outcomes[c.Item.ID] = c.Item.Outcome
+	}
+	child := domain.FormatID(domain.KindTask, tr.tasks[1][0])
+	if outcomes[domain.FormatID(domain.KindTask, skippedTask)] != "skipped" || outcomes[badTask] != "failed" || outcomes[child] != "failed" {
+		t.Errorf("outcomes %v", outcomes)
+	}
+}
+
+func TestSyncCardsProgressTotalFollowsScope(t *testing.T) {
+	ctx := context.Background()
+	e, tr, p := buildSyncTree(t)
+	e.svc.taskManager = nil
+	other, err := e.svc.CreateInitiative(ctx, InitiativeInput{Title: "Other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.svc.taskManager = p
+
+	total := func(opts SyncOptions) int {
+		t.Helper()
+		var l progressLog
+		opts.Progress = l.record
+		if _, err := e.svc.SyncCards(ctx, opts); err != nil {
+			t.Fatal(err)
+		}
+		return l.calls[0].Total
+	}
+	want := len(tr.order())
+	if got := total(SyncOptions{}); got != want+1 {
+		t.Errorf("all initiatives total = %d, want %d", got, want+1)
+	}
+	if got := total(SyncOptions{InitiativeID: tr.init}); got != want {
+		t.Errorf("one initiative total = %d, want %d", got, want)
+	}
+	if _, err := e.svc.ArchiveInitiative(ctx, iid(t, other.ID), DocumentChoice{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := total(SyncOptions{}); got != want {
+		t.Errorf("archived excluded total = %d, want %d", got, want)
+	}
+	if got := total(SyncOptions{IncludeArchived: true}); got != want+1 {
+		t.Errorf("archived included total = %d, want %d", got, want+1)
+	}
+}
+
+func TestSyncCardsProgressNotCalledWhenNothingRuns(t *testing.T) {
+	ctx := context.Background()
+	called := func(SyncProgress) { t.Error("progress called") }
+	if _, err := newEnv(t).svc.SyncCards(ctx, SyncOptions{Progress: called}); !errors.Is(err, ErrNoTaskManager) {
+		t.Errorf("err = %v", err)
+	}
+	e, _, p := buildSyncTree(t)
+	p.SetPreflightError(errors.New("bad"))
+	if _, err := e.svc.SyncCards(ctx, SyncOptions{Progress: called}); err == nil {
+		t.Error("preflight failure: no error")
+	}
+}
+
+func TestSyncCardsProgressStopsWhenCancelled(t *testing.T) {
+	e, tr, _ := buildSyncTree(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var l progressLog
+	_, err := e.svc.SyncCards(ctx, SyncOptions{Progress: func(p SyncProgress) {
+		l.record(p)
+		if p.Done == 3 {
+			cancel()
+		}
+	}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	if last := l.calls[len(l.calls)-1]; last.Done != 3 || last.Done > last.Total || last.Total != len(tr.order()) {
+		t.Errorf("last callback = %+v", last)
+	}
+}

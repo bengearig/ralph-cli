@@ -28,6 +28,7 @@ func main() {
 		Out:           os.Stdout,
 		Err:           os.Stderr,
 		IsTerminal:    isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd()),
+		ErrIsTerminal: isatty.IsTerminal(os.Stderr.Fd()) || isatty.IsCygwinTerminal(os.Stderr.Fd()),
 		OutIsTerminal: isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd()),
 		OutSize:       stdoutSize,
 	}, os.Args[1:])

@@ -58,6 +58,7 @@ flowchart TD
 | `internal/mcpserver` | MCP tools as thin adapters over `service`, and the workflow prompts, built with the official Go SDK. |
 | `internal/harness` | The harness interface, installer interface, and registry. `harness/claudecode` runs headless `claude` sessions, parsing their stream-json output, and installs the Claude Code wiring. |
 | `internal/setup` | The steps of `ralph init` in order: the config template, the database, `.gitignore`, and the harness installer. `cli` calls it for `ralph init`, and the check that keeps a repository's integration files current calls it too, so both share one code path and cannot disagree. With a dry run it writes nothing, creates no directory, and never opens the database, and it asks the harness installer for a dry run. `Check` is that dry run, restricted to the integration entries (the harness files and `.gitignore`), with the configured `init.ignore` list and without comparing an MCP entry's `command`; it returns the stale and the customized files, and an empty result when the harness integration is not installed. `cli` runs it from a pre-run hook on the root command, once per process, for every command that finds a project except `init`, `version`, `help`, and `completion`, and reports on standard error. In `auto` mode, the default, it applies the update with `setup.Run` instead of only warning, unless the command is a dry run or a loop holds the project lock. `ralph loop` stops with exit code `3` after an update so the files can be committed, and `ralph mcp` passes a notice to the server instructions and to standard error. See [ADR 43](adr/0043-share-init-setup-code-and-preview-with-dry-run.md). |
+| `internal/progress` | The progress reporter for long-running commands: `New(w, mode, width)` with the modes off, plain, and live, and `Start`, `Step`, and `Finish`. Plain writes a line per item, live redraws one line with a bar, and off writes nothing. It writes only to the writer it is given, never reads from a terminal, and has no dependencies beyond the standard library. `cli` builds it on standard error and chooses the mode; the services only call back. See [Progress](cli.md#progress) and [ADR 44](adr/0044-report-progress-on-stderr-through-service-callbacks.md). |
 | `internal/workflow` | The workflows (Receive, Articulate, Reconcile, Status, Search, and any added later) as embedded harness-neutral templates, with `List`, `Render`, and `RenderCommand`. `harness/claudecode` renders them as slash command files, and `mcpserver` serves them as MCP prompts. It imports no other ralph package. See [Shared workflow source](claude-code.md#shared-workflow-source). |
 | `internal/loop` | Plans a milestone's loop (branch, ordered tasks, command, prompt) and runs it: project lock, branch preparation, one harness session per task, commits with the `Ralph-Task` trailer (and the optional `Card` trailer), recording the branch, base, head, and task commits, stashing unfinished work, and stop conditions. When it resumes on a recorded branch, it checks for drift first. When a run ends it returns to the branch it started on. `Merge` is the operation behind `ralph milestone merge`: it makes every check before touching git, then fast-forwards the base branch and optionally safe-deletes the milestone's branch (see [`ralph milestone merge`](cli.md#ralph-milestone-merge)). `SyncBase` is the operation behind `ralph sync`: it fetches the base branch, fast-forwards the local one, and reports the milestones that are newly merged (`NewlyMerged`) using the drift check, optionally safe-deleting their local branches (see [`ralph sync`](cli.md#ralph-sync)). The `ralph sync` command never talks to the hosting provider. It also provides the `ResolveRepo`, `DriftInput`, and `CommitSubjects` helpers that `ralph milestone reconcile` and `ralph pr create` share. |
 | `internal/drift` | The read-only drift check (`Check`, `Report`) that compares a milestone's recorded git state with its branch, and the reconcile actions (`Apply`). See [Drift and reconcile](loop.md#drift-and-reconcile). |
@@ -86,6 +87,9 @@ flowchart TD
   the provider is called, then the outcome is recorded in a separate write.
 - **Writes never fail because of search.** Entity writes commit first. Indexing runs afterward, and an embedding
   failure becomes a warning (`index_warning` in JSON) that leaves chunks stale for `ralph index`.
+- **Services call back and never print.** A use case that takes long, such as syncing cards, accepts a progress
+  callback and calls it with the total before the first item and after each one. The CLI renders it through
+  `internal/progress`; the MCP tools pass no callback.
 - **stdout is sacred in `ralph mcp`.** Logs always go to stderr, because stdout carries the MCP protocol.
 - **Secrets never touch config.** Config names the environment variable that holds a token, never the token itself.
   Unrelated `RALPH_*` variables are filtered out of the configuration.
@@ -140,6 +144,10 @@ functions, so `show` calls both and prints exactly what it always did, while a w
 
 `Streams` carries what the choice needs: `OutIsTerminal` reports whether `Out` is a terminal, and `OutSize` returns its
 width and height, or `ok` false when unknown. `main` sets both; tests set them explicitly.
+
+Progress needs a terminal check of its own. `Streams.IsTerminal` reports standard input, so `Streams.ErrIsTerminal`
+reports whether `Err` is a terminal. `main` sets it, and the progress mode selection reads it together with `TERM`,
+`--json`, `--no-progress`, and `ui.progress`.
 
 A watch never writes to the store, the repository, or a task manager. For the user-facing behaviour see
 [Watching](cli.md#watching), and for the reasons behind it
