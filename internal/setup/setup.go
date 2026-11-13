@@ -38,6 +38,9 @@ type Options struct {
 	NoHarness      bool
 	DryRun         bool
 	KeepMCPCommand bool
+	// IntegrationOnly skips the config template and the database, leaving the
+	// .gitignore and harness steps.
+	IntegrationOnly bool
 	// Ignore lists project-relative, slash-separated paths to leave alone.
 	Ignore []string
 }
@@ -48,12 +51,15 @@ func Run(ctx context.Context, o Options) ([]harness.Change, error) {
 	p := project.Project{Root: o.Root}
 	var changes []harness.Change
 
-	c, err := configTemplate(o, p)
-	if err != nil {
-		return changes, err
+	if !o.IntegrationOnly {
+		c, err := configTemplate(o, p)
+		if err != nil {
+			return changes, err
+		}
+		changes = append(changes, c)
 	}
-	changes = append(changes, c)
 
+	var err error
 	cfg := o.Config
 	if cfg == nil {
 		if o.LoadConfig == nil {
@@ -65,13 +71,15 @@ func Run(ctx context.Context, o Options) ([]harness.Change, error) {
 	}
 
 	dbPath := cfg.StoragePath(o.Root)
-	c, err = database(ctx, o, dbPath)
-	if err != nil {
-		return changes, err
+	if !o.IntegrationOnly {
+		c, err := database(ctx, o, dbPath)
+		if err != nil {
+			return changes, err
+		}
+		changes = append(changes, c)
 	}
-	changes = append(changes, c)
 
-	c, err = ensureGitignore(o, dbPath)
+	c, err := ensureGitignore(o, dbPath)
 	if err != nil {
 		return changes, err
 	}
