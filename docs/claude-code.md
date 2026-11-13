@@ -34,6 +34,50 @@ open the database. See [`ralph init --dry-run`](cli.md#ralph-init---dry-run).
 
 If `ralph` is not on your `PATH`, or you want to pin a build, pass `--ralph-command /absolute/path/to/ralph`.
 
+### Keeping the integration files current
+
+A newer ralph can change what `ralph init` writes: a slash command gets new wording, or the managed block in
+`CLAUDE.md` changes. Rather than stamping a version into each file, ralph runs a dry run of `ralph init` and compares
+every file with what the running ralph would write, so a stale file is found whatever ralph wrote it.
+
+- **What is checked.** The harness files (the `ralph` entry in `.mcp.json`, the permission in
+  `.claude/settings.json`, the managed block in `CLAUDE.md`, and the commands in `.claude/commands/ralph`) and the
+  ralph patterns in `.gitignore`. The config file and the database are not checked.
+- **Only when the integration is installed.** The check applies when the repository has a `ralph` entry in `.mcp.json`,
+  the `.claude/commands/ralph` directory, or the managed block in `CLAUDE.md`. A project set up with
+  `ralph init --no-harness` is never checked or touched.
+- **The `command` path is not compared.** An existing `ralph` entry of type `stdio` with args `["mcp"]` counts as up
+  to date whatever its `command` is, so an entry written with `--ralph-command` is not reported. A missing entry is.
+- **Which commands check.** Every command that finds a project, except `ralph init`, `ralph version`, `ralph help`,
+  and `ralph completion`. Outside a project nothing is checked. The check runs once per command and reads no
+  database and makes no network call.
+
+Warnings go to standard error, so `--json` and other standard output are unchanged:
+
+```
+warning: the integration files in this repository are out of date: .claude/commands/ralph/import.md, CLAUDE.md
+         run `ralph init` to update them
+warning: these customized files are left alone: .claude/commands/ralph/receive.md
+         `ralph init --force` overwrites them; add them to init.ignore to stop this warning
+```
+
+Either warning is left out when it has nothing to list. The warnings repeat on every command until they are fixed. If
+the dry run cannot finish, for example because `.mcp.json` is not valid JSON, the command prints
+`warning: could not check ralph's integration files: <error>` and carries on.
+
+To fix the first warning, run `ralph init`, then review and commit the files. A slash command you edited is the
+second warning: `ralph init` skips it and `ralph init --force` overwrites it. To keep your version and stop the
+warning, list its path in [`init.ignore`](configuration.md#init):
+
+```yaml
+init:
+  ignore:
+    - .claude/commands/ralph/receive.md
+```
+
+[`init.update`](configuration.md#init) chooses between `auto` and `manual`. Auto mode, which updates the files for
+you, is described with the next milestone's documentation; until then both values warn as above.
+
 ### First run
 
 Claude Code asks you to approve project-scoped MCP servers from `.mcp.json` the first time you start `claude` in the
