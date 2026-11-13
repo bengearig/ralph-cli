@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -946,5 +947,127 @@ func TestRegisteredProviderIsCardFinder(t *testing.T) {
 	}
 	if _, ok := p.(taskmanager.CardFinder); !ok {
 		t.Errorf("%T does not implement CardFinder", p)
+	}
+}
+
+func TestSummaryStoreID(t *testing.T) {
+	f := newFakeJira(t)
+	p := newTestProvider(f.URL)
+	for _, tc := range []struct{ storeID, want string }{{"ab", "[ab] T-12: Title"}, {"", "T-12: Title"}} {
+		req := taskmanager.CardRequest{Kind: domain.KindTask, ID: "T-12", Title: "Title", StoreID: tc.storeID, ParentKey: "PROJ-1"}
+		if _, err := p.Create(context.Background(), req); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.last(t).fields()["summary"]; got != tc.want {
+			t.Errorf("create %q: summary %q", tc.storeID, got)
+		}
+		if err := p.Update(context.Background(), "PROJ-9", req); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.last(t).fields()["summary"]; got != tc.want {
+			t.Errorf("update %q: summary %q", tc.storeID, got)
+		}
+	}
+}
+
+func TestSummaryStoreIDTruncation(t *testing.T) {
+	s := summary(taskmanager.CardRequest{ID: "T-12", StoreID: "ab", Title: strings.Repeat("x", 400)})
+	if utf8.RuneCountInString(s) != 255 || !strings.HasSuffix(s, "…") || !strings.HasPrefix(s, "[ab] T-12: ") {
+		t.Errorf("summary %q", s)
+	}
+}
+
+func storeLabelsOf(t *testing.T, r recorded) []string {
+	t.Helper()
+	raw, ok := r.fields()["labels"].([]any)
+	if !ok {
+		return nil
+	}
+	var got []string
+	for _, l := range raw {
+		got = append(got, l.(string))
+	}
+	return got
+}
+
+func TestStoreLabelOnCreate(t *testing.T) {
+	tests := []struct {
+		name    string
+		storeID string
+		labels  []string
+		want    []string
+	}{
+		{"appended after configured", "ab", []string{"ralph", "team"}, []string{"ralph", "team", "ralph-store-ab"}},
+		{"empty store id", "", []string{"ralph", "team"}, []string{"ralph", "team"}},
+		{"no configured labels", "ab", nil, []string{"ralph-store-ab"}},
+		{"already configured", "ab", []string{"ralph-store-ab", "team"}, []string{"ralph-store-ab", "team"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeJira(t)
+			cfg := testCfg(f.URL)
+			cfg.Labels = tc.labels
+			p := NewProvider(cfg, 0, env(goodEnv), nil)
+			req := taskmanager.CardRequest{Kind: domain.KindTask, ID: "T-12", Title: "t", StoreID: tc.storeID, ParentKey: "PROJ-5"}
+			if _, err := p.Create(context.Background(), req); err != nil {
+				t.Fatal(err)
+			}
+			if got := storeLabelsOf(t, f.last(t)); !slices.Equal(got, tc.want) {
+				t.Errorf("labels %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStoreLabelNotSentOnUpdate(t *testing.T) {
+	f := newFakeJira(t)
+	cfg := testCfg(f.URL)
+	cfg.Labels = []string{"ralph"}
+	p := NewProvider(cfg, 0, env(goodEnv), nil)
+	req := taskmanager.CardRequest{Kind: domain.KindTask, ID: "T-12", Title: "t", StoreID: "ab", ParentKey: "PROJ-5"}
+	if err := p.Update(context.Background(), "PROJ-9", req); err != nil {
+		t.Fatal(err)
+	}
+	r := f.last(t)
+	if r.method != http.MethodPut {
+		t.Fatalf("method %s", r.method)
+	}
+	if l, ok := r.fields()["labels"]; ok {
+		t.Errorf("update sent labels %v", l)
+	}
+}
+
+func TestUpdateAddLabel(t *testing.T) {
+	for _, tc := range []struct {
+		name, storeID string
+		want          []any
+	}{
+		{"with store id", "ab", []any{map[string]any{"add": "ralph-store-ab"}}},
+		{"without store id", "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeJira(t)
+			cfg := testCfg(f.URL)
+			cfg.Labels = []string{"ralph"}
+			p := NewProvider(cfg, 0, env(goodEnv), nil)
+			req := taskmanager.CardRequest{Kind: domain.KindTask, ID: "T-12", Title: "t", StoreID: tc.storeID, ParentKey: "PROJ-5"}
+			if err := p.Update(context.Background(), "PROJ-9", req); err != nil {
+				t.Fatal(err)
+			}
+			r := f.last(t)
+			if _, ok := r.fields()["labels"]; ok {
+				t.Errorf("update sent fields.labels")
+			}
+			update, ok := r.body["update"].(map[string]any)
+			if tc.want == nil {
+				if ok {
+					t.Errorf("unexpected update %v", update)
+				}
+				return
+			}
+			if !ok || !reflect.DeepEqual(update["labels"], tc.want) {
+				t.Errorf("update = %v, want labels %v", update, tc.want)
+			}
+		})
 	}
 }

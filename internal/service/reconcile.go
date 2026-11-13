@@ -56,7 +56,7 @@ const (
 	reconcileFailed    = "failed"
 )
 
-var summaryID = regexp.MustCompile(`^([IMT])-([0-9]+): `)
+var summaryID = regexp.MustCompile(`^(?:\[[a-z0-9]{2,6}\] )?([IMT])-([0-9]+): `)
 
 // parseSummaryID returns the normalized ralph ID leading a card summary.
 func parseSummaryID(summary string) string {

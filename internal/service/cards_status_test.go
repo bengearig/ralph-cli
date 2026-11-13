@@ -55,7 +55,7 @@ func TestSetTaskStatusPushesTaskThenMilestone(t *testing.T) {
 		t.Fatalf("calls = %v, want %v", got, want)
 	}
 	row, _ := e.svc.store.GetCard(ctx, domain.KindTask, tID, "fake")
-	req, _ := buildCardRequest(ctx, e.svc.store, domain.KindTask, tID, "FAKE-2")
+	req, _ := e.svc.cardRequest(ctx, domain.KindTask, tID, "FAKE-2", true)
 	if req.Status != "IN_PROGRESS" || row.ContentHash != req.Hash() {
 		t.Errorf("hash %q, request %+v", row.ContentHash, req)
 	}
@@ -305,7 +305,7 @@ func TestAssigneeConflictLeavesCardPending(t *testing.T) {
 		t.Errorf("warning = %q, want %q", v.CardWarning, want)
 	}
 	row, _ := e.svc.store.GetCard(ctx, domain.KindTask, tID, "fake")
-	req, _ := buildCardRequest(ctx, e.svc.store, domain.KindTask, tID, "FAKE-2")
+	req, _ := e.svc.cardRequest(ctx, domain.KindTask, tID, "FAKE-2", true)
 	if row.ContentHash == req.Hash() || row.LastError != conflict.Error() {
 		t.Errorf("row = %+v", row)
 	}

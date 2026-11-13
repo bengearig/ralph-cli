@@ -40,7 +40,7 @@ func TestKeptTaskCardFollowsEdits(t *testing.T) {
 		t.Errorf("request = %+v", r)
 	}
 	row, _ := e.svc.store.GetCard(ctx, domain.KindTask, tID, "fake")
-	req, _ := buildCardRequest(ctx, e.svc.store, domain.KindTask, tID, "FAKE-2")
+	req, _ := e.svc.cardRequest(ctx, domain.KindTask, tID, "FAKE-2", true)
 	if row.Key != "FAKE-3" || row.ContentHash != req.Hash() {
 		t.Errorf("row = %+v", row)
 	}

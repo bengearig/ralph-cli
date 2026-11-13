@@ -183,6 +183,37 @@ func TestUpdateIssueParent(t *testing.T) {
 	}
 }
 
+func TestUpdateIssueAddLabel(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv.URL, time.Second)
+	adf := `{"type":"doc","version":1,"content":[]}`
+	tests := []struct {
+		name string
+		f    IssueFields
+		want string
+	}{
+		{"add", IssueFields{Summary: "s", Description: json.RawMessage(adf), AddLabels: []string{"ralph-store-ab"}, Labels: []string{"x"}},
+			`{"fields":{"summary":"s","description":` + adf + `},"update":{"labels":[{"add":"ralph-store-ab"}]}}`},
+		{"with parent", IssueFields{Summary: "s", ParentKey: "P-1", ParentChange: ParentSet, AddLabels: []string{"ralph-store-ab"}},
+			`{"fields":{"summary":"s","description":null,"parent":{"key":"P-1"}},"update":{"labels":[{"add":"ralph-store-ab"}]}}`},
+		{"empty", IssueFields{Summary: "s"}, `{"fields":{"summary":"s","description":null}}`},
+	}
+	for _, tt := range tests {
+		if err := c.UpdateIssue(context.Background(), "PROJ-7", tt.f); err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		if body != tt.want {
+			t.Errorf("%s: body = %s, want %s", tt.name, body, tt.want)
+		}
+	}
+}
+
 func TestErrors(t *testing.T) {
 	tests := []struct {
 		name    string

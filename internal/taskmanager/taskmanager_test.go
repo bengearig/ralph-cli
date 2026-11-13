@@ -136,3 +136,17 @@ func TestPullRequestLinkerIsOptional(t *testing.T) {
 		t.Error("stub with LinkPullRequest does not satisfy PullRequestLinker")
 	}
 }
+
+func TestHashStoreID(t *testing.T) {
+	r := CardRequest{Kind: domain.KindTask, ID: "T-1", Title: "t"}
+	empty, ab, cd := r.Hash(), r, r
+	ab.StoreID, cd.StoreID = "ab", "cd"
+	if empty == ab.Hash() || ab.Hash() == cd.Hash() {
+		t.Error("hash does not depend on StoreID")
+	}
+	again := r
+	again.StoreID = "ab"
+	if ab.Hash() != again.Hash() {
+		t.Error("hash is not stable for the same StoreID")
+	}
+}

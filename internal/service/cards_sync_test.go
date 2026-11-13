@@ -50,7 +50,7 @@ func TestUpdateTaskPushesEdit(t *testing.T) {
 	if after.ContentHash == before.ContentHash || after.Key != before.Key || after.SyncedAt.Before(before.SyncedAt) {
 		t.Errorf("row %+v -> %+v", before, after)
 	}
-	req, _ := buildCardRequest(ctx, e.svc.store, domain.KindTask, id, "FAKE-2")
+	req, _ := e.svc.cardRequest(ctx, domain.KindTask, id, "FAKE-2", true)
 	if req.Title != title || after.ContentHash != req.Hash() {
 		t.Errorf("hash mismatch")
 	}
@@ -208,16 +208,15 @@ func TestSyncCardGuards(t *testing.T) {
 func TestBuildCardRequestStatus(t *testing.T) {
 	ctx := context.Background()
 	e, i, m, tk, _ := syncFixture(t)
-	st := e.svc.store
-	ir, err := buildCardRequest(ctx, st, domain.KindInitiative, iid(t, i.ID), "")
+	ir, err := e.svc.cardRequest(ctx, domain.KindInitiative, iid(t, i.ID), "", true)
 	if err != nil || ir.Status != "" {
 		t.Errorf("initiative status = %q, %v", ir.Status, err)
 	}
-	tr, err := buildCardRequest(ctx, st, domain.KindTask, tid(t, tk.ID), "FAKE-2")
+	tr, err := e.svc.cardRequest(ctx, domain.KindTask, tid(t, tk.ID), "FAKE-2", true)
 	if err != nil || tr.Status != string(domain.StatusProposed) {
 		t.Errorf("task status = %q, %v", tr.Status, err)
 	}
-	mr, err := buildCardRequest(ctx, st, domain.KindMilestone, mid(t, m.ID), "FAKE-1")
+	mr, err := e.svc.cardRequest(ctx, domain.KindMilestone, mid(t, m.ID), "FAKE-1", true)
 	if err != nil {
 		t.Fatal(err)
 	}

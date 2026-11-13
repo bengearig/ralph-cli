@@ -119,7 +119,7 @@ func TestHashIgnoresPreviousParentKey(t *testing.T) {
 	if a.Hash() != b.Hash() {
 		t.Error("hash depends on PreviousParentKey")
 	}
-	const stored = "0f27862bbccffdf5d1ad021ee2035bcf59e435ebaf163ae7a7c7ae4c96c10018"
+	const stored = "6007ef794e6af8ed03be1f8b3c597d297138dbc0c72e4bb47603ed4fe64a8e71"
 	if got := a.Hash(); got != stored {
 		t.Errorf("hash = %s, want %s", got, stored)
 	}

@@ -80,7 +80,7 @@ func TestMilestoneCardHeldBySomeoneElseYieldsConflict(t *testing.T) {
 		}
 	}
 	row, _ := e.svc.store.GetCard(ctx, domain.KindMilestone, 1, "fake")
-	req, _ := buildCardRequest(ctx, e.svc.store, domain.KindMilestone, 1, "FAKE-1")
+	req, _ := e.svc.cardRequest(ctx, domain.KindMilestone, 1, "FAKE-1", true)
 	if row.ContentHash == req.Hash() || row.LastError != conflict.Error() {
 		t.Errorf("row = %+v", row)
 	}

@@ -122,7 +122,8 @@ Editing an initiative's title or brief, a milestone's title or description, or a
 acceptance criteria updates
 the card's summary and description. Ralph sends only those two fields, and the sync is one way: Jira is never read
 back, so an edit made in Jira to the summary or description is overwritten the next time ralph pushes. Labels and
-parents are set when the card is created and are not changed afterward, with one exception: an initiative's
+parents are set when the card is created and are not changed afterward, with two exceptions: the
+[store label](#what-a-card-looks-like), which is added on update and never removes another label, and an initiative's
 [parent card](#attaching-an-initiatives-card-to-a-parent-card), which is moved when it changes. The assignee is left alone too, unless
 [`assign_on_start`](#assigning-cards) is on.
 
@@ -183,6 +184,17 @@ A store identifier is a short value that belongs to one clone and tells its card
   clone's. To keep the old identifier, set `task_manager.store_id` to the old value.
 - **A shared database.** When several people share one database through `storage.path`, they share its identifier. That
   is correct, because IDs are then unique across the team.
+
+### Restamping
+
+The identifier is part of what a card's content hash covers, so setting it, or changing it, changes the content of
+every card. Until the cards are pushed they show as needing an update: the show commands and `status` report
+`(pending update)`. `ralph cards sync` restamps them, rewriting the summary prefix and adding the label. Sync skips
+archived initiatives unless `--include-archived` is given, so their cards keep the old stamp until it is. See
+[Syncing existing work](#syncing-existing-work) and [What a card looks like](#what-a-card-looks-like) for the format.
+
+Changing the identifier adds the new `ralph-store-<id>` label and leaves the old one on the card, because ralph never
+removes a label. Remove the old label in Jira if it is unwanted.
 
 ## Pull request links
 
@@ -370,7 +382,8 @@ the project, so the command refuses to run.
 
 ### Which cards are orphans
 
-A card's ralph ID is read from the start of its summary, the `ID: title` form ralph writes. The first rule that
+A card's ralph ID is read from the start of its summary, after an optional store stamp: the `ID: title` or
+`[<store id>] ID: title` form ralph writes. The first rule that
 matches decides:
 
 | Outcome | When |
@@ -545,11 +558,14 @@ refuses a request that has no parent card key.
 
 ## What a card looks like
 
-- **Summary.** `<ID>: <title>`, for example `T-12: Add the login form`. It is cut to 255 characters, ending with an
-  ellipsis when it is cut, which is the longest summary Jira accepts.
-- **Labels.** Only those in `task_manager.jira.labels`; ralph adds none of its own, and none is added with no
-  setting. The resource's ID is in the summary, not in a label. Configured labels are added when a card is created, so
-  cards made before a label was configured do not get it.
+- **Summary.** `[<store id>] <ID>: <title>`, for example `[ab] T-12: Add the login form`. It is cut to 255
+  characters, ending with an ellipsis when it is cut, which is the longest summary Jira accepts; the
+  `[<store id>] ` prefix counts toward that limit. With no [store identifier](#store-identifier) the summary is
+  `<ID>: <title>`, for example `T-12: Add the login form`.
+- **Labels.** Those in `task_manager.jira.labels`, plus `ralph-store-<id>` (for example `ralph-store-ab`) whenever
+  there is a store identifier. The resource's ID is in the summary, not in a label. Configured labels are added when a
+  card is created, so cards made before a label was configured do not get it. The store label is added when a card is
+  created, and to an existing card by an update that only adds it, so every label people added is kept.
 - **Description.** The resource's Markdown body, converted to Jira's Atlassian Document Format (ADF), the structured
   rich text that Jira Cloud's API requires. The converter is small and lives in the repository; it handles common
   Markdown:
@@ -568,8 +584,8 @@ refuses a request that has no parent card key.
   footer. The full text stays in ralph.
 
 When ralph updates an existing card it sends only the summary and description, overwriting whatever is there,
-so edit those in ralph rather than in Jira. It does not touch anything else, including labels: labels that people add
-to a card are kept, as are its status and every other field. The assignee is kept as well, except that ralph assigns
+so edit those in ralph rather than in Jira. The one other thing it sends is the addition of the store label. It
+removes no label: labels that people add to a card are kept, as are its status and every other field. The assignee is kept as well, except that ralph assigns
 an unassigned card to the token's user when it moves the card to in progress and
 [`assign_on_start`](#assigning-cards) is on.
 
