@@ -78,7 +78,9 @@ never checked. `ralph init --dry-run` shows the same changes as a table. See
 ### `ralph update`
 
 `ralph update` replaces the running program with the newest stable release. It works anywhere, with or without a
-project. It is not `ralph init`, which refreshes a project's integration files. See
+project. It is not `ralph init`, which refreshes a project's integration files. After installing, and on `--check` when
+an update is available, it lists what the release notes say changed, one line per milestone; see
+[What the update includes](installing.md#what-the-update-includes). See
 [Installing and updating](installing.md#updating-with-ralph-update) for the details.
 
 | Flag | Meaning |

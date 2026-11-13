@@ -116,18 +116,26 @@ func (a *app) runUpdate(ctx context.Context, opts updateOptions) error {
 
 	if opts.check {
 		available := releaseBuild && cmp < 0
+		var notes []release.Changelog
+		var notesErr error
+		if available {
+			notes, notesErr = changelogBetween(ctx, client, curVer, rel, opts.pre || rel.Prerelease)
+		}
 		if a.jsonOut {
 			return a.writeJSON(struct {
-				Current         string `json:"current"`
-				Latest          string `json:"latest"`
-				UpdateAvailable bool   `json:"update_available"`
-				ReleaseBuild    bool   `json:"release_build"`
-			}{cur, tag, available, releaseBuild})
+				Current         string              `json:"current"`
+				Latest          string              `json:"latest"`
+				UpdateAvailable bool                `json:"update_available"`
+				ReleaseBuild    bool                `json:"release_build"`
+				Changelog       []release.Changelog `json:"changelog,omitempty"`
+				ChangelogError  string              `json:"changelog_error,omitempty"`
+			}{cur, tag, available, releaseBuild, notes, errorText(notesErr)})
 		}
 		out := a.streams.Out
 		fmt.Fprintf(out, "ralph %s\nlatest %s\n", cur, tag)
 		if available {
 			fmt.Fprintln(out, "an update is available")
+			a.printChangelog(notes, notesErr)
 		} else {
 			fmt.Fprintln(out, "ralph is up to date")
 		}
@@ -160,14 +168,71 @@ func (a *app) runUpdate(ctx context.Context, opts updateOptions) error {
 	if err != nil {
 		return err
 	}
+
+	var notes []release.Changelog
+	var notesErr error
+	switch {
+	case !releaseBuild:
+		notes = []release.Changelog{release.NewChangelog(rel)}
+	case cmp < 0:
+		notes, notesErr = changelogBetween(ctx, client, curVer, rel, opts.pre || rel.Prerelease)
+	}
 	if a.jsonOut {
 		return a.writeJSON(struct {
-			Previous  string `json:"previous"`
-			Installed string `json:"installed"`
-			Path      string `json:"path"`
-		}{cur, tag, path})
+			Previous       string              `json:"previous"`
+			Installed      string              `json:"installed"`
+			Path           string              `json:"path"`
+			Changelog      []release.Changelog `json:"changelog,omitempty"`
+			ChangelogError string              `json:"changelog_error,omitempty"`
+		}{cur, tag, path, notes, errorText(notesErr)})
 	}
-	return a.say("installed %s\nprojects refresh their integration files with ralph init\n", path)
+	if err := a.say("installed %s\n", path); err != nil {
+		return err
+	}
+	if err := a.printChangelog(notes, notesErr); err != nil {
+		return err
+	}
+	hint := "projects refresh their integration files with ralph init\n"
+	if len(notes) > 0 && notesErr == nil {
+		hint = "\n" + hint
+	}
+	return a.say("%s", hint)
+}
+
+// changelogBetween builds the changelog of the releases after curVer up to rel.
+func changelogBetween(ctx context.Context, client *release.Client, curVer release.Version, rel release.Release, includePre bool) ([]release.Changelog, error) {
+	releases, err := client.Between(ctx, curVer, rel, includePre)
+	if err != nil {
+		return nil, err
+	}
+	notes := make([]release.Changelog, len(releases))
+	for i, r := range releases {
+		notes[i] = release.NewChangelog(r)
+	}
+	return notes, nil
+}
+
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+// printChangelog writes a blank line and the formatted notes, or a warning on
+// standard error when they could not be read. It prints nothing in JSON mode.
+func (a *app) printChangelog(notes []release.Changelog, notesErr error) error {
+	if a.jsonOut {
+		return nil
+	}
+	if notesErr != nil {
+		_, err := fmt.Fprintf(a.streams.Err, "warning: changelog unavailable: %v\n", notesErr)
+		return err
+	}
+	if len(notes) == 0 {
+		return nil
+	}
+	return a.say("\n%s", release.FormatChangelog(notes))
 }
 
 // say prints a status line unless JSON output is selected.
