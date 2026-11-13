@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -56,34 +57,42 @@ func (a *app) newInitiativeCommand() *cobra.Command {
 	_ = create.MarkFlagRequired("title")
 
 	var listArchived bool
+	var lw *listWatch
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List initiatives",
-		Args:  cobra.NoArgs,
+		Long: `List initiatives.
+
+With --watch it polls and shows the list again whenever it changes. It is
+read-only. On a terminal it redraws in place and highlights what changed;
+otherwise (or with --json) it writes one line of JSON for the first snapshot and
+for every change. The list never finishes, so the watch runs until it is
+interrupted (exit 130) or an error occurs.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := lw.check(cmd); err != nil {
+				return err
+			}
 			svc, err := a.service(cmd.Context())
 			if err != nil {
 				return err
 			}
-			all, err := svc.ListInitiatives(cmd.Context(), service.ListOptions{IncludeArchived: listArchived})
+			if lw.Watch {
+				return a.watchInitiativeList(cmd.Context(), svc, listArchived, lw.Interval)
+			}
+			all, err := fetchInitiativeList(cmd.Context(), svc, listArchived)
 			if err != nil {
 				return err
 			}
 			if a.jsonOut {
 				return a.writeJSON(all)
 			}
-			rows := make([][]string, 0, len(all))
-			cards := make([]*service.CardView, 0, len(all))
-			for _, i := range all {
-				rows = append(rows, []string{i.ID, i.Slug, i.Title})
-				cards = append(cards, i.Card)
-			}
-			header, rows := a.withCard([]string{"ID", "SLUG", "TITLE"}, rows, cards)
-			return a.writeTable(header, rows)
+			return a.renderInitiativeList(all)
 		},
 	}
 
 	list.Flags().BoolVar(&listArchived, "archived", false, "include archived initiatives")
+	lw = addListWatchFlags(list)
 
 	show := &cobra.Command{
 		Use:   "show <id>",
@@ -149,6 +158,32 @@ func (a *app) newInitiativeCommand() *cobra.Command {
 type initiativeShow struct {
 	service.InitiativeView
 	Status service.InitiativeStatus `json:"status"`
+}
+
+func fetchInitiativeList(ctx context.Context, svc *service.Service, archived bool) ([]service.InitiativeView, error) {
+	return svc.ListInitiatives(ctx, service.ListOptions{IncludeArchived: archived})
+}
+
+func (a *app) renderInitiativeList(all []service.InitiativeView) error {
+	rows := make([][]string, 0, len(all))
+	cards := make([]*service.CardView, 0, len(all))
+	for _, i := range all {
+		rows = append(rows, []string{i.ID, i.Slug, i.Title})
+		cards = append(cards, i.Card)
+	}
+	header, rows := a.withCard([]string{"ID", "SLUG", "TITLE"}, rows, cards)
+	return a.writeTable(header, rows)
+}
+
+func (a *app) watchInitiativeList(ctx context.Context, svc *service.Service, archived bool, interval time.Duration) error {
+	src := watchSource{Fetch: func(ctx context.Context) (snapshot, error) {
+		all, err := fetchInitiativeList(ctx, svc, archived)
+		if err != nil {
+			return snapshot{}, err
+		}
+		return a.listSnapshot(all, func() error { return a.renderInitiativeList(all) })
+	}}
+	return a.runWatch(ctx, src, watchOptions{Interval: interval}, a.newWatchRenderer(interval))
 }
 
 func fetchInitiativeShow(ctx context.Context, svc *service.Service, id int64) (initiativeShow, error) {

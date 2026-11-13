@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/bengearig/ralph/internal/errs"
 	"github.com/bengearig/ralph/internal/loop"
 	"github.com/bengearig/ralph/internal/service"
+	"github.com/bengearig/ralph/internal/store"
 )
 
 func (a *app) newMilestoneCommand() *cobra.Command {
@@ -67,11 +70,23 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 
 	var listInitiative string
 	var listArchived bool
+	var lw *listWatch
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List milestones with derived status",
-		Args:  cobra.NoArgs,
+		Long: `List milestones with derived status.
+
+With --watch it polls and shows the list again whenever it changes, keeping
+every filter. It is read-only. On a terminal it redraws in place and highlights
+what changed; otherwise (or with --json) it writes one line of JSON for the
+first snapshot and for every change. The list never finishes, so the watch runs
+until it is interrupted (exit 130), an error occurs, or the filtered initiative
+no longer exists.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := lw.check(cmd); err != nil {
+				return err
+			}
 			iID, err := parseIDFlag(domain.KindInitiative, listInitiative)
 			if err != nil {
 				return err
@@ -80,25 +95,22 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ms, err := svc.ListMilestones(cmd.Context(), iID, service.ListOptions{IncludeArchived: listArchived})
+			if lw.Watch {
+				return a.watchMilestoneList(cmd.Context(), svc, iID, listArchived, lw.Interval)
+			}
+			ms, err := fetchMilestoneList(cmd.Context(), svc, iID, listArchived)
 			if err != nil {
 				return err
 			}
 			if a.jsonOut {
 				return a.writeJSON(ms)
 			}
-			rows := make([][]string, 0, len(ms))
-			cards := make([]*service.CardView, 0, len(ms))
-			for _, m := range ms {
-				rows = append(rows, []string{m.ID, m.InitiativeID, strconv.Itoa(m.Position), m.Status, m.Title, service.FormatCounts(m.TaskCounts)})
-				cards = append(cards, m.Card)
-			}
-			header, rows := a.withCard([]string{"ID", "INITIATIVE", "POS", "STATUS", "TITLE", "TASKS"}, rows, cards)
-			return a.writeTable(header, rows)
+			return a.renderMilestoneList(ms)
 		},
 	}
 	list.Flags().StringVar(&listInitiative, "initiative", "", "only this initiative")
 	list.Flags().BoolVar(&listArchived, "archived", false, "include archived initiatives and documents, and their contents")
+	lw = addListWatchFlags(list)
 
 	show := &cobra.Command{
 		Use:   "show <id>",
@@ -178,6 +190,37 @@ func (a *app) newMilestoneCommand() *cobra.Command {
 
 	cmd.AddCommand(create, list, show, a.newMilestoneWatchCommand(), update, a.newMilestoneReconcileCommand(), a.newMilestoneMergeCommand(), a.newDeleteCommand(domain.KindMilestone, true, "Delete a milestone. Without --force it must have no tasks; with --force its tasks and their notes are deleted too."))
 	return cmd
+}
+
+func fetchMilestoneList(ctx context.Context, svc *service.Service, initiativeID int64, archived bool) ([]service.MilestoneView, error) {
+	return svc.ListMilestones(ctx, initiativeID, service.ListOptions{IncludeArchived: archived})
+}
+
+func (a *app) renderMilestoneList(ms []service.MilestoneView) error {
+	rows := make([][]string, 0, len(ms))
+	cards := make([]*service.CardView, 0, len(ms))
+	for _, m := range ms {
+		rows = append(rows, []string{m.ID, m.InitiativeID, strconv.Itoa(m.Position), m.Status, m.Title, service.FormatCounts(m.TaskCounts)})
+		cards = append(cards, m.Card)
+	}
+	header, rows := a.withCard([]string{"ID", "INITIATIVE", "POS", "STATUS", "TITLE", "TASKS"}, rows, cards)
+	return a.writeTable(header, rows)
+}
+
+func (a *app) watchMilestoneList(ctx context.Context, svc *service.Service, initiativeID int64, archived bool, interval time.Duration) error {
+	seenInitiative := false
+	src := watchSource{Fetch: func(ctx context.Context) (snapshot, error) {
+		ms, err := fetchMilestoneList(ctx, svc, initiativeID, archived)
+		if err != nil {
+			if seenInitiative && errors.Is(err, store.ErrNotFound) {
+				return snapshot{}, fmt.Errorf("%s no longer exists", domain.FormatID(domain.KindInitiative, initiativeID))
+			}
+			return snapshot{}, err
+		}
+		seenInitiative = initiativeID != 0
+		return a.listSnapshot(ms, func() error { return a.renderMilestoneList(ms) })
+	}}
+	return a.runWatch(ctx, src, watchOptions{Interval: interval}, a.newWatchRenderer(interval))
 }
 
 // parseDependsOn parses --depends-on values; blank entries are skipped.
