@@ -167,7 +167,7 @@ reverses that. The rules are in [Promoting documents](data-model.md#promoting-do
 
 | Tool | Purpose |
 |---|---|
-| `cards_sync` | Create task manager cards for existing work that has none and bring pending and out-of-date ones up to date, parents first. Parameters: optional `initiative_id` (for example `I-8`) and `include_archived`. Returns the report of created, updated, in-sync, skipped, and failed items, as `ralph cards sync --json` does. Idempotent. Agents call it only when the user asks. |
+| `cards_sync` | Create task manager cards, for the kinds in `task_manager.card_kinds`, for existing work that has none and bring pending and out-of-date ones up to date, parents first. Parameters: optional `initiative_id` (for example `I-8`) and `include_archived`. Returns the report of created, updated, in-sync, skipped, and failed items, as `ralph cards sync --json` does. Idempotent. Agents call it only when the user asks. |
 
 The tool first has the task manager check its configuration (for Jira, the issue types and their hierarchy levels), and
 returns an error without syncing anything when the check fails. An error is also returned when no task manager is configured. A failed item is in the report, not a tool error, so check its

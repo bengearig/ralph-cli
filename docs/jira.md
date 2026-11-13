@@ -1,7 +1,7 @@
 # Jira
 
-The Jira provider is ralph's first [task manager](glossary.md) provider. It creates Jira cards, one per
-initiative, milestone, or task, keeps them up to date, and moves them through their workflow. It targets **Jira Cloud only**: it speaks the REST API v3 and authenticates with Basic
+The Jira provider is ralph's first [task manager](glossary.md) provider. It creates Jira cards for the
+kinds of resource you choose (initiatives and milestones by default), keeps them up to date, and moves them through their workflow. It targets **Jira Cloud only**: it speaks the REST API v3 and authenticates with Basic
 authentication, using an account email and an API token. Jira Server and Data Center are not supported.
 
 Each call to Jira is a single attempt. The provider never retries; a failure is returned to the caller with a hint
@@ -52,9 +52,11 @@ reference.
 
 ## When cards are created
 
-Creating an initiative, milestone, or task, by any command or MCP tool, creates its card after the resource is saved.
+Creating an initiative, milestone, or task, by any command or MCP tool, creates its card after the resource is saved,
+when its kind is listed in `task_manager.card_kinds`. A resource of a kind that is not listed gets no card; see
+[Choosing which kinds get cards](#choosing-which-kinds-get-cards).
 
-- **Parents first.** A child card needs its parent's key, so a missing parent card is created before it: a new
+- **Parents first.** A child card needs its parent's key, so a missing parent card is created before it, when the parent's kind is listed too: a new
   milestone under an initiative that predates Jira creates the initiative's card too, and a new task creates any
   missing milestone and initiative cards. If a parent's card cannot be created, the child's is not attempted, and its
   recorded error names the parent.
@@ -72,6 +74,35 @@ Creating an initiative, milestone, or task, by any command or MCP tool, creates 
   error and carries on as if no provider were configured. `ralph config validate` prints the same line. The MCP server
   reports it once at start.
 - **Inside a transaction.** Work done in a single transaction, such as a bulk import, does not create cards.
+
+## Choosing which kinds get cards
+
+`task_manager.card_kinds` lists the kinds of resource that get a card. It is provider-neutral and the default is
+`[initiative, milestone]`, so initiatives and milestones get cards and tasks do not.
+
+```yaml
+# .ralph/config.yaml
+task_manager:
+  card_kinds: [initiative, milestone, task]
+```
+
+- **Bringing task cards back.** Add `task` to the list, as above. New tasks then get cards, and `ralph cards sync`
+  creates the cards for tasks that have none.
+- **The parent rule.** A card is a child of its parent's card, so a child kind needs its parent kind: `milestone` needs
+  `initiative`, and `task` needs `milestone`. `ralph config validate` refuses a list that breaks the rule, a value that
+  is not a kind, and a kind listed twice, whether or not a provider is configured. An empty list is allowed and
+  creates no new cards. A list set in a later layer replaces an earlier one.
+- **Cards that already exist are kept.** Switching a kind off stops new cards of that kind only. A card that already
+  has a key keeps following its resource: edits are pushed, status moves still happen, and deleting the resource still
+  moves the card to `canceled_status`. The setting never cancels a card, so a person closes or deletes the cards that
+  are no longer wanted in Jira.
+- **A failed card of an unlisted kind.** A resource of an unlisted kind whose earlier creation failed, so its card has
+  no key, is no longer retried and no longer shown as pending creation. A card with a key is always kept in step.
+- **Syncing.** `ralph cards sync` skips resources of unlisted kinds that have no card, reporting them as skipped with
+  the reason `kind not in task_manager.card_kinds`. It creates their cards only after the kind is listed. Nothing
+  creates them automatically when a kind is added.
+
+[ADR 45](adr/0045-choose-which-kinds-get-jira-cards.md) records the decision.
 
 ## Seeing cards
 
@@ -331,9 +362,12 @@ ralph cards sync [--initiative I-n] [--include-archived] [--verbose]
   hierarchy level above its child (see [Hierarchy levels](#hierarchy-levels)). A mismatch stops the sync before
   anything is created or changed.
 - It is the only way work that predates Jira gets cards. Ralph never does it automatically, including when a provider
-  is first configured, so run it once after setting Jira up.
-- It creates missing cards, parents first, retries cards whose creation failed, and brings out-of-date cards up to
+  is first configured or when a kind is added to `card_kinds`, so run it once after setting Jira up.
+- It creates missing cards for the kinds in `task_manager.card_kinds`, parents first, retries cards whose creation failed, and brings out-of-date cards up to
   date, status included. Work that is already in sync is not touched, so it is safe to run again.
+- Resources of a kind that is not in `card_kinds` and have no card are skipped with the reason
+  `kind not in task_manager.card_kinds`; ones that already have a card are brought up to date like any other. See
+  [Choosing which kinds get cards](#choosing-which-kinds-get-cards).
 - Cancelled work that has no card is skipped, so abandoned work does not fill the project. A cancelled task that
   already has a card is brought up to date like any other.
 - `--initiative` limits the run to one initiative. Archived initiatives are skipped unless `--include-archived` is
@@ -358,6 +392,11 @@ loop too: a status change it makes never waits on, or fails because of, Jira bey
 which `task_manager.timeout` bounds.
 
 ## After upgrading
+
+Cards are now created only for the kinds in `task_manager.card_kinds`, which defaults to initiatives and milestones.
+New tasks stop getting cards, and the cards that tasks already have are untouched: they are still updated and moved.
+To keep creating task cards, add `task` to `card_kinds`; see
+[Choosing which kinds get cards](#choosing-which-kinds-get-cards).
 
 The card's status is part of its content, so adding it changed the recorded content of every card made before it was
 introduced. Those cards show as pending an update until they are next synced, either by an edit to the resource or by
@@ -404,7 +443,8 @@ drift check copes with keys that appear later.
 ## Card types and why
 
 Ralph fixes the hierarchy: an initiative's card is the top level, a milestone's card is its child, and a task's card
-is a child of its milestone's card. Only the Jira type names are configurable:
+is a child of its milestone's card. Which kinds get a card is set by
+[`task_manager.card_kinds`](#choosing-which-kinds-get-cards); the Jira type names are configurable too:
 
 | Setting | Default | Parent |
 |---|---|---|

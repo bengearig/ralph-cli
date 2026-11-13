@@ -248,7 +248,7 @@ func (t *tools) register(s *mcp.Server) {
 		Description: "Semantic search across initiatives, milestones, tasks, and documents. Falls back to keyword search when embeddings are unavailable; the result reports which mode ran. Archived items are excluded unless include_archived is set."}, t.search)
 	mcp.AddTool(s, &mcp.Tool{Name: "cards_sync", Annotations: &mcp.ToolAnnotations{Title: "Sync cards", DestructiveHint: boolPtr(false), IdempotentHint: true, OpenWorldHint: boolPtr(true)},
 		Description: "Create Jira (task manager) cards for existing work that has none and retry pending ones. It is explicit and never runs automatically; " +
-			"call it only when the user asks. Nothing is created for cancelled work. Safe to rerun. Returns a report of created, updated, in_sync, skipped, and failed items. " +
+			"call it only when the user asks. Cards are created only for the kinds in task_manager.card_kinds; existing cards are updated whatever their kind, and other resources are skipped. Nothing is created for cancelled work. Safe to rerun. Returns a report of created, updated, in_sync, skipped, and failed items. " +
 			"Optionally scope to one initiative; archived initiatives are skipped unless include_archived is set."}, t.cardsSync)
 	mcp.AddTool(s, &mcp.Tool{Name: "status", Annotations: readOnly("Status"),
 		Description: "Summarize progress: per initiative, its milestones with derived status and task counts. Archived initiatives are hidden unless include_archived is set."}, t.status)

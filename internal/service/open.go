@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/bengearig/ralph/internal/config"
+	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/embed"
 	"github.com/bengearig/ralph/internal/embed/ollama"
 	"github.com/bengearig/ralph/internal/project"
@@ -61,7 +62,11 @@ func OpenWithTaskManager(ctx context.Context, cfg *config.Config, root string, l
 		Timeout:  cfg.Embeddings.Timeout,
 		Log:      log,
 	}
-	svc := New(st, ix, Options{TaskManager: tm, CardClaimStale: 3 * cfg.TaskManager.Timeout, CardTimeout: cfg.TaskManager.Timeout,
+	cardKinds := make([]domain.Kind, 0, len(cfg.TaskManager.CardKinds))
+	for _, k := range cfg.TaskManager.CardKinds {
+		cardKinds = append(cardKinds, domain.Kind(k))
+	}
+	svc := New(st, ix, Options{TaskManager: tm, CardKinds: cardKinds, CardClaimStale: 3 * cfg.TaskManager.Timeout, CardTimeout: cfg.TaskManager.Timeout,
 		CardCanceledStatus: cfg.TaskManager.Jira.CanceledStatus,
 		StallThreshold:     cfg.Loop.StallThreshold, SearchLimit: cfg.Search.Limit, Log: log,
 		LoopLockPath: filepath.Join(root, project.DirName, "loop.lock")})
