@@ -60,8 +60,11 @@ type Plan struct {
 	CommitPerTask     bool               `json:"commit_per_task"`
 	CommitTrailer     bool               `json:"commit_trailer"`
 	CommitCardTrailer bool               `json:"commit_card_trailer"`
-	FirstPrompt       string             `json:"first_prompt,omitempty"`
-	Warnings          []string           `json:"warnings,omitempty"`
+	// MilestoneCardKey is the milestone's recorded card key, used in commits
+	// for tasks without a card of their own.
+	MilestoneCardKey string   `json:"-"`
+	FirstPrompt      string   `json:"first_prompt,omitempty"`
+	Warnings         []string `json:"warnings,omitempty"`
 }
 
 // Planner builds loop plans.
@@ -131,6 +134,7 @@ func (p Planner) Plan(ctx context.Context, milestoneID int64) (Plan, error) {
 	if plan.Branch, err = ResolveBranch(ctx, p.Service, p.Config, i, m); err != nil {
 		return Plan{}, err
 	}
+	plan.MilestoneCardKey = CardKeys(ctx, p.Service, p.Config, iID, milestoneID).Milestone
 
 	h, res, err := harness.ForStep(p.Config, config.StepLoop)
 	if err != nil {

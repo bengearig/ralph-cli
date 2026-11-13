@@ -41,6 +41,8 @@ wants the assignee filled in needs it done when the card moves, without ralph ta
 
 ## Consequences
 
+With task cards off, the milestone's card is the one assigned and checked; see [ADR 45](0045-choose-which-kinds-get-jira-cards.md).
+
 - The statement in ADR 21 that the assignee is left as people set it holds only while `assign_on_start` is off.
 - Assigning needs the token's user to hold the Assign Issues project permission, in addition to the permissions
   already needed to create and edit cards.

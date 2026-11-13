@@ -79,6 +79,11 @@ func newRunEnv(t *testing.T, titles ...string) *runEnv {
 // newRunEnvWith is newRunEnv with a task manager provider, which may be nil.
 func newRunEnvWith(t *testing.T, tm taskmanager.Provider, titles ...string) *runEnv {
 	t.Helper()
+	return newRunEnvKinds(t, tm, nil, titles...)
+}
+
+func newRunEnvKinds(t *testing.T, tm taskmanager.Provider, kinds []domain.Kind, titles ...string) *runEnv {
+	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
@@ -113,7 +118,7 @@ func newRunEnvWith(t *testing.T, tm taskmanager.Provider, titles ...string) *run
 	}
 	cfg.Loop.StallThreshold = 2
 	cfg.Loop.MaxIterations = 10
-	svc := service.New(st, &search.Index{Store: st, Chunker: search.Chunker{MaxChars: 500}}, service.Options{StallThreshold: cfg.Loop.StallThreshold, TaskManager: tm})
+	svc := service.New(st, &search.Index{Store: st, Chunker: search.Chunker{MaxChars: 500}}, service.Options{StallThreshold: cfg.Loop.StallThreshold, TaskManager: tm, CardKinds: kinds})
 
 	i, _ := svc.CreateInitiative(ctx, service.InitiativeInput{Title: "SSO"})
 	iID, _ := domain.ParseID(domain.KindInitiative, i.ID)
@@ -1251,6 +1256,32 @@ func TestRunBlocksAndStopsOnAssigneeConflict(t *testing.T) {
 				t.Errorf("feed lacks %q:\n%s", want, e.out.String())
 			}
 		})
+	}
+}
+
+func TestRunBlocksOnMilestoneCardConflictWhenTaskHasNoCard(t *testing.T) {
+	p := tmfake.New()
+	e := newRunEnvKinds(t, p, []domain.Kind{domain.KindInitiative, domain.KindMilestone}, "first", "second")
+	failInProgress(p, 1, &taskmanager.AssigneeConflictError{Key: "AIN-12", Assignee: "Pat Lee"})
+	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+	out, err := e.run(t, context.Background(), h)
+	if !errors.Is(err, errs.ErrNeedsHuman) || out.StopReason != StopNeedsHuman {
+		t.Fatalf("err = %v, stop = %s\n%s", err, out.StopReason, e.out.String())
+	}
+	t1 := e.status(t, 1)
+	if t1.Status != "BLOCKED" {
+		t.Fatalf("T-1 = %+v", t1)
+	}
+	for _, want := range []string{"AIN-12", "Pat Lee", "(M-1)"} {
+		if !strings.Contains(t1.BlockedReason, want) {
+			t.Errorf("BlockedReason %q lacks %q", t1.BlockedReason, want)
+		}
+	}
+	if h.calls != 0 || out.Iterations != 0 || t1.FailureCount != 0 {
+		t.Errorf("sessions = %d, iterations = %d, failures = %d", h.calls, out.Iterations, t1.FailureCount)
+	}
+	if got := e.status(t, 2).Status; got != "TODO" {
+		t.Errorf("T-2 = %s", got)
 	}
 }
 

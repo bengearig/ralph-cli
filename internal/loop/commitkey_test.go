@@ -20,7 +20,7 @@ import (
 func renderCommit(t *testing.T, tmpl string, task service.TaskView) string {
 	t.Helper()
 	i, m := Ref{ID: "I-1", Slug: "sso", Title: "SSO"}, Ref{ID: "M-2", Slug: "login", Title: "Login"}
-	subjects, err := CommitSubjects(tmpl, i, m)
+	subjects, err := CommitSubjects(tmpl, "", i, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func renderCommit(t *testing.T, tmpl string, task service.TaskView) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	msg, err := commitMessage(ct, commitData{Task: commitTask(task), Initiative: i, Milestone: m})
+	msg, err := commitMessage(ct, commitData{Task: commitTask(task, ""), Initiative: i, Milestone: m})
 	if err != nil {
 		t.Fatalf("%q: %v", tmpl, err)
 	}
@@ -77,7 +77,7 @@ func TestCommitTemplateRejectsMilestoneAndInitiativeKeys(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := commitMessage(tmpl, commitData{Task: commitTask(service.TaskView{ID: "T-1"})}); err == nil {
+		if _, err := commitMessage(tmpl, commitData{Task: commitTask(service.TaskView{ID: "T-1"}, "")}); err == nil {
 			t.Errorf("%s rendered, want an error", f)
 		}
 	}

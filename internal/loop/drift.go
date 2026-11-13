@@ -43,18 +43,23 @@ func ResolveRepo(ctx context.Context, root string) (git.Repo, error) {
 }
 
 // CommitTask is the task as the commit template sees it. CardKey is the key of
-// the task's own card, empty without one; CardKeyPrefix is "[KEY] " or empty.
+// the task's own card, else the milestone's card, empty when neither has one;
+// CardKeyPrefix is "[KEY] " or empty.
 type CommitTask struct {
 	service.TaskView
 	CardKey       string
 	CardKeyPrefix string
 }
 
-func commitTask(t service.TaskView) CommitTask {
+func commitTask(t service.TaskView, milestoneKey string) CommitTask {
 	ct := CommitTask{TaskView: t}
+	key := milestoneKey
 	if t.Card != nil && t.Card.Key != "" {
-		ct.CardKey = t.Card.Key
-		ct.CardKeyPrefix = "[" + t.Card.Key + "] "
+		key = t.Card.Key
+	}
+	if key != "" {
+		ct.CardKey = key
+		ct.CardKeyPrefix = "[" + key + "] "
 	}
 	return ct
 }
@@ -107,8 +112,8 @@ func commitMessage(t *commitTemplate, data commitData) (string, error) {
 // commitSubject renders the subject git reports for a task's commit: the first
 // paragraph of the rendered template, its lines joined by spaces. It returns
 // "" for a task the template fails on.
-func commitSubject(t *commitTemplate, task service.TaskView, initiative, milestone Ref) string {
-	msg, err := commitMessage(t, commitData{Task: commitTask(task), Initiative: initiative, Milestone: milestone})
+func commitSubject(t *commitTemplate, task service.TaskView, milestoneKey string, initiative, milestone Ref) string {
+	msg, err := commitMessage(t, commitData{Task: commitTask(task, milestoneKey), Initiative: initiative, Milestone: milestone})
 	if err != nil {
 		return ""
 	}
@@ -125,13 +130,15 @@ func commitSubject(t *commitTemplate, task service.TaskView, initiative, milesto
 
 // CommitSubjects returns a function giving the subjects the loop's commit for a
 // task of the milestone may carry, without duplicates and skipping any the
-// template fails on. The first is the subject a commit made now would get,
-// with the task's card key. When the template uses the card key and the task
-// has one, the keyless subject follows, so a commit made before the task had a
-// card, or before the template used the key, still matches. A commit carrying
-// a key that has since changed or disappeared cannot be reconstructed from
-// ralph's data; the Ralph-Task trailer remains the durable matcher for it.
-func CommitSubjects(tmpl string, initiative, milestone Ref) (func(service.TaskView) []string, error) {
+// template fails on. milestoneKey is the milestone's recorded card key, empty
+// without one. The first is the subject a commit made now would get: the
+// task's own card key, else the milestone's. When the template uses the card
+// key, the subject with the milestone's key, the one with the task's own key,
+// and the keyless one follow, so a commit made before the task or milestone had
+// a card, or before the template used the key, still matches. A commit
+// carrying a key that has since changed or disappeared cannot be reconstructed
+// from ralph's data; the Ralph-Task trailer remains the durable matcher for it.
+func CommitSubjects(tmpl string, milestoneKey string, initiative, milestone Ref) (func(service.TaskView) []string, error) {
 	t, err := parseCommitTemplate(tmpl)
 	if err != nil {
 		return nil, err
@@ -143,11 +150,17 @@ func CommitSubjects(tmpl string, initiative, milestone Ref) (func(service.TaskVi
 				out = append(out, s)
 			}
 		}
-		add(commitSubject(t, task, initiative, milestone))
-		if t.usesKey && task.Card != nil && task.Card.Key != "" {
+		add(commitSubject(t, task, milestoneKey, initiative, milestone))
+		if t.usesKey {
 			keyless := task
 			keyless.Card = nil
-			add(commitSubject(t, keyless, initiative, milestone))
+			if milestoneKey != "" {
+				add(commitSubject(t, keyless, milestoneKey, initiative, milestone))
+			}
+			if task.Card != nil && task.Card.Key != "" {
+				add(commitSubject(t, task, "", initiative, milestone))
+			}
+			add(commitSubject(t, keyless, "", initiative, milestone))
 		}
 		return out
 	}, nil
@@ -175,7 +188,8 @@ func DriftInput(ctx context.Context, svc *service.Service, cfg *config.Config, r
 	if err != nil {
 		return drift.Input{}, err
 	}
-	subjects, err := CommitSubjects(cfg.Loop.CommitTemplate, initiative, milestone)
+	keys := CardKeys(ctx, svc, cfg, iID, milestoneID)
+	subjects, err := CommitSubjects(cfg.Loop.CommitTemplate, keys.Milestone, initiative, milestone)
 	if err != nil {
 		return drift.Input{}, err
 	}

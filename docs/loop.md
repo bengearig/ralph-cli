@@ -37,29 +37,31 @@ The template is Go `text/template` with `missingkey=error`. It can use these fie
 
 ## Card keys in commits
 
-`loop.commit_template` can put the task's card key in the commit message. `.Task` has two extra fields, taken from the
-task's own card in ralph, not from its milestone's or initiative's: `.Task.CardKey`, such as `ABC-1235`, and
-`.Task.CardKeyPrefix`, the key in square brackets followed by a space, `[ABC-1235] `. Both are empty when the task has no
-card. The default template does not use them, so nothing changes until a team edits the template.
+`loop.commit_template` can put a card key in the commit message. `.Task` has two extra fields, taken from ralph's
+records: `.Task.CardKey`, such as `ABC-1235`, and `.Task.CardKeyPrefix`, the key in square brackets followed by a
+space, `[ABC-1235] `. The key is the task's own card key, else its milestone's card key, else empty. A task has no card
+of its own when `task` is not in [`task_manager.card_kinds`](jira.md#choosing-which-kinds-get-cards), so its commits
+carry the milestone's key. Initiative keys are never used. The default template does not use the fields, so nothing
+changes until a team edits the template.
 
 With `{{.Task.CardKeyPrefix}}{{.Task.ID}}: {{.Task.Title}}` as the template, a task titled "Add the Jira client" gets
-the subject `[ABC-1235] T-12: Add the Jira client` when its card is `ABC-1235`, and `T-12: Add the Jira client` when it
-has no card.
+the subject `[ABC-1235] T-12: Add the Jira client` when its own card, or else its milestone's card, is `ABC-1235`, and
+`T-12: Add the Jira client` when neither has a card.
 
-- **Cleaning without a card.** When the template uses a key field and the task has no card, the first line of the
+- **Cleaning without a card.** When the template uses a key field and neither the task nor its milestone has a card, the first line of the
   message is tidied so the missing key leaves nothing behind: empty `[]` and `()` pairs are removed, runs of spaces
   collapse to one, and leading spaces, `:`, `-`, `,` and `;` are trimmed. Later lines are untouched. A template that
   does not use the key fields is never cleaned, and a message that comes out empty still falls back to
   `<task ID>: <task title>`.
 - **The `Card:` trailer.** With [`loop.commit_card_trailer`](configuration.md#loop) on, the commit gets a
-  `Card: <key>` trailer after `Ralph-Task`, only when the task has a card. It is independent of
+  `Card: <key>` trailer after `Ralph-Task`, holding that same key and only when there is one. It is independent of
   `loop.commit_trailer` and of the template, and it keeps the key on the commit when the subject is later reworded.
   It is off by default.
 - **No Jira calls.** Naming a commit reads only the key ralph has recorded for the task. It never calls the task
-  manager and never creates a card; a task without a card simply has no key.
+  manager and never creates a card; when neither the task nor its milestone has a card, there is no key.
 - **Drift.** The drift check tries the `Ralph-Task` trailer first, then the patch id, then the subject (see
-  [Task matchers](#task-matchers)). The subject matcher tries the subject rendered with the task's current key, and
-  then the same subject rendered without a key, so commits made before the task had a card, or before the template
+  [Task matchers](#task-matchers)). The subject matcher tries the subject rendered with the task's key, then with the
+  milestone's key, then with none, so commits made before the task or its milestone had a card, or before the template
   used the key, still match. A commit whose key has since changed cannot be rebuilt from ralph's records; only its
   `Ralph-Task` trailer can match it, which is why `loop.commit_trailer` should stay on. Adding a key therefore does not
   make matched work look lost, as long as the trailer is there.
@@ -80,7 +82,7 @@ them, so nothing changes until a team edits the template.
   card. A milestone has a key only if its card exists in ralph, which happens when the milestone is created with a
   [task manager](jira.md) configured. There is no command that creates cards for milestones that predate the
   provider, so those are named without a key.
-- **The prompt template does not get the key fields.** Commit messages have their own, for the task's card; see
+- **The prompt template does not get the key fields.** Commit messages have their own; see
   [Card keys in commits](#card-keys-in-commits).
 
 With `{{.Milestone.CardKeyPrefix}}{{.Milestone.Slug}}` as the template, a milestone titled "Implement cool feature"
@@ -253,7 +255,7 @@ a check that cannot be made is reported as a warning.
 
    | Status | What happens |
    |---|---|
-   | `DONE` | Commit the changes, if `loop.commit_per_task`, using `loop.commit_template`, with a `Ralph-Task: <task ID>` trailer if `loop.commit_trailer` and a `Card: <key>` trailer if `loop.commit_card_trailer` and the task has a card. Commit hooks run. A failed commit stops the loop. |
+   | `DONE` | Commit the changes, if `loop.commit_per_task`, using `loop.commit_template`, with a `Ralph-Task: <task ID>` trailer if `loop.commit_trailer` and a `Card: <key>` trailer if `loop.commit_card_trailer` and there is a card key (see [Card keys in commits](#card-keys-in-commits)). Commit hooks run. A failed commit stops the loop. |
    | `TODO` | The agent reported an unfinished iteration; the failure count was incremented. |
    | `BLOCKED`, `PROPOSED` | Report it and move on. |
    | still `IN_PROGRESS` | The session ended without reporting. Move the task to `TODO` with a reason describing the session's exit, result type, and final message. |
@@ -605,8 +607,8 @@ tried in this order, and the first hit wins:
 3. `patch_id`: the recorded commit still exists, and a candidate has the same `git patch-id --stable`, that is, the
    same change on a different parent.
 4. `subject`: a candidate's subject equals the first line of `loop.commit_template` rendered for the task, such as
-   `T-3: Add tests`. When the template uses the task's card key, the subject with the key and then the one without it
-   are both tried (see [Card keys in commits](#card-keys-in-commits)).
+   `T-3: Add tests`. When the template uses the card key, the subject with the task's key, then with the milestone's key, then
+   with none, is tried (see [Card keys in commits](#card-keys-in-commits)).
 5. `missing`: nothing matched.
 
 Candidates that no task claims are listed as **unattributed commits**: work added by hand, for example.

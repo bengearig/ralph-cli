@@ -244,7 +244,8 @@ assignee as people set it.
   (`GET /rest/api/3/myself`), and assigns that account. No account ID is configured. The answer is kept for the life of
   the process.
 - **When.** When a task's or a milestone's card is moved to in progress. Initiative cards are never moved by ralph, so
-  they are never assigned.
+  they are never assigned. With task cards off, the milestone's card is the one assigned when its first task starts,
+  and the one whose holder can block the loop.
 - **Three cases.** A card with no assignee is assigned to the token's user and then moved. A card already assigned to
   the token's user is left as it is and is still moved. A card held by someone else is never overwritten: ralph neither
   assigns nor moves it, and reports an error that names the card and the person who holds it. Interactive commands and
@@ -425,7 +426,7 @@ fallback rules, and why an existing branch is never renamed.
 
 ## Commit messages
 
-A task's card key can go in its commit subject and in a `Card:` trailer. Both are off until a team opts in:
+A card key can go in a task's commit subject and in a `Card:` trailer. Both are off until a team opts in:
 
 ```yaml
 # .ralph/config.yaml
@@ -434,8 +435,10 @@ loop:
   commit_card_trailer: true
 ```
 
-A commit for a task with card `ABC-1235` then reads `[ABC-1235] T-12: Add the Jira client`, with `Card: ABC-1235` in its
-trailers; a task without a card gets `T-12: Add the Jira client` and no `Card:` trailer. Jira links a commit to a card
+The key is the task's own card key, else its milestone's, so with task cards off the commits of all of a milestone's
+tasks carry the milestone's key. A commit for a task whose key is `ABC-1235` then reads
+`[ABC-1235] T-12: Add the Jira client`, with `Card: ABC-1235` in its trailers; a task with no card of its own or on its
+milestone gets `T-12: Add the Jira client` and no `Card:` trailer. Jira links a commit to a card
 when its message mentions the card key and the repository is connected to Jira through a development-tool
 integration. See [Card keys in commits](loop.md#card-keys-in-commits) for the fields, the cleaning rule, and how the
 drift check copes with keys that appear later.

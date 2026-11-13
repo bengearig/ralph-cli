@@ -7,16 +7,18 @@
 ## Context
 
 Teams that track work in Jira want commits to be findable from the card: the key in the subject, or somewhere a tool
-can read it. The loop commits per task, so the card that matters is the task's own, not its milestone's. The drift check
+can read it. The loop commits per task, so the card that matters is the task's own. The drift check
 matches commits to tasks by the `Ralph-Task` trailer, then by patch id, then by the rendered subject
 ([ADR 17](0017-detect-and-reconcile-branch-drift.md)), so a key that appears in the subject after commits were made
 changes what the subject matcher expects.
 
 ## Decision
 
+A task with no card of its own uses its milestone's card key; see [ADR 45](0045-choose-which-kinds-get-jira-cards.md).
+
 - **Opt-in template fields on the task.** `.Task` in `loop.commit_template` gains `.CardKey`, the key of the task's own
   card or empty, and `.CardKeyPrefix`. The default template does not use them, so no commit message changes until a team
-  edits the template. Initiative and milestone keys are not added to commits.
+  edits the template. Initiative keys are not added to commits.
 - **Bracketed prefix.** `.CardKeyPrefix` is the key in square brackets followed by a space, `[ABC-1235] `, or empty, so
   `{{.Task.CardKeyPrefix}}{{.Task.ID}}: {{.Task.Title}}` gives `[ABC-1235] T-12: Add the Jira client` or, without a
   card, `T-12: Add the Jira client`.
