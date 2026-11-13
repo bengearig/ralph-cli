@@ -35,6 +35,8 @@ type Service struct {
 	cardTimeout time.Duration
 	// cardCanceledStatus is the status a deleted resource's card moves to; empty leaves cards alone.
 	cardCanceledStatus string
+	// cardKinds lists the kinds that get new cards; nil means every kind.
+	cardKinds []domain.Kind
 	// inTx marks a service bound to a transaction, which never calls the provider.
 	inTx bool
 	// pullRequestLink builds a pull request's web URL for views; nil leaves URLs empty.
@@ -58,6 +60,8 @@ type Options struct {
 	CardCanceledStatus string
 	// CardTimeout is the configured provider call timeout; zero means 10 seconds.
 	CardTimeout time.Duration
+	// CardKinds are the kinds that get new cards. Nil means every kind; a non-nil slice, even an empty one, is exactly those kinds.
+	CardKinds []domain.Kind
 }
 
 // New returns a Service. The index must share the store.
@@ -79,7 +83,8 @@ func New(st store.Store, ix *search.Index, opts Options) *Service {
 		cardTimeout = 10 * time.Second
 	}
 	return &Service{store: st, index: ix, log: log, stallThreshold: opts.StallThreshold, searchLimit: limit,
-		loopLockPath: opts.LoopLockPath, taskManager: opts.TaskManager, cardClaimStale: claimStale, cardTimeout: cardTimeout, cardCanceledStatus: opts.CardCanceledStatus}
+		loopLockPath: opts.LoopLockPath, taskManager: opts.TaskManager, cardClaimStale: claimStale, cardTimeout: cardTimeout, cardCanceledStatus: opts.CardCanceledStatus,
+		cardKinds: opts.CardKinds}
 }
 
 // SetPullRequestLink sets how views build a pull request's web URL. It must

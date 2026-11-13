@@ -23,6 +23,7 @@ func jiraEnv(t *testing.T, token string) *testEnv {
 	t.Helper()
 	h := newTestEnv(t, true)
 	t.Setenv("RALPH_TASK_MANAGER__PROVIDER", "jira")
+	t.Setenv("RALPH_TASK_MANAGER__CARD_KINDS", "initiative,milestone,task")
 	t.Setenv("RALPH_TASK_MANAGER__JIRA__BASE_URL", "http://127.0.0.1:1")
 	t.Setenv("RALPH_TASK_MANAGER__JIRA__PROJECT_KEY", "RAL")
 	t.Setenv("RALPH_JIRA_EMAIL", "me@example.com")
@@ -307,6 +308,7 @@ func syncEnv(t *testing.T) (*testEnv, *tmfake.Provider) {
 	syncFake.p = p
 	syncFake.Unlock()
 	t.Setenv("RALPH_TASK_MANAGER__PROVIDER", "synctest")
+	t.Setenv("RALPH_TASK_MANAGER__CARD_KINDS", "initiative,milestone,task")
 	return h, p
 }
 

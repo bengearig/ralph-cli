@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/bengearig/ralph/internal/domain"
@@ -159,6 +160,11 @@ func (s *Service) cardParent(ctx context.Context, kind domain.Kind, id int64) (d
 	return "", 0, nil
 }
 
+// cardKindEnabled reports whether new cards are created for the kind.
+func (s *Service) cardKindEnabled(kind domain.Kind) bool {
+	return s.cardKinds == nil || slices.Contains(s.cardKinds, kind)
+}
+
 // errCardClaimed means another process holds the card's creation, or the card exists.
 var errCardClaimed = errors.New("card claimed elsewhere")
 
@@ -167,7 +173,7 @@ var errCardClaimed = errors.New("card claimed elsewhere")
 // empty on success and when cards are disabled. The provider is called only
 // outside transactions.
 func (s *Service) createCard(ctx context.Context, kind domain.Kind, id int64, stale time.Duration) string {
-	if s.taskManager == nil || s.inTx {
+	if s.taskManager == nil || s.inTx || !s.cardKindEnabled(kind) {
 		return ""
 	}
 	if _, err := s.ensureCard(ctx, kind, id, stale); err != nil {
@@ -227,6 +233,10 @@ func (s *Service) ensureCard(ctx context.Context, kind domain.Kind, id int64, st
 		pk, pid, err := s.cardParent(ctx, kind, id)
 		if err != nil {
 			return "", err
+		}
+		if !s.cardKindEnabled(pk) {
+			err := fmt.Errorf("parent %s has no card: %s cards are not enabled", domain.FormatID(pk, pid), pk)
+			return "", s.failCard(ctx, kind, id, err)
 		}
 		parentKey, err = s.ensureCard(ctx, pk, pid, stale)
 		if parentKey == "" {
@@ -307,6 +317,9 @@ func (s *Service) syncCard(ctx context.Context, kind domain.Kind, id int64, mode
 		return failed, fmt.Sprintf("%s card for %s not synced: %v", p.Name(), name, err), nil
 	}
 	if missing && mode == modeExisting {
+		return skipped, "", nil
+	}
+	if (missing || row.Key == "") && !s.cardKindEnabled(kind) {
 		return skipped, "", nil
 	}
 	if missing || row.Key == "" {
@@ -472,7 +485,9 @@ func (ix *cardIndex) view(ctx context.Context, kind domain.Kind, id int64, paren
 	v := cardView(c)
 	switch {
 	case c.Key == "":
-		v.Pending = "create"
+		if ix.s.cardKindEnabled(kind) {
+			v.Pending = "create"
+		}
 	case c.ContentHash != "":
 		parentKey := ""
 		if parent.kind != "" {
