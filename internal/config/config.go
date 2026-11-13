@@ -206,7 +206,10 @@ type BitbucketCloudConfig struct {
 type TaskManagerConfig struct {
 	Provider string        `koanf:"provider"`
 	Timeout  time.Duration `koanf:"timeout"`
-	Jira     JiraConfig    `koanf:"jira"`
+	// CardKinds are the resource kinds (initiative, milestone, task) that get a
+	// new card. Cards that already exist are kept in step whatever the list says.
+	CardKinds []string   `koanf:"card_kinds"`
+	Jira      JiraConfig `koanf:"jira"`
 }
 
 type JiraConfig struct {
@@ -433,6 +436,7 @@ func (c *Config) Validate() error {
 	if c.TaskManager.Timeout <= 0 {
 		bad("task_manager.timeout", "must be positive")
 	}
+	validateCardKinds(c.TaskManager.CardKinds, bad)
 	if c.TaskManager.Provider == TaskManagerJira {
 		j := c.TaskManager.Jira
 		if u, err := url.Parse(j.BaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
@@ -482,6 +486,37 @@ func (c *Config) Validate() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// cardKindParents maps each kind that may get a card to the kind whose card
+// it hangs under; initiatives have no parent.
+var cardKindParents = []struct{ kind, parent domain.Kind }{
+	{domain.KindInitiative, ""},
+	{domain.KindMilestone, domain.KindInitiative},
+	{domain.KindTask, domain.KindMilestone},
+}
+
+func validateCardKinds(kinds []string, bad func(key, format string, args ...any)) {
+	const key = "task_manager.card_kinds"
+	allowed := make([]string, len(cardKindParents))
+	for i, k := range cardKindParents {
+		allowed[i] = string(k.kind)
+	}
+	seen := map[string]bool{}
+	for _, k := range kinds {
+		switch {
+		case !slices.Contains(allowed, k):
+			bad(key, "%q is not one of %s", k, strings.Join(allowed, ", "))
+		case seen[k]:
+			bad(key, "%q is listed twice", k)
+		}
+		seen[k] = true
+	}
+	for _, k := range cardKindParents {
+		if k.parent != "" && seen[string(k.kind)] && !seen[string(k.parent)] {
+			bad(key, "%s needs %s: a %s card is a child of its %s's card", k.kind, k.parent, k.kind, k.parent)
+		}
+	}
 }
 
 // mappableStatuses lists the task and milestone statuses, sorted and unique.

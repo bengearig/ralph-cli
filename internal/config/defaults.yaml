@@ -154,6 +154,11 @@ task_manager:
   provider: none
   # Per-request timeout for task manager calls.
   timeout: 10s
+  # Kinds that get a card when created or synced: initiative, milestone, task.
+  # A kind needs its parent kind listed. Cards that already exist are kept in
+  # step whether or not their kind is listed. A list set in another config
+  # file replaces this one; [] creates no new cards.
+  card_kinds: [initiative, milestone]
   jira:
     base_url: ""
     project_key: ""

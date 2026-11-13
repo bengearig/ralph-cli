@@ -55,6 +55,9 @@ func TestDefaults(t *testing.T) {
 	if tm.Provider != TaskManagerNone || tm.Timeout != 10*time.Second {
 		t.Errorf("task_manager defaults = %+v", tm)
 	}
+	if !slices.Equal(tm.CardKinds, []string{"initiative", "milestone"}) {
+		t.Errorf("card_kinds default = %v", tm.CardKinds)
+	}
 	if j := tm.Jira; j.EmailEnv != "RALPH_JIRA_EMAIL" || j.TokenEnv != "RALPH_JIRA_TOKEN" || j.CanceledStatus != "" || len(j.Labels) != 0 || j.OriginalEstimate != (JiraEstimates{}) || j.AssignOnStart ||
 		j.IssueTypes != (JiraIssueTypes{Initiative: "Epic", Milestone: "Task", Task: "Sub-task"}) {
 		t.Errorf("jira defaults = %+v", j)
@@ -207,6 +210,77 @@ func TestTaskManagerLayers(t *testing.T) {
 	typo := writeFile(t, t.TempDir(), "typo.yaml", "task_manager:\n  jira:\n    issue_type: {}\n")
 	if _, err := Load(Sources{ProjectFile: typo}); err == nil || !strings.Contains(err.Error(), "issue_type") {
 		t.Errorf("err = %v, want an unknown-key error naming issue_type", err)
+	}
+}
+
+func TestValidateCardKinds(t *testing.T) {
+	cases := []struct {
+		name  string
+		kinds []string
+		want  []string
+	}{
+		{"default", []string{"initiative", "milestone"}, nil},
+		{"initiative only", []string{"initiative"}, nil},
+		{"all kinds", []string{"initiative", "milestone", "task"}, nil},
+		{"empty", []string{}, nil},
+		{"task only", []string{"task"}, []string{"task needs milestone"}},
+		{"task without milestone", []string{"initiative", "task"}, []string{"task needs milestone"}},
+		{"milestone only", []string{"milestone"}, []string{"milestone needs initiative"}},
+		{"unknown", []string{"initiative", "epic"}, []string{`"epic" is not one of initiative, milestone, task`}},
+		{"duplicate", []string{"initiative", "milestone", "task", "task"}, []string{`"task" is listed twice`}},
+	}
+	for _, tc := range cases {
+		for _, provider := range []string{TaskManagerNone, ""} {
+			t.Run(tc.name+" "+provider, func(t *testing.T) {
+				cfg, _ := Defaults()
+				cfg.TaskManager.CardKinds = tc.kinds
+				if provider == "" {
+					cfg.TaskManager.Provider = TaskManagerJira
+					cfg.TaskManager.Jira.BaseURL = "https://example.atlassian.net"
+					cfg.TaskManager.Jira.ProjectKey = "RAL"
+				}
+				err := cfg.Validate()
+				if tc.want == nil {
+					if err != nil {
+						t.Errorf("unexpected error: %v", err)
+					}
+					return
+				}
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				for _, w := range append([]string{"task_manager.card_kinds:"}, tc.want...) {
+					if !strings.Contains(err.Error(), w) {
+						t.Errorf("missing %q in:\n%v", w, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestCardKindsLayers(t *testing.T) {
+	for name, tc := range map[string]struct {
+		yaml string
+		want []string
+	}{
+		"replaces default": {"task_manager:\n  card_kinds: [initiative]\n", []string{"initiative"}},
+		"empty replaces":   {"task_manager:\n  card_kinds: []\n", []string{}},
+		"extends default":  {"task_manager:\n  card_kinds: [initiative, milestone, task]\n", []string{"initiative", "milestone", "task"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l, err := Load(Sources{ProjectFile: writeFile(t, t.TempDir(), "p.yaml", tc.yaml)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := l.Config.TaskManager.CardKinds
+			if len(got) != len(tc.want) || !slices.Equal(got, tc.want) {
+				t.Errorf("card_kinds = %#v, want %#v", got, tc.want)
+			}
+			if err := l.Config.Validate(); err != nil {
+				t.Errorf("validate: %v", err)
+			}
+		})
 	}
 }
 
