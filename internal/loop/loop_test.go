@@ -176,6 +176,27 @@ func TestDefaultPromptRendersWithoutNotes(t *testing.T) {
 	}
 }
 
+func TestDefaultPromptHasFastCheckGuidance(t *testing.T) {
+	t.Parallel()
+	out, err := RenderPrompt(DefaultPrompt(), PromptData{
+		Project: "p", Task: service.TaskView{ID: "T-1", Title: "x"}, Iteration: 1, MaxIterations: 5, StallThreshold: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Verify every acceptance criterion",
+		"run the narrowest command that exercises the change",
+		"re-run that test alone, by name or filter, until it passes",
+		"Run the full commands the acceptance criteria name once, at the end",
+		"on a narrower run than the criteria require",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("prompt lacks %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestCommitSubjects(t *testing.T) {
 	t.Parallel()
 	i, m := Ref{ID: "I-1", Slug: "sso", Title: "SSO"}, Ref{ID: "M-2", Slug: "login", Title: "Login"}
