@@ -189,8 +189,9 @@ The `pr.bitbucket_cloud` and `pr.github` blocks are validated only when `pr.prov
 
 ### `task_manager`
 
-The task manager is an external tracker that ralph can keep one card per initiative, milestone, and task in. Ralph
-creates a card when one of those is created, keeps it up to date, and moves it as the resource's status changes; see
+The task manager is an external tracker that ralph can keep cards in, for the kinds of resource listed in
+`task_manager.card_kinds`. Ralph creates a card when a resource of a listed kind is created, keeps it up to date, and
+moves it as the resource's status changes; see
 [Jira](jira.md#when-cards-are-created) and [Jira status](jira.md#status). The default, `none`, leaves
 every task manager untouched. See [Jira](jira.md) for setup, what a card looks like, and a manual check.
 
@@ -198,6 +199,7 @@ every task manager untouched. See [Jira](jira.md) for setup, what a card looks l
 |---|---|---|
 | `task_manager.provider` | `none` | Task manager: `none` or `jira`. |
 | `task_manager.timeout` | `10s` | Per-request timeout for task manager calls, as a Go duration. |
+| `task_manager.card_kinds` | `initiative`, `milestone` | The kinds of resource that get a card when they are created or synced: any of `initiative`, `milestone`, and `task`. A child kind needs its parent kind, so `milestone` needs `initiative` and `task` needs `milestone`. An empty list creates no new cards. A list set in a later layer replaces an earlier one. Cards that already exist are kept in step whatever the list says. See [Choosing which kinds get cards](jira.md#choosing-which-kinds-get-cards). |
 | `task_manager.jira.base_url` | `""` | Base URL of the Jira site. |
 | `task_manager.jira.project_key` | `""` | Key of the Jira project that holds the cards. |
 | `task_manager.jira.email_env` | `RALPH_JIRA_EMAIL` | **Name** of the environment variable holding the account email. Never put the email in a file. |
@@ -212,6 +214,7 @@ every task manager untouched. See [Jira](jira.md) for setup, what a card looks l
 | `task_manager.jira.status_map` | `TODO: To Do`, `IN_PROGRESS: In Progress`, `DONE: Done` | Maps a ralph status (task or milestone) to the Jira status its card moves to: one name, or a list of names to pass through in order when the workflow does not allow the jump. A blank value or a missing status leaves the card alone. `CANCELLED` is not allowed here; use `canceled_status`. Entries merge with the defaults, and a blank value removes a default. |
 
 The `task_manager.jira` block is validated only when the provider is `jira`, as `pr.bitbucket_cloud` is.
+`task_manager.card_kinds` is validated whether or not a provider is configured.
 
 A parent's issue type must sit exactly one hierarchy level above its child's, which the defaults satisfy only where
 Epic is directly above Task; see [Hierarchy levels](jira.md#hierarchy-levels).

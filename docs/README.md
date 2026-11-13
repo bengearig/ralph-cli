@@ -48,5 +48,6 @@ provider, [ADR 22](adr/0022-create-cards-when-resources-are-created.md) records 
 [ADR 41](adr/0041-reconcile-orphaned-cards-from-the-cli.md) records how orphaned cards are found and cancelled, and
 [ADR 42](adr/0042-refuse-pr-create-for-a-milestone-that-is-not-ready.md) records why `ralph pr create` refuses a milestone that is not ready, and
 [ADR 43](adr/0043-share-init-setup-code-and-preview-with-dry-run.md) records the shared setup code and `ralph init --dry-run`, and
-[ADR 44](adr/0044-report-progress-on-stderr-through-service-callbacks.md) records how progress is reported. Add a new
+[ADR 44](adr/0044-report-progress-on-stderr-through-service-callbacks.md) records how progress is reported, and
+[ADR 45](adr/0045-choose-which-kinds-get-jira-cards.md) records how the kinds that get Jira cards are chosen. Add a new
 record rather than editing an accepted one; mark the old record superseded.

@@ -112,7 +112,7 @@ project. It is not `ralph init`, which refreshes a project's integration files. 
 
 ### Cards
 
-When a task manager provider is configured, creating an initiative, milestone, or task also creates its card (see
+When a task manager provider is configured, creating an initiative, milestone, or task of a kind in `task_manager.card_kinds` also creates its card (see
 [Jira](jira.md#when-cards-are-created)), and a failure is a warning on standard error that never changes the exit
 status. The `show` commands for initiatives, milestones, and tasks print a line such as
 `card: PROJ-12 https://acme.atlassian.net/browse/PROJ-12`, with ` (pending create)` or ` (pending update)` after it
@@ -127,11 +127,14 @@ held by someone else: it saves the change and prints the conflict as a warning. 
 
 | Command | Purpose |
 |---|---|
-| `ralph cards sync [--initiative <id>] [--include-archived] [--verbose] [--no-progress]` | Create cards for work that has none and bring pending and out-of-date cards up to date, parents first. |
+| `ralph cards sync [--initiative <id>] [--include-archived] [--verbose] [--no-progress]` | Create cards, for the kinds in `task_manager.card_kinds`, for work that has none and bring pending and out-of-date cards up to date, parents first. |
 | `ralph cards reconcile [--created-after <YYYY-MM-DD>] [--apply]` | Find open cards whose ralph resource no longer exists, and with `--apply` move them to `canceled_status`. CLI only. |
 
 - Sync is explicit: it is the only way work that predates the task manager gets cards, and nothing runs it
-  automatically. It is safe to rerun, and it skips cancelled work that has no card.
+  automatically. It creates cards only for the kinds in `task_manager.card_kinds`, and skips other resources that have
+  no card with the reason `kind not in task_manager.card_kinds`; see
+  [Choosing which kinds get cards](jira.md#choosing-which-kinds-get-cards). It is safe to rerun, and it skips cancelled
+  work that has no card.
 - Before creating anything it asks the task manager to check the configuration (for Jira, that the issue types exist
   and sit on adjacent hierarchy levels). If the check fails, nothing is synced and the command exits `1`.
 - `--initiative` limits it to one initiative, `--include-archived` also syncs archived initiatives, and `--verbose`
