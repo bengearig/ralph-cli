@@ -499,5 +499,5 @@ func (a *app) renderMilestoneShow(v milestoneShow) error {
 	if err := a.section("Description", m.Description); err != nil {
 		return err
 	}
-	return a.printTaskTable(v.Tasks)
+	return a.renderTaskList(v.Tasks)
 }

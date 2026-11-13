@@ -133,7 +133,7 @@ func (a *app) printPlan(plan loop.Plan, showPrompt bool) error {
 	if len(plan.Tasks) == 0 {
 		return a.printf("\nnothing to loop: no IN_PROGRESS or TODO tasks\n")
 	}
-	if err := a.printTaskTable(plan.Tasks); err != nil {
+	if err := a.renderTaskList(plan.Tasks); err != nil {
 		return err
 	}
 	if showPrompt {

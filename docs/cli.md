@@ -99,7 +99,7 @@ an update is available, it lists what the release notes say changed, one line pe
 | `ralph milestone create --initiative <id> --title <t> [--description] [--position] [--slug] [--depends-on <ids>]` | Add a milestone. `--depends-on M-15,M-16` (repeatable) records the milestones it depends on; see [Milestone dependencies](#milestone-dependencies). |
 | `ralph milestone list [--initiative <id>]` / `show <id>` / `update <id> ...` | Browse and edit. `show` includes tasks in loop order, and a `branch:` line with the base and head commits once the loop has recorded them, and a `depends on:` line when the milestone has dependencies. `update` never changes the recorded git state; `--depends-on <ids>` replaces the milestone's dependencies and `--no-depends-on` removes them (use one or the other). |
 | `ralph task create --milestone <id> --title <t> [--description] [--criteria] [--position]` | Propose a task (status `PROPOSED`). |
-| `ralph task list [--milestone] [--initiative] [--status S,...]` | List tasks in loop order. |
+| `ralph task list [--milestone] [--initiative] [--status S,...] [--watch]` | List tasks in loop order. With `--watch` it follows the list; see [Watching lists](#watching-lists). |
 | `ralph task show <id>` | Show a task with its notes and allowed next statuses, and a `commit:` line once the loop has committed it. |
 | `ralph task update <id> [--title] [--description] [--criteria] [--position]` | Edit a task. |
 | `ralph task status <id> <STATUS> [--reason <text>]` | Move a task. Help text lists the allowed moves. |
@@ -363,6 +363,14 @@ is the same command with the same filters.
 
 The overview never finishes, so it has no `--until-done`. It runs until it is interrupted, an error occurs, or, with
 `--initiative`, that initiative no longer exists. Output, exit codes, and `--json` behave as for the other watches.
+
+### Watching lists
+
+`ralph task list --watch` (short `-w`) follows the table `ralph task list` prints. Every filter (`--milestone`,
+`--initiative`, `--status`, `--archived`) works as without `--watch`, and `--interval` is accepted only with `--watch`.
+A task entering or leaving the filtered set is an ordinary change. The list never finishes, so there is no
+`--until-done`; the watch ends when it is interrupted, an error occurs, or the filtered milestone or initiative no
+longer exists.
 
 ### Exit codes and errors
 
