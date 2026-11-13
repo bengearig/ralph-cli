@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"strings"
 	"sync"
@@ -19,12 +21,26 @@ import (
 	tmfake "github.com/bengearig/ralph/internal/taskmanager/fake"
 )
 
+// failingJira points the Jira provider at a local server that answers every
+// request with 503, so provider calls fail at once.
+func failingJira(t *testing.T) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"errorMessages":["test server"]}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("RALPH_TASK_MANAGER__JIRA__BASE_URL", srv.URL)
+	t.Setenv("RALPH_TASK_MANAGER__TIMEOUT", "2s")
+}
+
 func jiraEnv(t *testing.T, token string) *testEnv {
 	t.Helper()
 	h := newTestEnv(t, true)
 	t.Setenv("RALPH_TASK_MANAGER__PROVIDER", "jira")
 	t.Setenv("RALPH_TASK_MANAGER__CARD_KINDS", "initiative,milestone,task")
-	t.Setenv("RALPH_TASK_MANAGER__JIRA__BASE_URL", "http://127.0.0.1:1")
+	failingJira(t)
 	t.Setenv("RALPH_TASK_MANAGER__JIRA__PROJECT_KEY", "RAL")
 	t.Setenv("RALPH_JIRA_EMAIL", "me@example.com")
 	t.Setenv("RALPH_JIRA_TOKEN", token)
@@ -779,5 +795,42 @@ func TestCardsSyncKindOffSkipsTasks(t *testing.T) {
 	}
 	if !found || r.Failed != 0 {
 		t.Errorf("json report: %+v", r)
+	}
+}
+
+func TestCardTimeoutBoundsStalledProvider(t *testing.T) {
+	h := newTestEnv(t, true)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	t.Setenv("RALPH_TASK_MANAGER__PROVIDER", "jira")
+	t.Setenv("RALPH_TASK_MANAGER__CARD_KINDS", "initiative,milestone,task")
+	t.Setenv("RALPH_TASK_MANAGER__JIRA__BASE_URL", srv.URL)
+	t.Setenv("RALPH_TASK_MANAGER__JIRA__PROJECT_KEY", "RAL")
+	t.Setenv("RALPH_TASK_MANAGER__TIMEOUT", "300ms")
+	t.Setenv("RALPH_JIRA_EMAIL", "me@example.com")
+	t.Setenv("RALPH_JIRA_TOKEN", "secret")
+
+	start := time.Now()
+	out, errOut, err := h.run("", "initiative", "create", "--title", "SSO")
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	if !strings.Contains(out, "created I-1") {
+		t.Errorf("stdout = %q", out)
+	}
+	if !strings.Contains(errOut, "warning: ") || !strings.Contains(errOut, "jira card for") {
+		t.Errorf("stderr = %q", errOut)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("command took %v, the configured timeout was ignored", elapsed)
 	}
 }
