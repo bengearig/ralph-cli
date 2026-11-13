@@ -28,6 +28,7 @@ func (e *runEnv) rev(t *testing.T, ref string) string {
 }
 
 func TestSyncBaseBehindNotCheckedOut(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	bare := e.addRemote(t)
 	gitCmd(t, e.root, "switch", "--quiet", "-c", "work")
@@ -53,6 +54,7 @@ func TestSyncBaseBehindNotCheckedOut(t *testing.T) {
 }
 
 func TestSyncBaseBehindCheckedOut(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	bare := e.addRemote(t)
 	advanceRemote(t, bare, 1)
@@ -73,6 +75,7 @@ func TestSyncBaseBehindCheckedOut(t *testing.T) {
 }
 
 func TestSyncBaseCurrent(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	e.addRemote(t)
 	before := e.rev(t, "main")
@@ -83,6 +86,7 @@ func TestSyncBaseCurrent(t *testing.T) {
 }
 
 func TestSyncBaseAhead(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	e.addRemote(t)
 	e.commitFile(t, "ahead.txt")
@@ -103,6 +107,7 @@ func TestSyncBaseAhead(t *testing.T) {
 }
 
 func TestSyncBaseRefusals(t *testing.T) {
+	t.Parallel()
 	t.Run("diverged", func(t *testing.T) {
 		for _, dry := range []bool{false, true} {
 			e := newRunEnv(t, "a")
@@ -179,6 +184,7 @@ func TestSyncBaseRefusals(t *testing.T) {
 }
 
 func TestSyncBaseRefusesHeldLock(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	bare := e.addRemote(t)
 	advanceRemote(t, bare, 1)
@@ -198,6 +204,7 @@ func TestSyncBaseRefusesHeldLock(t *testing.T) {
 }
 
 func TestSyncBaseDryRunBehind(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	bare := e.addRemote(t)
 	advanceRemote(t, bare, 2)
@@ -323,6 +330,7 @@ func wantMerged() []MergedMilestone {
 }
 
 func TestSyncBaseReportsNewlyMerged(t *testing.T) {
+	t.Parallel()
 	e, _, _ := newMergedEnv(t)
 	res, err := e.sync(SyncOptions{})
 	if err != nil {
@@ -334,6 +342,7 @@ func TestSyncBaseReportsNewlyMerged(t *testing.T) {
 }
 
 func TestSyncBaseDryRunReportsNewlyMerged(t *testing.T) {
+	t.Parallel()
 	e, _, _ := newMergedEnv(t)
 	before := e.rev(t, "main")
 	res, err := e.sync(SyncOptions{DryRun: true})
@@ -349,6 +358,7 @@ func TestSyncBaseDryRunReportsNewlyMerged(t *testing.T) {
 }
 
 func TestSyncBaseNewlyMergedDeletedBranch(t *testing.T) {
+	t.Parallel()
 	e, _, _ := newMergedEnv(t)
 	gitCmd(t, e.root, "branch", "-D", mergeBranch)
 	res, err := e.sync(SyncOptions{})
@@ -363,6 +373,7 @@ func TestSyncBaseNewlyMergedDeletedBranch(t *testing.T) {
 }
 
 func TestSyncBaseNewlyMergedIndependentOfCheckout(t *testing.T) {
+	t.Parallel()
 	e, _, _ := newMergedEnv(t)
 	gitCmd(t, e.root, "switch", "--quiet", "ralph/unmerged")
 	res, err := e.sync(SyncOptions{})
@@ -372,6 +383,7 @@ func TestSyncBaseNewlyMergedIndependentOfCheckout(t *testing.T) {
 }
 
 func TestSyncBaseNoReportWithoutSync(t *testing.T) {
+	t.Parallel()
 	t.Run("current", func(t *testing.T) {
 		e := newMergeEnv(t)
 		e.addRemote(t)
@@ -400,6 +412,7 @@ func TestSyncBaseNoReportWithoutSync(t *testing.T) {
 }
 
 func TestNewlyMergedSkipsFailingMilestone(t *testing.T) {
+	t.Parallel()
 	e, _, _ := newMergedEnv(t)
 	from := e.rev(t, "main")
 	gitCmd(t, e.root, "fetch", "--quiet", "origin", "main")
@@ -431,6 +444,7 @@ func (e *runEnv) branchExists(t *testing.T, name string) bool {
 }
 
 func TestSyncBaseDeleteBranches(t *testing.T) {
+	t.Parallel()
 	e, bare, _ := newMergedEnv(t)
 	remoteBefore := gitCmd(t, bare, "for-each-ref")
 	res, err := e.sync(SyncOptions{DeleteBranches: true})
@@ -461,6 +475,7 @@ func TestSyncBaseDeleteBranches(t *testing.T) {
 }
 
 func TestSyncBaseDeleteBranchesCheckedOutElsewhere(t *testing.T) {
+	t.Parallel()
 	e, _, _ := newMergedEnv(t)
 	gitCmd(t, e.root, "worktree", "add", "--quiet", t.TempDir()+"/wt", mergeBranch)
 	res, err := e.sync(SyncOptions{DeleteBranches: true})
@@ -473,6 +488,7 @@ func TestSyncBaseDeleteBranchesCheckedOutElsewhere(t *testing.T) {
 }
 
 func TestSyncBaseDeleteBranchesOffByDefaultAndDryRun(t *testing.T) {
+	t.Parallel()
 	for _, opts := range []SyncOptions{{}, {DryRun: true, DeleteBranches: true}} {
 		e, _, _ := newMergedEnv(t)
 		res, err := e.sync(opts)
@@ -491,6 +507,7 @@ func TestSyncBaseDeleteBranchesOffByDefaultAndDryRun(t *testing.T) {
 }
 
 func TestSyncBaseDeleteBranchesNothingWithoutSync(t *testing.T) {
+	t.Parallel()
 	t.Run("current", func(t *testing.T) {
 		e := newMergeEnv(t)
 		e.addRemote(t)
@@ -510,6 +527,7 @@ func TestSyncBaseDeleteBranchesNothingWithoutSync(t *testing.T) {
 }
 
 func TestSyncBaseDeleteBranchesAlreadyGone(t *testing.T) {
+	t.Parallel()
 	e, _, _ := newMergedEnv(t)
 	gitCmd(t, e.root, "branch", "-D", mergeBranch)
 	res, err := e.sync(SyncOptions{DeleteBranches: true})
@@ -519,6 +537,7 @@ func TestSyncBaseDeleteBranchesAlreadyGone(t *testing.T) {
 }
 
 func TestSyncResultDeleteBranchesSkipsBase(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	r := SyncResult{BaseBranch: "main", Warnings: []string{}, NewlyMerged: []MergedMilestone{{ID: "M-9", Branch: "main", BranchExists: true}}}
 	r.deleteBranches(context.Background(), git.Repo{Dir: e.root})

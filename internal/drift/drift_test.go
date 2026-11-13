@@ -47,16 +47,6 @@ func newEnv(t *testing.T, titles ...string) *env {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", home)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	for _, k := range []string{"GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"} {
-		t.Setenv(k, "Ralph Test")
-	}
-	for _, k := range []string{"GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"} {
-		t.Setenv(k, "ralph@example.com")
-	}
 
 	root := t.TempDir()
 	restoreTree(t, root, initialRepo(t))
@@ -260,6 +250,7 @@ func wantCommits(t *testing.T, what string, got []Commit, want ...string) {
 }
 
 func TestUnchanged(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	c1, c2 := e.do(0, true), e.do(1, true)
 	e.recordHere()
@@ -292,6 +283,7 @@ func TestUnchanged(t *testing.T) {
 }
 
 func TestReportJSON(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	e.do(0, true)
 	e.recordHere()
@@ -342,6 +334,7 @@ func TestReportJSON(t *testing.T) {
 }
 
 func TestAhead(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	c1, c2 := e.do(0, true), e.do(1, true)
 	e.recordHere()
@@ -364,6 +357,7 @@ func TestAhead(t *testing.T) {
 }
 
 func TestBehind(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	c1, c2 := e.do(0, true), e.do(1, true)
 	e.recordHere()
@@ -382,6 +376,7 @@ func TestBehind(t *testing.T) {
 }
 
 func TestDivergedByRebase(t *testing.T) {
+	t.Parallel()
 	for _, trailer := range []bool{true, false} {
 		name := map[bool]string{true: "trailer", false: "patch_id"}[trailer]
 		t.Run(name, func(t *testing.T) {
@@ -416,6 +411,7 @@ func TestDivergedByRebase(t *testing.T) {
 }
 
 func TestDivergedBySquash(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	e.do(0, true)
 	e.do(1, true)
@@ -432,6 +428,7 @@ func TestDivergedBySquash(t *testing.T) {
 }
 
 func TestTrailerNewestWins(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	e.do(0, true)
 	fix := e.commit("fix.txt", "fix\n", "Fix login\n\nRalph-Task: "+taskID(e.tasks[0]))
@@ -446,6 +443,7 @@ func TestTrailerNewestWins(t *testing.T) {
 }
 
 func TestCardTrailerDoesNotHideOrImitateTaskTrailer(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	e.do(0, true)
 	e.do(1, false)
@@ -460,6 +458,7 @@ func TestCardTrailerDoesNotHideOrImitateTaskTrailer(t *testing.T) {
 }
 
 func TestSubjectMatch(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	e.do(0, false)
 	e.do(1, false)
@@ -473,6 +472,7 @@ func TestSubjectMatch(t *testing.T) {
 }
 
 func TestMissing(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	e.do(0, false)
 	e.do(1, false)
@@ -490,6 +490,7 @@ func TestMissing(t *testing.T) {
 }
 
 func TestMerged(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	c1 := e.do(0, true)
 	e.recordHere()
@@ -509,6 +510,7 @@ func TestMerged(t *testing.T) {
 }
 
 func TestMergedBranchDeleted(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"fast-forward", "no-ff"} {
 		t.Run(mode, func(t *testing.T) {
 			e := newEnv(t, "login", "logout")
@@ -536,6 +538,7 @@ func TestMergedBranchDeleted(t *testing.T) {
 }
 
 func TestMergedBranchDeletedWithOrigin(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	e.do(0, true)
 	e.recordHere()
@@ -557,6 +560,7 @@ func TestMergedBranchDeletedWithOrigin(t *testing.T) {
 }
 
 func TestBranchDeletedNotMerged(t *testing.T) {
+	t.Parallel()
 	t.Run("head equals base", func(t *testing.T) {
 		e := newEnv(t)
 		e.recordHere()
@@ -590,6 +594,7 @@ func TestBranchDeletedNotMerged(t *testing.T) {
 }
 
 func TestFreshBranchNotMerged(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	e.recordHere()
 
@@ -603,6 +608,7 @@ func TestFreshBranchNotMerged(t *testing.T) {
 }
 
 func TestBranchMissing(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	e.do(0, true)
 	e.recordHere()
@@ -642,6 +648,7 @@ func TestBranchMissing(t *testing.T) {
 }
 
 func TestBaseRefFallsBackToOrigin(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	e.do(0, true)
 	e.recordHere()
@@ -660,6 +667,7 @@ func TestBaseRefFallsBackToOrigin(t *testing.T) {
 }
 
 func TestUnrecorded(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	tv := e.snapshot().Tasks
 	c1 := e.commit("login.txt", "login\n", "Login\n\nRalph-Task: "+tv[0].ID)
@@ -684,6 +692,7 @@ func TestUnrecorded(t *testing.T) {
 }
 
 func TestGarbageCollectedHead(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	c1 := e.do(0, true)
 	e.record(domain.MilestoneGit{Branch: branch, BaseCommit: e.base, HeadCommit: strings.Repeat("0123456789", 4)})
@@ -694,6 +703,7 @@ func TestGarbageCollectedHead(t *testing.T) {
 }
 
 func TestMissingRecordedCommitObject(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	e.do(0, false)
 	e.recordHere()
@@ -707,6 +717,7 @@ func TestMissingRecordedCommitObject(t *testing.T) {
 }
 
 func TestMissingBaseBranch(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	e.recordHere()
 	for _, base := range []string{"nope", ""} {
@@ -724,6 +735,7 @@ func TestMissingBaseBranch(t *testing.T) {
 }
 
 func TestOnlyDoneTasks(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	c1 := e.do(0, true)
 	e.recordHere()
@@ -780,6 +792,7 @@ func noteBodies(tv service.TaskView) []string {
 }
 
 func TestApplyNoActions(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	e.do(0, true)
 	e.recordHere()
@@ -797,6 +810,7 @@ func TestApplyNoActions(t *testing.T) {
 }
 
 func TestApplyAcceptDiverged(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	e.do(0, true)
 	e.do(1, true)
@@ -817,6 +831,7 @@ func TestApplyAcceptDiverged(t *testing.T) {
 }
 
 func TestApplyAcceptKeepsMissingTaskDone(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	c1 := e.do(0, true)
 	e.do(1, true)
@@ -837,6 +852,7 @@ func TestApplyAcceptKeepsMissingTaskDone(t *testing.T) {
 }
 
 func TestApplyReopenAndAccept(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	c1 := e.do(0, true)
 	e.do(1, true)
@@ -861,6 +877,7 @@ func TestApplyReopenAndAccept(t *testing.T) {
 }
 
 func TestApplyRejectsInvalidActions(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout", "logs")
 	e.do(0, true)
 	e.do(1, true)
@@ -907,6 +924,7 @@ func TestApplyRejectsInvalidActions(t *testing.T) {
 }
 
 func TestApplyRefusesAcceptOnMergedAndBranchMissing(t *testing.T) {
+	t.Parallel()
 	t.Run("merged", func(t *testing.T) {
 		e := newEnv(t, "login")
 		e.do(0, true)
@@ -937,6 +955,7 @@ func TestApplyRefusesAcceptOnMergedAndBranchMissing(t *testing.T) {
 }
 
 func TestApplyBranchThenAccept(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	c1 := e.do(0, true)
 	e.recordHere()
@@ -958,6 +977,7 @@ func TestApplyBranchThenAccept(t *testing.T) {
 }
 
 func TestApplyBranchAndAcceptTogether(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	c1 := e.do(0, true)
 	e.recordHere()
@@ -972,6 +992,7 @@ func TestApplyBranchAndAcceptTogether(t *testing.T) {
 }
 
 func TestApplyBackfill(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	tv := e.snapshot().Tasks
 	c1 := e.commit("login.txt", "login\n", "Login\n\nRalph-Task: "+tv[0].ID)
@@ -992,6 +1013,7 @@ func TestApplyBackfill(t *testing.T) {
 }
 
 func TestApplyRefusedWhenArchived(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	e.do(0, true)
 	e.recordHere()
@@ -1017,6 +1039,7 @@ func TestApplyRefusedWhenArchived(t *testing.T) {
 }
 
 func TestSubjectCandidates(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	e.do(0, false)
 	e.do(1, false)
@@ -1076,6 +1099,7 @@ func wantFindings(t *testing.T, got []TaskFinding, ws ...want) {
 }
 
 func TestTasksInBaseSquashKeepsTrailers(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	e.do(0, true)
 	e.do(1, true)
@@ -1096,6 +1120,7 @@ func TestTasksInBaseSquashKeepsTrailers(t *testing.T) {
 }
 
 func TestTasksInBaseRebaseWithoutTrailers(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	c1, c2 := e.do(0, false), e.do(1, false)
 	gitCmd(t, e.root, "switch", "--quiet", "main")
@@ -1112,6 +1137,7 @@ func TestTasksInBaseRebaseWithoutTrailers(t *testing.T) {
 }
 
 func TestTasksInBasePartial(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	c1 := e.do(0, false)
 	e.do(1, false)
@@ -1127,6 +1153,7 @@ func TestTasksInBasePartial(t *testing.T) {
 }
 
 func TestTasksInBaseSubjectNeverCounts(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	e.do(0, true)
 	tv := e.doneViews()[0]
@@ -1141,6 +1168,7 @@ func TestTasksInBaseSubjectNeverCounts(t *testing.T) {
 }
 
 func TestTasksInBaseNoTasks(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	gitCmd(t, e.root, "switch", "--quiet", "main")
 	e.commit("other.txt", "x\n", "other")
@@ -1151,6 +1179,7 @@ func TestTasksInBaseNoTasks(t *testing.T) {
 }
 
 func TestTasksInBaseEmptyRange(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	e.do(0, true)
 	e.do(1, true)
@@ -1165,6 +1194,7 @@ func TestTasksInBaseEmptyRange(t *testing.T) {
 }
 
 func TestTasksInBasePatchIDsAreLazy(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	e.do(0, true)
 	e.do(1, true)
@@ -1204,6 +1234,7 @@ func (e *env) squashed(trailers ...string) string {
 }
 
 func TestMergedBySquashTrailers(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	e.do(0, true)
 	e.do(1, true)
@@ -1235,6 +1266,7 @@ func TestMergedBySquashTrailers(t *testing.T) {
 }
 
 func TestMergedByRebasePatchID(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	c1, c2 := e.do(0, false), e.do(1, false)
 	e.recordHere()
@@ -1252,6 +1284,7 @@ func TestMergedByRebasePatchID(t *testing.T) {
 }
 
 func TestPartialSquashNotMerged(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login", "logout")
 	e.do(0, true)
 	e.do(1, true)
@@ -1268,6 +1301,7 @@ func TestPartialSquashNotMerged(t *testing.T) {
 }
 
 func TestSubjectOnlyOnMainNotMerged(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	e.do(0, true)
 	tv := e.doneViews()[0]
@@ -1281,6 +1315,7 @@ func TestSubjectOnlyOnMainNotMerged(t *testing.T) {
 }
 
 func TestNoDoneTasksNotMergedByTasks(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	e.commit("a.txt", "a\n", "work")
 	e.recordHere()
@@ -1306,6 +1341,7 @@ func unstartedMoved(t *testing.T) (*env, []string) {
 }
 
 func TestUnstartedMovedOntoBase(t *testing.T) {
+	t.Parallel()
 	e, extra := unstartedMoved(t)
 	r := e.check(e.input())
 	wantState(t, r, StateAhead)
@@ -1320,6 +1356,7 @@ func TestUnstartedMovedOntoBase(t *testing.T) {
 }
 
 func TestUnstartedWithOwnCommit(t *testing.T) {
+	t.Parallel()
 	e, _ := unstartedMoved(t)
 	gitCmd(t, e.root, "switch", "--quiet", branch)
 	own := e.commit("own.txt", "mine\n", "Mine")
@@ -1334,6 +1371,7 @@ func TestUnstartedWithOwnCommit(t *testing.T) {
 }
 
 func TestUnstartedAtHead(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	e.recordHere()
 	r := e.check(e.input())
@@ -1344,6 +1382,7 @@ func TestUnstartedAtHead(t *testing.T) {
 }
 
 func TestStartedFastForwardMergedNotUnstarted(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	e.do(0, true)
 	e.recordHere()
@@ -1358,6 +1397,7 @@ func TestStartedFastForwardMergedNotUnstarted(t *testing.T) {
 }
 
 func TestDeletedBranchNotUnstarted(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	e.recordHere()
 	gitCmd(t, e.root, "switch", "--quiet", "main")
@@ -1370,6 +1410,7 @@ func TestDeletedBranchNotUnstarted(t *testing.T) {
 }
 
 func TestUnstartedAcceptMovedBranch(t *testing.T) {
+	t.Parallel()
 	e, _ := unstartedMoved(t)
 	tip := e.rev("main")
 	before, after := e.apply(Actions{Accept: true})
@@ -1380,6 +1421,7 @@ func TestUnstartedAcceptMovedBranch(t *testing.T) {
 }
 
 func TestBaseRef(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, "login")
 	e.do(0, true)
 	e.recordHere()

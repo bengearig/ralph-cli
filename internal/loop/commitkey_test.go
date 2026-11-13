@@ -39,6 +39,7 @@ func renderCommit(t *testing.T, tmpl string, task service.TaskView) string {
 }
 
 func TestCommitTaskCardKey(t *testing.T) {
+	t.Parallel()
 	base := service.TaskView{ID: "T-12", Title: "Add X", Description: "desc"}
 	keyed := base
 	keyed.Card = &service.CardView{Key: "ABC-1235"}
@@ -72,6 +73,7 @@ func TestCommitTaskCardKey(t *testing.T) {
 }
 
 func TestCommitTemplateRejectsMilestoneAndInitiativeKeys(t *testing.T) {
+	t.Parallel()
 	for _, f := range []string{"{{.Milestone.CardKey}}", "{{.Initiative.CardKey}}", "{{.Milestone.CardKeyPrefix}}"} {
 		tmpl, err := parseCommitTemplate(f)
 		if err != nil {
@@ -84,6 +86,7 @@ func TestCommitTemplateRejectsMilestoneAndInitiativeKeys(t *testing.T) {
 }
 
 func TestCommitDefaultTemplateUnchanged(t *testing.T) {
+	t.Parallel()
 	cfg, err := config.Defaults()
 	if err != nil {
 		t.Fatal(err)
@@ -99,6 +102,7 @@ func TestCommitDefaultTemplateUnchanged(t *testing.T) {
 }
 
 func TestRunCommitSubjectCardKey(t *testing.T) {
+	t.Parallel()
 	for _, withCard := range []bool{true, false} {
 		e := newRunEnv(t, "a")
 		ctx := context.Background()
@@ -133,6 +137,7 @@ func TestRunCommitSubjectCardKey(t *testing.T) {
 }
 
 func TestRunCommitCardTrailer(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name        string
 		key         string
@@ -186,6 +191,7 @@ func TestRunCommitCardTrailer(t *testing.T) {
 }
 
 func TestDriftCleanAfterTemplateGainsKey(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a", "b")
 	ctx := context.Background()
 	st, err := sqlite.Open(ctx, filepath.Join(e.root, project.DirName, "ralph.db"))

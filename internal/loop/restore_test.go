@@ -31,6 +31,7 @@ func (e *runEnv) blockWith(extra func()) *fakeHarness {
 }
 
 func TestRunReturnsToStartOnSuccess(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
 	out, err := e.runRaw(t, context.Background(), h)
@@ -49,6 +50,7 @@ func TestRunReturnsToStartOnSuccess(t *testing.T) {
 }
 
 func TestRunReturnsToStartOnEveryExit(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct {
 		setup func(e *runEnv) harness.Harness
 		check func(t *testing.T, err error)
@@ -117,6 +119,7 @@ func TestRunReturnsToStartOnEveryExit(t *testing.T) {
 }
 
 func TestRunReturnsToOtherStart(t *testing.T) {
+	t.Parallel()
 	t.Run("third branch", func(t *testing.T) {
 		e := newRunEnv(t, "a")
 		gitCmd(t, e.root, "switch", "--quiet", "-c", "work")
@@ -148,6 +151,7 @@ func TestRunReturnsToOtherStart(t *testing.T) {
 }
 
 func TestRunOnMilestoneBranchSwitchesNothing(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	gitCmd(t, e.root, "switch", "--quiet", "-c", milestoneBranch)
 	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
@@ -163,6 +167,7 @@ func TestRunOnMilestoneBranchSwitchesNothing(t *testing.T) {
 }
 
 func TestRunLeavesDirtyTreeOnMilestoneBranch(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	h := e.blockWith(func() {
 		os.WriteFile(filepath.Join(e.root, "partial.txt"), []byte("x\n"), 0o644)
@@ -181,6 +186,7 @@ func TestRunLeavesDirtyTreeOnMilestoneBranch(t *testing.T) {
 }
 
 func TestRunStartBranchDeletedDuringRun(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	gitCmd(t, e.root, "switch", "--quiet", "-c", "work")
 	start := gitCmd(t, e.root, "rev-parse", "HEAD")
@@ -198,6 +204,7 @@ func TestRunStartBranchDeletedDuringRun(t *testing.T) {
 }
 
 func TestRestoreStartMissingBranchAndCommit(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t)
 	ctx := context.Background()
 	repo, start, ok := readStart(ctx, e.root)
@@ -217,6 +224,7 @@ func TestRestoreStartMissingBranchAndCommit(t *testing.T) {
 }
 
 func TestRunFailedSwitchKeepsOutcome(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	h := e.blockWith(func() {
 		e.commitFile(t, "agent.txt")

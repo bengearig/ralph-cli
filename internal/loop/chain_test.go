@@ -21,6 +21,7 @@ func overview(t *testing.T, e *runEnv, force bool) []ChainEntry {
 }
 
 func TestOverviewDispositions(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t)
 	// M-1 is EMPTY from newRunEnv.
 	cancelled := e.depMilestone(t, "cancelled", domain.StatusCancelled)
@@ -87,6 +88,7 @@ func TestOverviewDispositions(t *testing.T) {
 }
 
 func TestOverviewInitiativeErrors(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t)
 	ctx := context.Background()
 	if _, err := Overview(ctx, e.svc, e.cfg, e.root, 99, false); !errors.Is(err, store.ErrNotFound) {
@@ -101,6 +103,7 @@ func TestOverviewInitiativeErrors(t *testing.T) {
 }
 
 func TestNextStep(t *testing.T) {
+	t.Parallel()
 	entry := func(id, d string) ChainEntry {
 		return ChainEntry{Milestone: id, Disposition: d, Reason: id + " reason", Fix: id + " fix"}
 	}

@@ -46,6 +46,7 @@ func guard(t *testing.T, e *runEnv, mode string, opts BaseGuardOptions) (BaseGua
 }
 
 func TestEnsureFreshBaseCurrentAndAhead(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	e.addRemote(t)
 	res, err := guard(t, e, config.StaleBaseRefuse, BaseGuardOptions{})
@@ -60,6 +61,7 @@ func TestEnsureFreshBaseCurrentAndAhead(t *testing.T) {
 }
 
 func TestEnsureFreshBaseMissingLocalBase(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	e.addRemote(t)
 	gitCmd(t, e.root, "switch", "--quiet", "-c", "work")
@@ -71,6 +73,7 @@ func TestEnsureFreshBaseMissingLocalBase(t *testing.T) {
 }
 
 func TestEnsureFreshBaseBehindRefuses(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	bare := e.addRemote(t)
 	advanceRemote(t, bare, 2)
@@ -90,6 +93,7 @@ func TestEnsureFreshBaseBehindRefuses(t *testing.T) {
 }
 
 func TestEnsureFreshBaseBehindSyncs(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	bare := e.addRemote(t)
 	advanceRemote(t, bare, 2)
@@ -106,6 +110,7 @@ func TestEnsureFreshBaseBehindSyncs(t *testing.T) {
 }
 
 func TestEnsureFreshBaseSyncDirtyRefuses(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	bare := e.addRemote(t)
 	advanceRemote(t, bare, 1)
@@ -123,6 +128,7 @@ func TestEnsureFreshBaseSyncDirtyRefuses(t *testing.T) {
 }
 
 func TestEnsureFreshBaseDivergedRefusesInBothModes(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{config.StaleBaseRefuse, config.StaleBaseSync} {
 		e := newRunEnv(t, "a")
 		bare := e.addRemote(t)
@@ -140,6 +146,7 @@ func TestEnsureFreshBaseDivergedRefusesInBothModes(t *testing.T) {
 }
 
 func TestEnsureFreshBaseFetchFailures(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	e.addRemote(t)
 	e.cfg.PR.Remote = "nowhere"
@@ -156,6 +163,7 @@ func TestEnsureFreshBaseFetchFailures(t *testing.T) {
 }
 
 func TestEnsureFreshBaseForceSkipsFetch(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	bare := e.addRemote(t)
 	remoteBefore := gitCmd(t, e.root, "rev-parse", "origin/main")
@@ -170,6 +178,7 @@ func TestEnsureFreshBaseForceSkipsFetch(t *testing.T) {
 }
 
 func TestEnsureFreshBaseDryRun(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{config.StaleBaseRefuse, config.StaleBaseSync} {
 		e := newRunEnv(t, "a")
 		bare := e.addRemote(t)

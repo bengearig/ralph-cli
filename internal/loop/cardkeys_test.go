@@ -88,6 +88,7 @@ func cfgFor(t *testing.T, provider string) *config.Config {
 }
 
 func TestCardKeysNoneTouchesNothing(t *testing.T) {
+	t.Parallel()
 	svc, cs, _, iID, mID := cardKeysEnv(t)
 	if err := svc.RecordCard(context.Background(), domain.KindMilestone, mID, "jira", "ABC-2", "", ""); err != nil {
 		t.Fatal(err)
@@ -102,6 +103,7 @@ func TestCardKeysNoneTouchesNothing(t *testing.T) {
 }
 
 func TestCardKeysJira(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, cs, prov, iID, mID := cardKeysEnv(t)
 	cfg := cfgFor(t, config.TaskManagerJira)
@@ -136,6 +138,7 @@ func TestCardKeysJira(t *testing.T) {
 }
 
 func TestCardKeysIgnoresOtherProvider(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, _, _, iID, mID := cardKeysEnv(t)
 	if err := svc.RecordCard(ctx, domain.KindMilestone, mID, "other", "ZZ-9", "", ""); err != nil {
@@ -147,6 +150,7 @@ func TestCardKeysIgnoresOtherProvider(t *testing.T) {
 }
 
 func TestCardKeysSwallowsStoreErrors(t *testing.T) {
+	t.Parallel()
 	svc, cs, _, iID, mID := cardKeysEnv(t)
 	cs.err = errors.New("boom")
 	if got := CardKeys(context.Background(), svc, cfgFor(t, config.TaskManagerJira), iID, mID); got != (BranchKeys{}) {
@@ -171,6 +175,7 @@ func resolveEnv(t *testing.T, tmpl string) (*service.Service, *config.Config, se
 }
 
 func TestResolveBranch(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	const keyed = "{{.Milestone.CardKeyPrefix}}{{.Milestone.Slug}}"
 	svc, cfg, i, m := resolveEnv(t, keyed)

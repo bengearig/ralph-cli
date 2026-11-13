@@ -112,6 +112,7 @@ func (e *runEnv) assertRefusal(t *testing.T, opts MergeOptions, want error, cont
 }
 
 func TestMergeFastForwards(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	oldBase := gitCmd(t, e.root, "rev-parse", "main")
 	tip := gitCmd(t, e.root, "rev-parse", mergeBranch)
@@ -155,6 +156,7 @@ func TestMergeFastForwards(t *testing.T) {
 }
 
 func TestMergeDeleteBranch(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	res, err := e.merge(MergeOptions{DeleteBranch: true})
 	if err != nil {
@@ -169,6 +171,7 @@ func TestMergeDeleteBranch(t *testing.T) {
 }
 
 func TestMergeDeleteRefusedWarns(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	// The safe delete refuses a branch checked out in another worktree.
 	other := filepath.Join(t.TempDir(), "wt")
@@ -186,6 +189,7 @@ func TestMergeDeleteRefusedWarns(t *testing.T) {
 }
 
 func TestMergeDryRun(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	oldBase := gitCmd(t, e.root, "rev-parse", "main")
 	tip := gitCmd(t, e.root, "rev-parse", mergeBranch)
@@ -206,6 +210,7 @@ func TestMergeDryRun(t *testing.T) {
 }
 
 func TestMergeRefusesUnfinishedMilestone(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	ctx := context.Background()
 	tv, err := e.svc.CreateTask(ctx, service.TaskInput{MilestoneID: e.mID, Title: "more", Description: "d", AcceptanceCriteria: "c"})
@@ -220,6 +225,7 @@ func TestMergeRefusesUnfinishedMilestone(t *testing.T) {
 }
 
 func TestMergeRefusesArchivedInitiative(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	if _, err := e.svc.ArchiveInitiative(context.Background(), 1, service.DocumentChoice{}); err != nil {
 		t.Fatal(err)
@@ -228,6 +234,7 @@ func TestMergeRefusesArchivedInitiative(t *testing.T) {
 }
 
 func TestMergeRefusesHeldLock(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	lock, err := looplock.Acquire(filepath.Join(e.root, ".ralph", "loop.lock"), "milestone M-9")
 	if err != nil {
@@ -238,6 +245,7 @@ func TestMergeRefusesHeldLock(t *testing.T) {
 }
 
 func TestMergeRefusesDrift(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	gitCmd(t, e.root, "switch", "--quiet", mergeBranch)
 	e.commitFile(t, "extra.txt")
@@ -246,6 +254,7 @@ func TestMergeRefusesDrift(t *testing.T) {
 }
 
 func TestMergeRefusesDirtyTree(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	if err := os.WriteFile(filepath.Join(e.root, "scratch.txt"), []byte("x\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -254,6 +263,7 @@ func TestMergeRefusesDirtyTree(t *testing.T) {
 }
 
 func TestMergeRefusesMissingBranches(t *testing.T) {
+	t.Parallel()
 	t.Run("base", func(t *testing.T) {
 		e := newMergeEnv(t)
 		e.cfg.PR.BaseBranch = "trunk"
@@ -267,12 +277,14 @@ func TestMergeRefusesMissingBranches(t *testing.T) {
 }
 
 func TestMergeRefusesAdvancedBase(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	e.commitFile(t, "mainline.txt")
 	e.assertRefusal(t, MergeOptions{}, errs.ErrNeedsHuman, "rebase")
 }
 
 func TestMergeFromAnotherBranch(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	gitCmd(t, e.root, "switch", "--quiet", "-c", "scratch")
 	res, err := e.merge(MergeOptions{})
@@ -285,6 +297,7 @@ func TestMergeFromAnotherBranch(t *testing.T) {
 }
 
 func TestMergeFromDetachedHead(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	gitCmd(t, e.root, "switch", "--quiet", "--detach")
 	res, err := e.merge(MergeOptions{})
@@ -297,6 +310,7 @@ func TestMergeFromDetachedHead(t *testing.T) {
 }
 
 func TestMergeFailureRestoresStart(t *testing.T) {
+	t.Parallel()
 	// A lock on main's ref passes every check and fails the fast-forward.
 	for _, start := range []string{"scratch", "detached"} {
 		t.Run(start, func(t *testing.T) {
