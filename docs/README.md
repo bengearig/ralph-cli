@@ -46,5 +46,6 @@ provider, [ADR 22](adr/0022-create-cards-when-resources-are-created.md) records 
 [ADR 39](adr/0039-fetch-the-base-branch-and-refuse-a-stale-one.md) records how the base branch is fetched and a stale one refused, and
 [ADR 40](adr/0040-assign-jira-cards-to-the-tokens-user.md) records how Jira cards are assigned to the token's user, and
 [ADR 41](adr/0041-reconcile-orphaned-cards-from-the-cli.md) records how orphaned cards are found and cancelled, and
-[ADR 42](adr/0042-refuse-pr-create-for-a-milestone-that-is-not-ready.md) records why `ralph pr create` refuses a milestone that is not ready. Add a new
+[ADR 42](adr/0042-refuse-pr-create-for-a-milestone-that-is-not-ready.md) records why `ralph pr create` refuses a milestone that is not ready, and
+[ADR 43](adr/0043-share-init-setup-code-and-preview-with-dry-run.md) records the shared setup code and `ralph init --dry-run`. Add a new
 record rather than editing an accepted one; mark the old record superseded.

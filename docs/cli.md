@@ -24,10 +24,25 @@ Commit hashes recorded by the loop are shown shortened in text output and in ful
 
 | Command | Purpose |
 |---|---|
-| `ralph init [--force] [--no-harness] [--ralph-command <cmd>]` | Create `.ralph/` (config template and database), git-ignore the database, and install the harness integration. Run it from anywhere in a git repository; it uses the work-tree root. Safe to rerun. See [Claude Code integration](claude-code.md). |
+| `ralph init [--force] [--no-harness] [--dry-run] [--ralph-command <cmd>]` | Create `.ralph/` (config template and database), git-ignore the database, and install the harness integration. Run it from anywhere in a git repository; it uses the work-tree root. Safe to rerun. See [Claude Code integration](claude-code.md) and [`ralph init --dry-run`](#ralph-init---dry-run). |
 | `ralph config show\|path\|validate\|steps` | Inspect configuration. See [Configuration](configuration.md). |
 | `ralph version` | Print the version. |
 | `ralph update [--check] [--version <tag>] [--pre] [--force]` | Replace the program with the latest release. See [`ralph update`](#ralph-update). |
+
+### `ralph init --dry-run`
+
+`--dry-run` previews what `ralph init` would do. It prints the same `ACTION`, `PATH`, and `NOTE` table as a real run,
+under the first line `dry run: nothing was written`, in place of `initialized ralph in <root>`. The exit code is `0`
+even when changes would be made.
+
+A dry run never writes a file, never creates a directory, and never opens the database: the config template and the
+database are reported from a check of whether they exist, and `.gitignore` and the harness files are worked out
+without being written. It also makes no network call, so the embedding provider hint that a real run prints is left
+out. It combines with `--force`, `--no-harness`, and `--ralph-command`, and reports what a run with those flags would
+do.
+
+With `--json`, the output has the same `root` and `changes` keys as a real run, plus `"dry_run": true`. A real run
+leaves `dry_run` out.
 
 ### `ralph update`
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -281,5 +282,225 @@ func TestShippedCommandDigestsAreEarlierVersions(t *testing.T) {
 		if slices.Contains(digests, commandDigest(cur)) {
 			t.Errorf("%s: the current template is listed as an earlier version", name)
 		}
+	}
+}
+
+func snapshot(t *testing.T, root string) map[string]string {
+	t.Helper()
+	snap := map[string]string{}
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		r, _ := filepath.Rel(root, p)
+		if d.IsDir() {
+			snap[r+"/"] = ""
+			return nil
+		}
+		data, err := os.ReadFile(p)
+		snap[r] = string(data)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snap
+}
+
+func writeFile(t *testing.T, root, name, content string) {
+	t.Helper()
+	p := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func installedProject(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if _, err := New(config.ClaudeCodeConfig{Binary: "claude"}).Install(root, harness.InstallOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func TestInstallDryRunMatchesRealRun(t *testing.T) {
+	const receive = ".claude/commands/ralph/receive.md"
+	old := []byte("an earlier receive\n")
+	saved := shippedCommands
+	t.Cleanup(func() { shippedCommands = saved })
+	shippedCommands = map[string][]string{"receive.md": {commandDigest(old)}}
+
+	fixtures := map[string]func(t *testing.T, root string){
+		"empty":     func(t *testing.T, root string) {},
+		"installed": func(t *testing.T, root string) { copyTree(t, installedProject(t), root) },
+		"earlier shipped command": func(t *testing.T, root string) {
+			copyTree(t, installedProject(t), root)
+			writeFile(t, root, receive, string(old))
+		},
+		"modified command": func(t *testing.T, root string) {
+			copyTree(t, installedProject(t), root)
+			writeFile(t, root, receive, "my version")
+		},
+		"missing command": func(t *testing.T, root string) {
+			copyTree(t, installedProject(t), root)
+			if err := os.Remove(filepath.Join(root, filepath.FromSlash(receive))); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"different mcp entry": func(t *testing.T, root string) {
+			writeFile(t, root, ".mcp.json", `{"mcpServers":{"ralph":{"command":"other"}}}`)
+		},
+		"missing permission": func(t *testing.T, root string) {
+			writeFile(t, root, ".claude/settings.json", `{"permissions":{"allow":["Bash"]}}`)
+		},
+		"outdated claude block": func(t *testing.T, root string) {
+			writeFile(t, root, "CLAUDE.md", "# P\n\n"+sectionBegin+"\nold\n"+sectionEnd+"\ntail\n")
+		},
+		"claude without block": func(t *testing.T, root string) {
+			writeFile(t, root, "CLAUDE.md", "# P\n")
+		},
+	}
+	h := New(config.ClaudeCodeConfig{Binary: "claude"})
+	for name, setup := range fixtures {
+		t.Run(name, func(t *testing.T) {
+			dry, real := t.TempDir(), t.TempDir()
+			setup(t, dry)
+			setup(t, real)
+			before := snapshot(t, dry)
+
+			dryChanges, err := h.Install(dry, harness.InstallOptions{DryRun: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after := snapshot(t, dry); !reflect.DeepEqual(before, after) {
+				t.Errorf("dry run modified the project:\nbefore %v\nafter  %v", before, after)
+			}
+			realChanges, err := h.Install(real, harness.InstallOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(dryChanges, realChanges) {
+				t.Errorf("dry %v\nreal %v", dryChanges, realChanges)
+			}
+		})
+	}
+}
+
+func copyTree(t *testing.T, from, to string) {
+	t.Helper()
+	for r, content := range snapshot(t, from) {
+		if strings.HasSuffix(r, "/") {
+			continue
+		}
+		writeFile(t, to, filepath.ToSlash(r), content)
+	}
+}
+
+func TestInstallDryRunCreatesNoDirectories(t *testing.T) {
+	root := t.TempDir()
+	if _, err := New(config.ClaudeCodeConfig{Binary: "claude"}).Install(root, harness.InstallOptions{DryRun: true}); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := os.ReadDir(root); len(entries) != 0 {
+		t.Errorf("dry run created %v", entries)
+	}
+}
+
+func TestInstallDryRunReturnsSameErrors(t *testing.T) {
+	h := New(config.ClaudeCodeConfig{Binary: "claude"})
+	for name, setup := range map[string]func(root string){
+		"invalid mcp json": func(root string) { writeFile(t, root, ".mcp.json", "{nope") },
+		"unbalanced markers": func(root string) {
+			writeFile(t, root, "CLAUDE.md", sectionBegin+"\nno end\n")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dry, real := t.TempDir(), t.TempDir()
+			setup(dry)
+			setup(real)
+			_, dryErr := h.Install(dry, harness.InstallOptions{DryRun: true})
+			_, realErr := h.Install(real, harness.InstallOptions{})
+			if dryErr == nil || realErr == nil {
+				t.Fatalf("errors: dry %v, real %v", dryErr, realErr)
+			}
+			norm := func(err error, root string) string { return strings.ReplaceAll(err.Error(), root, "ROOT") }
+			if norm(dryErr, dry) != norm(realErr, real) {
+				t.Errorf("dry %q, real %q", dryErr, realErr)
+			}
+		})
+	}
+}
+
+func TestInstallIgnore(t *testing.T) {
+	const receive = ".claude/commands/ralph/receive.md"
+	root := installedProject(t)
+	writeFile(t, root, receive, "stale")
+	writeFile(t, root, ".claude/commands/ralph/status.md", "also stale")
+	writeFile(t, root, "CLAUDE.md", "# P\n")
+	h := New(config.ClaudeCodeConfig{Binary: "claude"})
+
+	changes, err := h.Install(root, harness.InstallOptions{Force: true, Ignore: []string{receive, "CLAUDE.md"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range changes {
+		switch filepath.ToSlash(c.Path) {
+		case receive, "CLAUDE.md":
+			if c.Action != harness.Unchanged || c.Note != "ignored by init.ignore" {
+				t.Errorf("%s = %+v", c.Path, c)
+			}
+		case ".claude/commands/ralph/status.md":
+			if c.Action != harness.Updated {
+				t.Errorf("status.md = %+v", c)
+			}
+		}
+	}
+	if data, _ := os.ReadFile(filepath.Join(root, filepath.FromSlash(receive))); string(data) != "stale" {
+		t.Error("ignored command modified")
+	}
+	if data, _ := os.ReadFile(filepath.Join(root, "CLAUDE.md")); string(data) != "# P\n" {
+		t.Error("ignored CLAUDE.md modified")
+	}
+	if data, _ := os.ReadFile(filepath.Join(root, ".claude", "commands", "ralph", "status.md")); string(data) == "also stale" {
+		t.Error("non-ignored command not updated")
+	}
+}
+
+func TestInstallKeepMCPCommand(t *testing.T) {
+	h := New(config.ClaudeCodeConfig{Binary: "claude"})
+	mcpAction := func(t *testing.T, content string, opts harness.InstallOptions) (string, string) {
+		root := t.TempDir()
+		if content != "" {
+			writeFile(t, root, ".mcp.json", content)
+		}
+		changes, err := h.Install(root, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(filepath.Join(root, ".mcp.json"))
+		return actions(changes)[".mcp.json"], string(data)
+	}
+	abs := `{"mcpServers":{"ralph":{"type":"stdio","command":"/abs/ralph","args":["mcp"]}}}`
+	if a, _ := mcpAction(t, abs, harness.InstallOptions{KeepMCPCommand: true}); a != harness.Unchanged {
+		t.Errorf("kept entry = %q", a)
+	}
+	if a, _ := mcpAction(t, abs, harness.InstallOptions{}); a != harness.Skipped {
+		t.Errorf("entry without option = %q", a)
+	}
+	otherArgs := `{"mcpServers":{"ralph":{"type":"stdio","command":"/abs/ralph","args":["serve"]}}}`
+	if a, _ := mcpAction(t, otherArgs, harness.InstallOptions{KeepMCPCommand: true}); a != harness.Skipped {
+		t.Errorf("other args = %q", a)
+	}
+	otherType := `{"mcpServers":{"ralph":{"type":"http","command":"/abs/ralph","args":["mcp"]}}}`
+	if a, _ := mcpAction(t, otherType, harness.InstallOptions{KeepMCPCommand: true}); a != harness.Skipped {
+		t.Errorf("other type = %q", a)
+	}
+	a, data := mcpAction(t, "", harness.InstallOptions{KeepMCPCommand: true})
+	if a != harness.Created || !strings.Contains(data, `"command": "ralph"`) {
+		t.Errorf("missing entry = %q %s", a, data)
 	}
 }

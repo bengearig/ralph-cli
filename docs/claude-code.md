@@ -28,6 +28,10 @@ Rerunning `ralph init` is safe:
 
 JSON files that ralph does change are rewritten with two-space indentation and sorted keys.
 
+To see what a run would do before it does it, use `ralph init --dry-run`. It prints the same table with every
+file's action (`created`, `updated`, `skipped`, or `unchanged`) and writes nothing, creates no directory, and does not
+open the database. See [`ralph init --dry-run`](cli.md#ralph-init---dry-run).
+
 If `ralph` is not on your `PATH`, or you want to pin a build, pass `--ralph-command /absolute/path/to/ralph`.
 
 ### First run
