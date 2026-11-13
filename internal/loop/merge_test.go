@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/bengearig/ralph/internal/domain"
@@ -21,16 +22,47 @@ const mergeBranch = "ralph/oidc-login"
 // out main so the merge starts from the base branch.
 func newMergeEnv(t *testing.T) *runEnv {
 	t.Helper()
-	e := newRunEnv(t, "a")
-	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
-	if _, err := e.run(t, context.Background(), h); err != nil {
-		t.Fatalf("setup run: %v\n%s", err, e.out.String())
-	}
-	if got := e.milestone(t).Status; got != "DONE" {
-		t.Fatalf("milestone is %s", got)
-	}
-	gitCmd(t, e.root, "switch", "--quiet", "main")
-	return e
+	useGitEnv(t)
+	files, mID := mergeRepo(t)
+	root := t.TempDir()
+	restoreTree(t, root, files)
+	svc, cfg, st := openStore(t, root, nil, nil)
+	return &runEnv{root: root, svc: svc, cfg: cfg, st: st, mID: mID}
+}
+
+var (
+	mergeOnce  sync.Once
+	mergeFiles tree
+	mergeMID   int64
+)
+
+// mergeRepo returns the repository and database newMergeEnv hands out, built
+// once per test process by looping a one-task milestone to DONE. Neither
+// holds an absolute path, so any directory can host them.
+func mergeRepo(t *testing.T) (tree, int64) {
+	t.Helper()
+	mergeOnce.Do(func() {
+		root, err := os.MkdirTemp("", "ralph-merge-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.RemoveAll(root)
+		restoreTree(t, root, initialRepo(t))
+		e := openRunEnv(t, root, nil, nil, "a")
+		h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+		if _, err := e.run(t, context.Background(), h); err != nil {
+			t.Fatalf("setup run: %v\n%s", err, e.out.String())
+		}
+		if got := e.milestone(t).Status; got != "DONE" {
+			t.Fatalf("milestone is %s", got)
+		}
+		gitCmd(t, root, "switch", "--quiet", "main")
+		if err := e.st.Close(); err != nil {
+			t.Fatal(err)
+		}
+		mergeFiles, mergeMID = readTree(t, root), e.mID
+	})
+	return mergeFiles, mergeMID
 }
 
 func (e *runEnv) merge(opts MergeOptions) (MergeResult, error) {
@@ -41,10 +73,14 @@ type snapshot struct{ branch, head, base, tree string }
 
 func (e *runEnv) snapshot(t *testing.T) snapshot {
 	t.Helper()
+	heads := strings.Fields(gitCmd(t, e.root, "rev-parse", "HEAD", "main"))
+	if len(heads) != 2 {
+		t.Fatalf("rev-parse HEAD main: %q", heads)
+	}
 	return snapshot{
 		branch: gitCmd(t, e.root, "branch", "--show-current"),
-		head:   gitCmd(t, e.root, "rev-parse", "HEAD"),
-		base:   gitCmd(t, e.root, "rev-parse", "main"),
+		head:   heads[0],
+		base:   heads[1],
 		tree:   gitCmd(t, e.root, "status", "--porcelain"),
 	}
 }

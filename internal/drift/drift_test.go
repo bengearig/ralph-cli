@@ -59,9 +59,8 @@ func newEnv(t *testing.T, titles ...string) *env {
 	}
 
 	root := t.TempDir()
-	gitCmd(t, root, "init", "--quiet", "--initial-branch=main")
+	restoreTree(t, root, initialRepo(t))
 	e := &env{t: t, root: root}
-	e.commit("README.md", "hi\n", "initial")
 	e.base = e.rev("HEAD")
 	gitCmd(t, root, "switch", "--quiet", "-c", branch)
 

@@ -54,6 +54,7 @@ type runEnv struct {
 	root string
 	svc  *service.Service
 	cfg  *config.Config
+	st   *sqlite.Store
 	mID  int64
 	out  bytes.Buffer
 }
@@ -82,7 +83,9 @@ func newRunEnvWith(t *testing.T, tm taskmanager.Provider, titles ...string) *run
 	return newRunEnvKinds(t, tm, nil, titles...)
 }
 
-func newRunEnvKinds(t *testing.T, tm taskmanager.Provider, kinds []domain.Kind, titles ...string) *runEnv {
+// useGitEnv gives the test its own HOME and a git identity, and skips the
+// test when git is missing.
+func useGitEnv(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
@@ -97,29 +100,22 @@ func newRunEnvKinds(t *testing.T, tm taskmanager.Provider, kinds []domain.Kind, 
 	for _, k := range []string{"GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"} {
 		t.Setenv(k, "ralph@example.com")
 	}
+}
 
+func newRunEnvKinds(t *testing.T, tm taskmanager.Provider, kinds []domain.Kind, titles ...string) *runEnv {
+	t.Helper()
+	useGitEnv(t)
 	root := t.TempDir()
-	gitCmd(t, root, "init", "--quiet", "--initial-branch=main")
-	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("hi\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitCmd(t, root, "add", ".")
-	gitCmd(t, root, "commit", "--quiet", "-m", "initial")
+	restoreTree(t, root, initialRepo(t))
+	return openRunEnv(t, root, tm, kinds, titles...)
+}
 
+// openRunEnv opens the ralph store under root and creates the initiative,
+// milestone, and a TODO task per title.
+func openRunEnv(t *testing.T, root string, tm taskmanager.Provider, kinds []domain.Kind, titles ...string) *runEnv {
+	t.Helper()
+	svc, cfg, st := openStore(t, root, tm, kinds)
 	ctx := context.Background()
-	st, err := sqlite.Open(ctx, filepath.Join(root, project.DirName, "ralph.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	cfg, err := config.Defaults()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.Loop.StallThreshold = 2
-	cfg.Loop.MaxIterations = 10
-	svc := service.New(st, &search.Index{Store: st, Chunker: search.Chunker{MaxChars: 500}}, service.Options{StallThreshold: cfg.Loop.StallThreshold, TaskManager: tm, CardKinds: kinds})
-
 	i, _ := svc.CreateInitiative(ctx, service.InitiativeInput{Title: "SSO"})
 	iID, _ := domain.ParseID(domain.KindInitiative, i.ID)
 	m, _ := svc.CreateMilestone(ctx, service.MilestoneInput{InitiativeID: iID, Title: "OIDC login"})
@@ -134,7 +130,25 @@ func newRunEnvKinds(t *testing.T, tm taskmanager.Provider, kinds []domain.Kind, 
 			t.Fatal(err)
 		}
 	}
-	return &runEnv{root: root, svc: svc, cfg: cfg, mID: mID}
+	return &runEnv{root: root, svc: svc, cfg: cfg, st: st, mID: mID}
+}
+
+func openStore(t *testing.T, root string, tm taskmanager.Provider, kinds []domain.Kind) (*service.Service, *config.Config, *sqlite.Store) {
+	t.Helper()
+	ctx := context.Background()
+	st, err := sqlite.Open(ctx, filepath.Join(root, project.DirName, "ralph.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	cfg, err := config.Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Loop.StallThreshold = 2
+	cfg.Loop.MaxIterations = 10
+	svc := service.New(st, &search.Index{Store: st, Chunker: search.Chunker{MaxChars: 500}}, service.Options{StallThreshold: cfg.Loop.StallThreshold, TaskManager: tm, CardKinds: kinds})
+	return svc, cfg, st
 }
 
 // run runs the loop and then checks the milestone branch back out, so tests
@@ -142,7 +156,7 @@ func newRunEnvKinds(t *testing.T, tm taskmanager.Provider, kinds []domain.Kind, 
 func (e *runEnv) run(t *testing.T, ctx context.Context, h harness.Harness) (Outcome, error) {
 	t.Helper()
 	out, err := e.runRaw(t, ctx, h)
-	if out.Iterations > 0 && gitCmd(t, e.root, "branch", "--show-current") != out.Branch {
+	if out.Iterations > 0 {
 		gitCmd(t, e.root, "switch", "--quiet", out.Branch)
 	}
 	return out, err

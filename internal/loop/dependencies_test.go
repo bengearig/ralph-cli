@@ -196,7 +196,7 @@ func TestPlanDependencies(t *testing.T) {
 func TestDependencyCheckStaleBase(t *testing.T) {
 	e := newRunEnv(t, "a")
 	bare := t.TempDir()
-	gitCmd(t, bare, "init", "--quiet", "--bare", "--initial-branch=main")
+	restoreTree(t, bare, bareRepo(t))
 	gitCmd(t, e.root, "remote", "add", "origin", bare)
 	gitCmd(t, e.root, "push", "--quiet", "origin", "main")
 	oldMain := gitCmd(t, e.root, "rev-parse", "main")
