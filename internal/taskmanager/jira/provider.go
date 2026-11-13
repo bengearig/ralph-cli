@@ -183,6 +183,12 @@ func (p *Provider) Update(ctx context.Context, key string, req taskmanager.CardR
 	if err != nil {
 		return err
 	}
+	if req.Kind == domain.KindInitiative && req.ParentKey != req.PreviousParentKey {
+		fields.ParentChange = ParentSet
+		if req.ParentKey == "" {
+			fields.ParentChange = ParentClear
+		}
+	}
 	c, err := p.getClient()
 	if err != nil {
 		return err

@@ -384,6 +384,58 @@ func TestUpdate(t *testing.T) {
 	}
 }
 
+func TestUpdateParent(t *testing.T) {
+	tests := []struct {
+		name         string
+		kind         domain.Kind
+		parent, prev string
+		wantKey      string
+		wantNull     bool
+	}{
+		{"set", domain.KindInitiative, "PROJ-5", "", "PROJ-5", false},
+		{"unchanged", domain.KindInitiative, "PROJ-5", "PROJ-5", "", false},
+		{"changed", domain.KindInitiative, "PROJ-6", "PROJ-5", "PROJ-6", false},
+		{"clear", domain.KindInitiative, "", "PROJ-5", "", true},
+		{"never had one", domain.KindInitiative, "", "", "", false},
+		{"milestone ignores", domain.KindMilestone, "PROJ-5", "", "", false},
+		{"milestone ignores change", domain.KindMilestone, "PROJ-6", "PROJ-5", "", false},
+		{"task ignores", domain.KindTask, "PROJ-5", "PROJ-4", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFakeJira(t)
+			p := newTestProvider(f.URL)
+			req := taskmanager.CardRequest{Kind: tt.kind, ID: "X-1", Title: "t", ParentKey: tt.parent, PreviousParentKey: tt.prev}
+			if err := p.Update(context.Background(), "PROJ-9", req); err != nil {
+				t.Fatal(err)
+			}
+			r := f.last(t)
+			fl := r.fields()
+			if _, ok := fl["summary"]; !ok {
+				t.Errorf("no summary: %v", fl)
+			}
+			if _, ok := fl["description"]; !ok {
+				t.Errorf("no description: %v", fl)
+			}
+			par, has := fl["parent"]
+			switch {
+			case tt.wantKey != "":
+				if m, _ := par.(map[string]any); !has || m["key"] != tt.wantKey {
+					t.Errorf("parent = %v", par)
+				}
+			case tt.wantNull:
+				if !has || par != nil {
+					t.Errorf("parent = %v (present %v), want null", par, has)
+				}
+			default:
+				if has {
+					t.Errorf("unexpected parent %v", par)
+				}
+			}
+		})
+	}
+}
+
 func TestValidate(t *testing.T) {
 	f := newFakeJira(t)
 	if err := newTestProvider(f.URL).Validate(); err != nil {

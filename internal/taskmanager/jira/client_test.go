@@ -155,6 +155,34 @@ func TestUpdateIssue(t *testing.T) {
 	}
 }
 
+func TestUpdateIssueParent(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv.URL, time.Second)
+	tests := []struct {
+		name string
+		f    IssueFields
+		want string
+	}{
+		{"leave", IssueFields{Summary: "s", ParentKey: "P-1"}, `{"fields":{"summary":"s","description":null}}`},
+		{"set", IssueFields{Summary: "s", ParentKey: "P-1", ParentChange: ParentSet}, `{"fields":{"summary":"s","description":null,"parent":{"key":"P-1"}}}`},
+		{"clear", IssueFields{Summary: "s", ParentChange: ParentClear}, `{"fields":{"summary":"s","description":null,"parent":null}}`},
+	}
+	for _, tt := range tests {
+		if err := c.UpdateIssue(context.Background(), "PROJ-7", tt.f); err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		if body != tt.want {
+			t.Errorf("%s: body = %s, want %s", tt.name, body, tt.want)
+		}
+	}
+}
+
 func TestErrors(t *testing.T) {
 	tests := []struct {
 		name    string

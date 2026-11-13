@@ -42,6 +42,9 @@ type CardRequest struct {
 	Title       string
 	Description string
 	ParentKey   string
+	// PreviousParentKey is the parent card an initiative's card was last sent, empty for none.
+	// Update compares it with ParentKey to decide whether the parent changed; Hash ignores it.
+	PreviousParentKey string
 	// Status is the ralph status of a task or milestone; empty for an initiative.
 	Status string
 }

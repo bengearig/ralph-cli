@@ -372,6 +372,9 @@ func (s *Service) syncCard(ctx context.Context, kind domain.Kind, id int64, mode
 	if row.ContentHash == hash {
 		return inSync, "", nil
 	}
+	if kind == domain.KindInitiative {
+		req.PreviousParentKey = row.ParentKey
+	}
 	if err := p.Update(ctx, row.Key, req); err != nil {
 		warn := fmt.Sprintf("%s card %s for %s not updated: %v", p.Name(), row.Key, name, err)
 		if rerr := s.RecordCardFailure(ctx, kind, id, p.Name(), err); rerr != nil {

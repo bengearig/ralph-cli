@@ -77,7 +77,18 @@ type IssueFields struct {
 	Description json.RawMessage
 	Labels      []string
 	ParentKey   string
+	// ParentChange applies only to UpdateIssue.
+	ParentChange ParentChange
 }
+
+// ParentChange says what UpdateIssue does with a card's parent.
+type ParentChange int
+
+const (
+	ParentLeave ParentChange = iota
+	ParentSet
+	ParentClear
+)
 
 type keyRef struct {
 	Key string `json:"key,omitempty"`
@@ -134,21 +145,32 @@ func (c *Client) CreateIssue(ctx context.Context, f IssueFields) (string, error)
 }
 
 // UpdateIssue overwrites a card's summary and description. An empty
-// description clears the card's description.
+// description clears the card's description. The parent is sent only when
+// f.ParentChange asks to set or clear it.
 func (c *Client) UpdateIssue(ctx context.Context, key string, f IssueFields) error {
 	desc := f.Description
 	if len(bytes.TrimSpace(desc)) == 0 {
 		desc = json.RawMessage("null")
 	}
-	body, err := json.Marshal(struct {
-		Fields struct {
-			Summary     string          `json:"summary"`
-			Description json.RawMessage `json:"description"`
-		} `json:"fields"`
-	}{Fields: struct {
+	type updateFields struct {
 		Summary     string          `json:"summary"`
 		Description json.RawMessage `json:"description"`
-	}{f.Summary, desc}})
+		Parent      json.RawMessage `json:"parent,omitempty"`
+	}
+	uf := updateFields{Summary: f.Summary, Description: desc}
+	switch f.ParentChange {
+	case ParentSet:
+		p, err := json.Marshal(keyRef{Key: f.ParentKey})
+		if err != nil {
+			return fmt.Errorf("jira: encode update request: %w", err)
+		}
+		uf.Parent = p
+	case ParentClear:
+		uf.Parent = json.RawMessage("null")
+	}
+	body, err := json.Marshal(struct {
+		Fields updateFields `json:"fields"`
+	}{uf})
 	if err != nil {
 		return fmt.Errorf("jira: encode update request: %w", err)
 	}
