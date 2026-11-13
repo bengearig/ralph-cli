@@ -728,7 +728,7 @@ func importStatus(t *testing.T, e env, p string) ImportView {
 
 func queueOne(t *testing.T, e env, p, content string) string {
 	t.Helper()
-	out, err := e.svc.QueueImports(context.Background(), []ImportFile{{Path: p, Content: content}})
+	out, err := e.svc.QueueImports(context.Background(), []ImportFile{{Path: p, Content: content}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -787,7 +787,7 @@ func TestImportDoneAndChanged(t *testing.T) {
 func TestImportInvalidPaths(t *testing.T) {
 	e := newEnv(t)
 	for _, p := range []string{"../x", "/abs", "a/../b", `a\b`, "", ".", "a//b", "a/", "./a"} {
-		_, err := e.svc.QueueImports(context.Background(), []ImportFile{{Path: p, Content: "x"}})
+		_, err := e.svc.QueueImports(context.Background(), []ImportFile{{Path: p, Content: "x"}}, nil)
 		if !errors.Is(err, domain.ErrInvalid) {
 			t.Errorf("path %q: err = %v", p, err)
 		}
@@ -796,7 +796,7 @@ func TestImportInvalidPaths(t *testing.T) {
 
 func TestQueueImportsAtomic(t *testing.T) {
 	e := newEnv(t)
-	_, err := e.svc.QueueImports(context.Background(), []ImportFile{{Path: "ok.md", Content: "x"}, {Path: "../bad", Content: "y"}})
+	_, err := e.svc.QueueImports(context.Background(), []ImportFile{{Path: "ok.md", Content: "x"}, {Path: "../bad", Content: "y"}}, nil)
 	if !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("err = %v", err)
 	}

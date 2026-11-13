@@ -82,7 +82,7 @@ exit status.`,
 			if asNew {
 				return a.runAsNew(cmd, svc, collected, skipped, warnings, opts)
 			}
-			outcomes, err := svc.QueueImports(cmd.Context(), collected)
+			outcomes, err := svc.QueueImports(cmd.Context(), collected, nil)
 			if err != nil {
 				return err
 			}

@@ -80,7 +80,7 @@ func (t *tools) importQueue(ctx context.Context, _ *mcp.CallToolRequest, in impo
 	if in.AsNew {
 		out.Imported, err = t.svc.ImportAsNew(ctx, files, opts)
 	} else {
-		out.Queued, err = t.svc.QueueImports(ctx, files)
+		out.Queued, err = t.svc.QueueImports(ctx, files, nil)
 	}
 	return nil, out, toolError(err)
 }
