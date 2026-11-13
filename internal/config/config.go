@@ -43,6 +43,21 @@ const (
 	UIProgressNever = "never"
 )
 
+var storeIDRE = regexp.MustCompile(`^[a-z0-9]{2,6}$`)
+
+// NormalizeStoreID trims and lowercases a store identifier and checks it. An
+// empty result is valid and means ralph generates one.
+func NormalizeStoreID(s string) (string, error) {
+	id := strings.ToLower(strings.TrimSpace(s))
+	if id == "" {
+		return "", nil
+	}
+	if !storeIDRE.MatchString(id) {
+		return "", fmt.Errorf("store identifier %q must be 2 to 6 lowercase letters or digits", s)
+	}
+	return id, nil
+}
+
 var jiraDurationRE = regexp.MustCompile(`^[0-9]+[wdhm]( [0-9]+[wdhm])*$`)
 
 var (
@@ -208,8 +223,11 @@ type TaskManagerConfig struct {
 	Timeout  time.Duration `koanf:"timeout"`
 	// CardKinds are the resource kinds (initiative, milestone, task) that get a
 	// new card. Cards that already exist are kept in step whatever the list says.
-	CardKinds []string   `koanf:"card_kinds"`
-	Jira      JiraConfig `koanf:"jira"`
+	CardKinds []string `koanf:"card_kinds"`
+	// StoreID tells this clone's cards apart from other clones' in a shared
+	// task manager project. Empty means ralph generates one.
+	StoreID string     `koanf:"store_id"`
+	Jira    JiraConfig `koanf:"jira"`
 }
 
 type JiraConfig struct {
@@ -437,6 +455,9 @@ func (c *Config) Validate() error {
 		bad("task_manager.timeout", "must be positive")
 	}
 	validateCardKinds(c.TaskManager.CardKinds, bad)
+	if _, err := NormalizeStoreID(c.TaskManager.StoreID); err != nil {
+		bad("task_manager.store_id", "%q must be 2 to 6 lowercase letters or digits", strings.TrimSpace(c.TaskManager.StoreID))
+	}
 	if c.TaskManager.Provider == TaskManagerJira {
 		j := c.TaskManager.Jira
 		if u, err := url.Parse(j.BaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {

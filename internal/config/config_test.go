@@ -976,3 +976,54 @@ func TestPRStaleBase(t *testing.T) {
 		t.Error("unknown key under pr should fail strict decoding")
 	}
 }
+
+func TestStoreIDDefaultIsEmptyAndValid(t *testing.T) {
+	l, err := Load(Sources{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := l.Config.TaskManager.StoreID; got != "" {
+		t.Errorf("store_id = %q, want empty", got)
+	}
+	if err := l.Config.Validate(); err != nil {
+		t.Errorf("validate: %v", err)
+	}
+}
+
+func TestStoreIDEnvOverridesFile(t *testing.T) {
+	project := writeFile(t, t.TempDir(), "p.yaml", "task_manager:\n  store_id: zz\n")
+	l, err := Load(Sources{ProjectFile: project, Environ: []string{"RALPH_TASK_MANAGER__STORE_ID=Ab"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := l.Config.TaskManager.StoreID; got != "Ab" {
+		t.Errorf("store_id = %q, want Ab", got)
+	}
+	if got, err := NormalizeStoreID("  Ab "); err != nil || got != "ab" {
+		t.Errorf("NormalizeStoreID = %q, %v; want ab", got, err)
+	}
+}
+
+func TestNormalizeStoreID(t *testing.T) {
+	for _, in := range []string{"ab", "AB1", "a1b2c3", ""} {
+		if _, err := NormalizeStoreID(in); err != nil {
+			t.Errorf("NormalizeStoreID(%q) = %v, want ok", in, err)
+		}
+	}
+	for _, in := range []string{"a", "abcdefg", "a-b", "a b", "ab_"} {
+		if _, err := NormalizeStoreID(in); err == nil || !strings.Contains(err.Error(), "2 to 6 lowercase letters or digits") {
+			t.Errorf("NormalizeStoreID(%q) = %v, want the 2 to 6 rule", in, err)
+		}
+	}
+}
+
+func TestValidateStoreID(t *testing.T) {
+	for _, provider := range []string{TaskManagerNone, TaskManagerJira} {
+		t.Run(provider, func(t *testing.T) {
+			_, err := Load(Sources{Environ: []string{"RALPH_TASK_MANAGER__PROVIDER=" + provider, "RALPH_TASK_MANAGER__STORE_ID=a-b"}})
+			if err == nil || !strings.Contains(err.Error(), "task_manager.store_id") {
+				t.Errorf("err = %v, want a task_manager.store_id error", err)
+			}
+		})
+	}
+}
