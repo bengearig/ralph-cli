@@ -136,6 +136,12 @@ type Store interface {
 	SetDocumentScope(ctx context.Context, id int64, initiativeID, originInitiativeID *int64, slug string) error
 	DeleteDocument(ctx context.Context, id int64) error
 
+	// GetMeta returns the value kept for key, or ErrNotFound when there is none.
+	GetMeta(ctx context.Context, key string) (string, error)
+	// SetMetaIfAbsent keeps value for key only when the key has none, and returns the value now kept, whether just
+	// inserted or already there. It is safe against other processes racing on the same database.
+	SetMetaIfAbsent(ctx context.Context, key, value string) (string, error)
+
 	// GetCard returns ErrNotFound when the entity has no card row for the provider.
 	GetCard(ctx context.Context, kind domain.Kind, entityID int64, provider string) (domain.Card, error)
 	// SetCard inserts the card or replaces the row with the same kind, entity, and provider.

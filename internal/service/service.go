@@ -42,6 +42,10 @@ type Service struct {
 	inTx bool
 	// pullRequestLink builds a pull request's web URL for views; nil leaves URLs empty.
 	pullRequestLink func(provider, namespace, repository string, number int) (string, bool)
+	// storeID is the normalized configured identifier; empty means none is set.
+	storeID string
+	// storeIDCache is shared with services bound to a transaction.
+	storeIDCache *storeIDCache
 }
 
 // Options configures a Service.
@@ -63,6 +67,8 @@ type Options struct {
 	CardTimeout time.Duration
 	// CardKinds are the kinds that get new cards. Nil means every kind; a non-nil slice, even an empty one, is exactly those kinds.
 	CardKinds []domain.Kind
+	// StoreID is the configured store identifier, already normalized; empty means none is configured.
+	StoreID string
 }
 
 // New returns a Service. The index must share the store.
@@ -85,7 +91,7 @@ func New(st store.Store, ix *search.Index, opts Options) *Service {
 	}
 	return &Service{store: st, index: ix, log: log, stallThreshold: opts.StallThreshold, searchLimit: limit,
 		loopLockPath: opts.LoopLockPath, taskManager: opts.TaskManager, cardClaimStale: claimStale, cardTimeout: cardTimeout, cardCanceledStatus: opts.CardCanceledStatus,
-		cardKinds: opts.CardKinds}
+		cardKinds: opts.CardKinds, storeID: opts.StoreID, storeIDCache: &storeIDCache{}}
 }
 
 // SetPullRequestLink sets how views build a pull request's web URL. It must

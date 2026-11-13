@@ -160,6 +160,11 @@ task_manager:
   # step whether or not their kind is listed. A list set in another config
   # file replaces this one; [] creates no new cards.
   card_kinds: [initiative, milestone]
+  # Tells this clone's cards apart from other clones' in a shared task manager
+  # project: 2 to 6 lowercase letters or digits. It is per clone, so set it in
+  # the global config or the environment, not the committed project file.
+  # Empty means ralph generates one.
+  store_id: ""
   jira:
     base_url: ""
     project_key: ""

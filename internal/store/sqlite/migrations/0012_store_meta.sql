@@ -1,0 +1,1 @@
+CREATE TABLE store_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);

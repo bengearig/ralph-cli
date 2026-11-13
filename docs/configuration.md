@@ -200,6 +200,7 @@ every task manager untouched. See [Jira](jira.md) for setup, what a card looks l
 | `task_manager.provider` | `none` | Task manager: `none` or `jira`. |
 | `task_manager.timeout` | `10s` | Per-request timeout for task manager calls, as a Go duration. |
 | `task_manager.card_kinds` | `initiative`, `milestone` | The kinds of resource that get a card when they are created or synced: any of `initiative`, `milestone`, and `task`. A child kind needs its parent kind, so `milestone` needs `initiative` and `task` needs `milestone`. An empty list creates no new cards. A list set in a later layer replaces an earlier one. Cards that already exist are kept in step whatever the list says. See [Choosing which kinds get cards](jira.md#choosing-which-kinds-get-cards). |
+| `task_manager.store_id` | `""` | Short identifier that tells this clone's cards apart from other clones' in a shared task manager project: 2 to 6 lowercase letters or digits (case and surrounding spaces are normalised). It is per clone, so set it in the global config or with `RALPH_TASK_MANAGER__STORE_ID`, not in the committed project file. Empty means ralph generates one. Validated whichever provider is configured. See [Store identifier](jira.md#store-identifier). |
 | `task_manager.jira.base_url` | `""` | Base URL of the Jira site. |
 | `task_manager.jira.project_key` | `""` | Key of the Jira project that holds the cards. |
 | `task_manager.jira.email_env` | `RALPH_JIRA_EMAIL` | **Name** of the environment variable holding the account email. Never put the email in a file. |
@@ -214,7 +215,7 @@ every task manager untouched. See [Jira](jira.md) for setup, what a card looks l
 | `task_manager.jira.status_map` | `TODO: To Do`, `IN_PROGRESS: In Progress`, `DONE: Done` | Maps a ralph status (task or milestone) to the Jira status its card moves to: one name, or a list of names to pass through in order when the workflow does not allow the jump. A blank value or a missing status leaves the card alone. `CANCELLED` is not allowed here; use `canceled_status`. Entries merge with the defaults, and a blank value removes a default. |
 
 The `task_manager.jira` block is validated only when the provider is `jira`, as `pr.bitbucket_cloud` is.
-`task_manager.card_kinds` is validated whether or not a provider is configured.
+`task_manager.card_kinds` and `task_manager.store_id` are validated whether or not a provider is configured.
 
 A parent's issue type must sit exactly one hierarchy level above its child's, which the defaults satisfy only where
 Epic is directly above Task; see [Hierarchy levels](jira.md#hierarchy-levels).

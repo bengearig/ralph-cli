@@ -151,6 +151,39 @@ Jira requires the parent's issue type to sit exactly one hierarchy level above t
 [Hierarchy levels](#hierarchy-levels). With the default `issue_types` the initiative card is an Epic, so the parent has
 to be a type above Epic. A project without one sets `issue_types.initiative` to match.
 
+## Store identifier
+
+The ralph store is per clone: `.ralph/ralph.db` is git-ignored (see
+[ADR 3](adr/0003-sqlite-store-in-repo-gitignored.md)), while the Jira project and the committed `.ralph/config.yaml` are
+shared. Teammates who share a Jira project each number their resources from 1, so two people can both have a `T-12`.
+A store identifier is a short value that belongs to one clone and tells its cards apart from another clone's. See
+[ADR 50](adr/0050-stamp-cards-with-a-store-identifier.md) for the decision.
+
+- **Per clone.** Because it differs from one clone to the next, it belongs in the global config or the environment, not
+  in the committed project file, where every teammate would get the same value.
+- **Setting.** `task_manager.store_id`, or the environment variable `RALPH_TASK_MANAGER__STORE_ID`. It is empty by
+  default. Surrounding spaces are trimmed and the value is lowercased, and it must then be 2 to 6 lowercase letters or
+  digits. Anything else is reported as an invalid `task_manager.store_id`, whichever provider is configured.
+- **Resolution order.** The setting wins. Without it, ralph uses the value kept in the store. Without that, it
+  generates one and keeps it in the store. An identifier is never required, so no existing setup fails validation.
+- **Generated identifiers.** A generated identifier is 3 characters, drawn from letters and digits without the
+  look-alike characters (`i`, `l`, `o`, `0`, and `1`). It is created the first time a card request is built while a
+  task manager is configured, never when the store is opened, so a project without a task manager never gets one.
+- **Showing it.** `ralph cards id` prints the identifier and where it comes from, and writes nothing:
+
+  | Output | Meaning |
+  |---|---|
+  | `ab (configured)` | It comes from the setting. |
+  | `k7f (generated, kept in the store)` | It was generated and is kept in the store. |
+  | `none yet; one is generated when the first card is created` | There is neither a setting nor a stored value. |
+
+  With `--json` the output has `store_id` and `source`, which is `config`, `store`, or `none`. See
+  [the command reference](cli.md#cards).
+- **A deleted store.** A fresh store generates a new identifier, so cards made under the old one look like another
+  clone's. To keep the old identifier, set `task_manager.store_id` to the old value.
+- **A shared database.** When several people share one database through `storage.path`, they share its identifier. That
+  is correct, because IDs are then unique across the team.
+
 ## Pull request links
 
 When `ralph pr create` ends with a recorded pull request (`opened`, `adopted`, or `exists`), ralph adds a remote link
