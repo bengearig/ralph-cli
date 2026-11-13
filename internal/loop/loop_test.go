@@ -60,6 +60,7 @@ func setup(t *testing.T) (Planner, int64) {
 }
 
 func TestPlan(t *testing.T) {
+	t.Parallel()
 	p, mID := setup(t)
 	plan, err := p.Plan(context.Background(), mID)
 	if err != nil {
@@ -92,6 +93,7 @@ func TestPlan(t *testing.T) {
 }
 
 func TestPlanCustomPromptTemplate(t *testing.T) {
+	t.Parallel()
 	p, mID := setup(t)
 	path := filepath.Join(p.Root, "prompt.tmpl")
 	os.WriteFile(path, []byte("Do {{.Task.ID}} on {{.Branch}}"), 0o644)
@@ -114,6 +116,7 @@ func TestPlanCustomPromptTemplate(t *testing.T) {
 }
 
 func TestNothingToLoop(t *testing.T) {
+	t.Parallel()
 	p, _ := setup(t)
 	ctx := context.Background()
 	m, _ := p.Service.CreateMilestone(ctx, service.MilestoneInput{InitiativeID: 1, Title: "Empty"})
@@ -131,6 +134,7 @@ func TestNothingToLoop(t *testing.T) {
 }
 
 func TestBranchName(t *testing.T) {
+	t.Parallel()
 	i, m := Ref{ID: "I-1", Slug: "sso"}, Ref{ID: "M-2", Slug: "oidc-login", Title: "OIDC Login"}
 	good := map[string]string{
 		"ralph/{{.Milestone.Slug}}":                      "ralph/oidc-login",
@@ -160,6 +164,7 @@ func TestBranchName(t *testing.T) {
 }
 
 func TestDefaultPromptRendersWithoutNotes(t *testing.T) {
+	t.Parallel()
 	out, err := RenderPrompt(DefaultPrompt(), PromptData{
 		Project: "p", Task: service.TaskView{ID: "T-1", Title: "x"}, Iteration: 1, MaxIterations: 5, StallThreshold: 3,
 	})
@@ -172,6 +177,7 @@ func TestDefaultPromptRendersWithoutNotes(t *testing.T) {
 }
 
 func TestCommitSubjects(t *testing.T) {
+	t.Parallel()
 	i, m := Ref{ID: "I-1", Slug: "sso", Title: "SSO"}, Ref{ID: "M-2", Slug: "login", Title: "Login"}
 	task := service.TaskView{ID: "T-3", Title: "Add route"}
 	for _, tc := range []struct{ tmpl, want string }{
@@ -201,6 +207,7 @@ func TestCommitSubjects(t *testing.T) {
 }
 
 func TestCommitSubjectsCardKey(t *testing.T) {
+	t.Parallel()
 	i, m := Ref{ID: "I-1", Slug: "sso", Title: "SSO"}, Ref{ID: "M-2", Slug: "login", Title: "Login"}
 	base := service.TaskView{ID: "T-12", Title: "Add X"}
 	keyed := base
@@ -233,6 +240,7 @@ func TestCommitSubjectsCardKey(t *testing.T) {
 }
 
 func TestPlanRefusesArchivedInitiative(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	p, mID := setup(t)
 	if _, err := p.Service.ArchiveInitiative(ctx, 1, service.DocumentChoice{}); err != nil {
@@ -251,6 +259,7 @@ func TestPlanRefusesArchivedInitiative(t *testing.T) {
 }
 
 func TestBranchNameCardKeys(t *testing.T) {
+	t.Parallel()
 	i, m := Ref{ID: "I-1", Slug: "sso"}, Ref{ID: "M-2", Slug: "oidc-login", Title: "OIDC Login"}
 	keys := BranchKeys{Initiative: "ABC-1", Milestone: "ABC-1234"}
 	for tmpl, want := range map[string]string{
@@ -281,6 +290,7 @@ func TestBranchNameCardKeys(t *testing.T) {
 }
 
 func TestMilestoneBranchRecordedWins(t *testing.T) {
+	t.Parallel()
 	i, m := Ref{ID: "I-1", Slug: "sso"}, Ref{ID: "M-2", Slug: "oidc-login"}
 	got, err := MilestoneBranch("{{.Milestone.CardKeyPrefix}}{{.Milestone.Slug}}", i, m, BranchKeys{Milestone: "ABC-1"}, "kept/branch")
 	if err != nil || got != "kept/branch" {
@@ -293,6 +303,7 @@ func TestMilestoneBranchRecordedWins(t *testing.T) {
 }
 
 func TestCommitTemplateRejectsCardKey(t *testing.T) {
+	t.Parallel()
 	tmpl, err := parseCommitTemplate("{{.Milestone.CardKey}}")
 	if err != nil {
 		t.Fatal(err)
@@ -304,6 +315,7 @@ func TestCommitTemplateRejectsCardKey(t *testing.T) {
 }
 
 func TestBranchNameEmptyKeyCleanup(t *testing.T) {
+	t.Parallel()
 	i := Ref{ID: "I-1", Slug: "sso"}
 	m := Ref{ID: "M-2", Slug: "implement-cool-feature"}
 	none := BranchKeys{}

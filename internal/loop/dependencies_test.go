@@ -65,6 +65,7 @@ func (e *runEnv) check(t *testing.T) []DependencyFinding {
 }
 
 func TestDependencyCheckMatrix(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	cancelled := e.depMilestone(t, "Cancelled", domain.StatusCancelled)
 	running := e.depMilestone(t, "Running", domain.StatusTodo, domain.StatusInProgress)
@@ -113,6 +114,7 @@ func TestDependencyCheckMatrix(t *testing.T) {
 }
 
 func TestDependencyCheckNoDependenciesSkipsGit(t *testing.T) {
+	t.Parallel()
 	p, mID := setup(t)
 	fs, err := DependencyCheck(context.Background(), p.Service, p.Config, p.Root, mID)
 	if err != nil || fs == nil || len(fs) != 0 {
@@ -146,6 +148,7 @@ func TestDependencyCheckNeedsRepository(t *testing.T) {
 }
 
 func TestPlanDependencies(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	ctx := context.Background()
 	ahead := e.depMilestone(t, "Ahead", doneSteps...)
@@ -194,9 +197,10 @@ func TestPlanDependencies(t *testing.T) {
 }
 
 func TestDependencyCheckStaleBase(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	bare := t.TempDir()
-	gitCmd(t, bare, "init", "--quiet", "--bare", "--initial-branch=main")
+	restoreTree(t, bare, bareRepo(t))
 	gitCmd(t, e.root, "remote", "add", "origin", bare)
 	gitCmd(t, e.root, "push", "--quiet", "origin", "main")
 	oldMain := gitCmd(t, e.root, "rev-parse", "main")

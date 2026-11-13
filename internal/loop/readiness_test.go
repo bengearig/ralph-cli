@@ -78,11 +78,13 @@ func wantReasons(t *testing.T, got []string, contains ...string) {
 }
 
 func TestReadinessReady(t *testing.T) {
+	t.Parallel()
 	e := newReadinessEnv(t)
 	wantReasons(t, e.check(t))
 }
 
 func TestReadinessLock(t *testing.T) {
+	t.Parallel()
 	t.Run("held", func(t *testing.T) {
 		e := newReadinessEnv(t)
 		lock, err := looplock.Acquire(e.lockPath, "milestone M-9")
@@ -132,6 +134,7 @@ func TestReadinessLock(t *testing.T) {
 }
 
 func TestReadinessDirtyTree(t *testing.T) {
+	t.Parallel()
 	t.Run("on the branch", func(t *testing.T) {
 		e := newReadinessEnv(t)
 		e.dirty(t, "a.txt", "b.txt")
@@ -177,6 +180,7 @@ func TestReadinessDirtyTree(t *testing.T) {
 }
 
 func TestReadinessUncommittedTasks(t *testing.T) {
+	t.Parallel()
 	t.Run("done without commit", func(t *testing.T) {
 		e := newReadinessEnv(t)
 		e.tasks[0].Commit = ""
@@ -209,6 +213,7 @@ func TestReadinessUncommittedTasks(t *testing.T) {
 }
 
 func TestReadinessMilestoneNotDone(t *testing.T) {
+	t.Parallel()
 	for _, status := range []string{"IN_PROGRESS", "READY", "ARTICULATING"} {
 		t.Run(status, func(t *testing.T) {
 			e := newReadinessEnv(t)
@@ -219,6 +224,7 @@ func TestReadinessMilestoneNotDone(t *testing.T) {
 }
 
 func TestReadinessAllReasonsInOrder(t *testing.T) {
+	t.Parallel()
 	e := newReadinessEnv(t)
 	lock, err := looplock.Acquire(e.lockPath, "milestone M-9")
 	if err != nil {
@@ -232,6 +238,7 @@ func TestReadinessAllReasonsInOrder(t *testing.T) {
 }
 
 func TestReadinessChangesNothing(t *testing.T) {
+	t.Parallel()
 	e := newReadinessEnv(t)
 	e.dirty(t, "a.txt")
 	lock, err := looplock.Acquire(e.lockPath, "milestone M-9")

@@ -17,7 +17,7 @@ import (
 func (e *runEnv) addRemote(t *testing.T) string {
 	t.Helper()
 	bare := t.TempDir()
-	gitCmd(t, bare, "init", "--quiet", "--bare", "--initial-branch=main")
+	restoreTree(t, bare, bareRepo(t))
 	gitCmd(t, e.root, "remote", "add", "origin", bare)
 	gitCmd(t, e.root, "push", "--quiet", "origin", "main")
 	return bare
@@ -46,6 +46,7 @@ func guard(t *testing.T, e *runEnv, mode string, opts BaseGuardOptions) (BaseGua
 }
 
 func TestEnsureFreshBaseCurrentAndAhead(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	e.addRemote(t)
 	res, err := guard(t, e, config.StaleBaseRefuse, BaseGuardOptions{})
@@ -60,6 +61,7 @@ func TestEnsureFreshBaseCurrentAndAhead(t *testing.T) {
 }
 
 func TestEnsureFreshBaseMissingLocalBase(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	e.addRemote(t)
 	gitCmd(t, e.root, "switch", "--quiet", "-c", "work")
@@ -71,6 +73,7 @@ func TestEnsureFreshBaseMissingLocalBase(t *testing.T) {
 }
 
 func TestEnsureFreshBaseBehindRefuses(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	bare := e.addRemote(t)
 	advanceRemote(t, bare, 2)
@@ -90,6 +93,7 @@ func TestEnsureFreshBaseBehindRefuses(t *testing.T) {
 }
 
 func TestEnsureFreshBaseBehindSyncs(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	bare := e.addRemote(t)
 	advanceRemote(t, bare, 2)
@@ -100,12 +104,13 @@ func TestEnsureFreshBaseBehindSyncs(t *testing.T) {
 	if !res.Synced || len(res.Notices) != 1 || res.Notices[0] != "fast-forwarded main to origin/main (2 commit(s))" {
 		t.Fatalf("result = %+v", res)
 	}
-	if got, want := gitCmd(t, e.root, "rev-parse", "main"), gitCmd(t, e.root, "rev-parse", "origin/main"); got != want {
-		t.Errorf("main = %s, want %s", got, want)
+	if tips := strings.Fields(gitCmd(t, e.root, "rev-parse", "main", "origin/main")); len(tips) != 2 || tips[0] != tips[1] {
+		t.Errorf("main and origin/main = %v, want the same commit", tips)
 	}
 }
 
 func TestEnsureFreshBaseSyncDirtyRefuses(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	bare := e.addRemote(t)
 	advanceRemote(t, bare, 1)
@@ -123,6 +128,7 @@ func TestEnsureFreshBaseSyncDirtyRefuses(t *testing.T) {
 }
 
 func TestEnsureFreshBaseDivergedRefusesInBothModes(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{config.StaleBaseRefuse, config.StaleBaseSync} {
 		e := newRunEnv(t, "a")
 		bare := e.addRemote(t)
@@ -140,6 +146,7 @@ func TestEnsureFreshBaseDivergedRefusesInBothModes(t *testing.T) {
 }
 
 func TestEnsureFreshBaseFetchFailures(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	e.addRemote(t)
 	e.cfg.PR.Remote = "nowhere"
@@ -156,6 +163,7 @@ func TestEnsureFreshBaseFetchFailures(t *testing.T) {
 }
 
 func TestEnsureFreshBaseForceSkipsFetch(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	bare := e.addRemote(t)
 	remoteBefore := gitCmd(t, e.root, "rev-parse", "origin/main")
@@ -170,6 +178,7 @@ func TestEnsureFreshBaseForceSkipsFetch(t *testing.T) {
 }
 
 func TestEnsureFreshBaseDryRun(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{config.StaleBaseRefuse, config.StaleBaseSync} {
 		e := newRunEnv(t, "a")
 		bare := e.addRemote(t)

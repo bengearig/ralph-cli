@@ -22,7 +22,6 @@ func newRepo(t *testing.T) Repo {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
-	isolate(t)
 	dir := t.TempDir()
 	r := Repo{Dir: dir, Exclude: ".ralph"}
 	mustRun(t, r, "init", "--quiet", "--initial-branch=main")
@@ -30,19 +29,6 @@ func newRepo(t *testing.T) Repo {
 	mustRun(t, r, "add", "README.md")
 	mustRun(t, r, "commit", "--quiet", "-m", "initial")
 	return r
-}
-
-// isolate points git at a throwaway global config and a fixed identity.
-func isolate(t *testing.T) {
-	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", home)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("GIT_AUTHOR_NAME", "Ralph Test")
-	t.Setenv("GIT_AUTHOR_EMAIL", "ralph@example.com")
-	t.Setenv("GIT_COMMITTER_NAME", "Ralph Test")
-	t.Setenv("GIT_COMMITTER_EMAIL", "ralph@example.com")
 }
 
 func mustRun(t *testing.T, r Repo, args ...string) string {
@@ -66,6 +52,7 @@ func write(t *testing.T, dir, name, body string) {
 }
 
 func TestBranches(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	if b, err := r.CurrentBranch(ctx); err != nil || b != "main" {
@@ -96,6 +83,7 @@ func TestBranches(t *testing.T) {
 }
 
 func TestCreateBranchFromRemoteDoesNotTrack(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	origin := newRepo(t)
 	clone := Repo{Dir: t.TempDir(), Exclude: ".ralph"}
@@ -118,6 +106,7 @@ func TestCreateBranchFromRemoteDoesNotTrack(t *testing.T) {
 }
 
 func TestDirtyIgnoresExclude(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	write(t, r.Dir, ".ralph/runs/log.jsonl", "{}")
@@ -141,6 +130,7 @@ func TestDirtyIgnoresExclude(t *testing.T) {
 }
 
 func TestCommitAll(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	if _, committed, err := r.CommitAll(ctx, "nothing"); err != nil || committed {
@@ -172,6 +162,7 @@ func TestCommitAll(t *testing.T) {
 }
 
 func TestCommitAllTrailers(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 
@@ -218,6 +209,7 @@ func TestCommitAllTrailers(t *testing.T) {
 }
 
 func TestCommitHookFailureIsReported(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	write(t, r.Dir, ".git/hooks/pre-commit", "#!/bin/sh\necho 'lint failed' >&2\nexit 1\n")
@@ -243,6 +235,7 @@ func TestNotARepo(t *testing.T) {
 }
 
 func TestStash(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	if saved, err := r.Stash(ctx, "nothing"); err != nil || saved {
@@ -270,6 +263,7 @@ func TestStash(t *testing.T) {
 }
 
 func TestRevParse(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	hash, err := r.RevParse(ctx, "HEAD")
@@ -292,6 +286,7 @@ func TestRevParse(t *testing.T) {
 }
 
 func TestMergeBase(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	fork := mustRun(t, r, "rev-parse", "HEAD")
@@ -331,6 +326,7 @@ func commitFile(t *testing.T, r Repo, name, body, message string) string {
 }
 
 func TestIsAncestor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	parent := mustRun(t, r, "rev-parse", "HEAD")
@@ -359,6 +355,7 @@ func TestIsAncestor(t *testing.T) {
 }
 
 func TestCommitExists(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	head := mustRun(t, r, "rev-parse", "HEAD")
@@ -376,6 +373,7 @@ func TestCommitExists(t *testing.T) {
 }
 
 func TestLog(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	mustRun(t, r, "switch", "--quiet", "-c", "feature")
@@ -420,6 +418,7 @@ func TestLog(t *testing.T) {
 }
 
 func TestPatchID(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	write(t, r.Dir, "other.txt", "1\n2\n3\n")
@@ -469,6 +468,7 @@ func addCommit(t *testing.T, r Repo, name string) {
 }
 
 func TestHeadState(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	head := mustRun(t, r, "rev-parse", "HEAD")
@@ -490,6 +490,7 @@ func TestHeadState(t *testing.T) {
 }
 
 func TestMergeFFOnly(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	if err := r.CreateBranch(ctx, "feature", "main"); err != nil {
@@ -512,6 +513,7 @@ func TestMergeFFOnly(t *testing.T) {
 }
 
 func TestMergeFFOnlyDiverged(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	if err := r.CreateBranch(ctx, "feature", "main"); err != nil {
@@ -536,6 +538,7 @@ func TestMergeFFOnlyDiverged(t *testing.T) {
 }
 
 func TestDeleteBranch(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	if err := r.CreateBranch(ctx, "merged", "main"); err != nil {
@@ -564,6 +567,7 @@ func TestDeleteBranch(t *testing.T) {
 }
 
 func TestResetHard(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	head := mustRun(t, r, "rev-parse", "HEAD")
@@ -588,6 +592,7 @@ func newRemote(t *testing.T, r Repo) Repo {
 }
 
 func TestPushNewBranchSetsUpstream(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	bare := newRemote(t, r)
@@ -614,6 +619,7 @@ func TestPushNewBranchSetsUpstream(t *testing.T) {
 }
 
 func TestPushAgain(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	bare := newRemote(t, r)
@@ -638,6 +644,7 @@ func TestPushAgain(t *testing.T) {
 }
 
 func TestPushWhileAnotherBranchIsCheckedOut(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	bare := newRemote(t, r)
@@ -661,6 +668,7 @@ func TestPushWhileAnotherBranchIsCheckedOut(t *testing.T) {
 }
 
 func TestPushDivergedIsRejectedNotForced(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r := newRepo(t)
 	bare := newRemote(t, r)
@@ -696,6 +704,7 @@ func TestPushDivergedIsRejectedNotForced(t *testing.T) {
 }
 
 func TestPushMissingRemote(t *testing.T) {
+	t.Parallel()
 	r := newRepo(t)
 	_, err := r.Push(context.Background(), "nowhere", "main")
 	var ge *Error
@@ -705,6 +714,7 @@ func TestPushMissingRemote(t *testing.T) {
 }
 
 func TestPushRejectsEmptyArguments(t *testing.T) {
+	t.Parallel()
 	// A directory that is not a repository would make any git run fail with *Error.
 	r := Repo{Dir: t.TempDir()}
 	for _, tc := range []struct{ remote, branch string }{{"", "main"}, {"origin", ""}} {
@@ -746,6 +756,7 @@ func advanceRemote(t *testing.T, bare Repo, branch string, n int) string {
 }
 
 func TestFetchBranchUpdatesOnlyRemoteTrackingRef(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r, bare := pushedRepo(t)
 	if _, err := r.run(ctx, "fetch", "--quiet", "origin"); err != nil {
@@ -784,6 +795,7 @@ func TestFetchBranchUpdatesOnlyRemoteTrackingRef(t *testing.T) {
 }
 
 func TestFetchBranchLeavesOtherBranchesAndTags(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r, bare := pushedRepo(t)
 	advanceRemote(t, bare, "other", 1)
@@ -814,6 +826,7 @@ func TestFetchBranchLeavesOtherBranchesAndTags(t *testing.T) {
 }
 
 func TestFetchBranchWithoutConfiguredRefspec(t *testing.T) {
+	t.Parallel()
 	r, bare := pushedRepo(t)
 	mustRun(t, r, "config", "--unset-all", "remote.origin.fetch")
 	tip := advanceRemote(t, bare, "main", 1)
@@ -826,6 +839,7 @@ func TestFetchBranchWithoutConfiguredRefspec(t *testing.T) {
 }
 
 func TestFetchBranchAfterForceMove(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r, bare := pushedRepo(t)
 	advanceRemote(t, bare, "main", 2)
@@ -854,6 +868,7 @@ func TestFetchBranchAfterForceMove(t *testing.T) {
 }
 
 func TestFetchBranchFailures(t *testing.T) {
+	t.Parallel()
 	r, _ := pushedRepo(t)
 	notRepo := t.TempDir()
 	mustRun(t, r, "remote", "add", "broken", notRepo)
@@ -871,6 +886,7 @@ func TestFetchBranchFailures(t *testing.T) {
 }
 
 func TestFetchBranchRejectsEmptyArguments(t *testing.T) {
+	t.Parallel()
 	r := Repo{Dir: t.TempDir()}
 	for _, tc := range []struct{ remote, branch string }{{"", "main"}, {"origin", ""}} {
 		err := r.FetchBranch(context.Background(), tc.remote, tc.branch)
@@ -882,6 +898,7 @@ func TestFetchBranchRejectsEmptyArguments(t *testing.T) {
 }
 
 func TestFetchBranchCancelledContext(t *testing.T) {
+	t.Parallel()
 	r, _ := pushedRepo(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -928,6 +945,7 @@ func TestFetchBranchDisablesTerminalPromptOnlyForFetch(t *testing.T) {
 }
 
 func TestCompareBase(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r, bare := pushedRepo(t)
 	fetch := func() {
@@ -970,6 +988,7 @@ func TestCompareBase(t *testing.T) {
 }
 
 func TestCompareBaseMissingRefs(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r, _ := pushedRepo(t)
 	if _, err := r.CompareBase(ctx, "origin", "absent"); !errors.Is(err, ErrNoLocalBase) {
@@ -998,6 +1017,7 @@ func ffFixture(t *testing.T, n int, onFeature bool) (Repo, Repo, string) {
 }
 
 func TestFastForwardBranchNotCheckedOut(t *testing.T) {
+	t.Parallel()
 	r, _, tip := ffFixture(t, 2, true)
 	write(t, r.Dir, "README.md", "dirty\n")
 	headBefore := mustRun(t, r, "rev-parse", "HEAD")
@@ -1020,6 +1040,7 @@ func TestFastForwardBranchNotCheckedOut(t *testing.T) {
 }
 
 func TestFastForwardBranchCheckedOutClean(t *testing.T) {
+	t.Parallel()
 	r, _, tip := ffFixture(t, 2, false)
 	if err := r.FastForwardBranch(context.Background(), "origin", "main"); err != nil {
 		t.Fatal(err)
@@ -1033,6 +1054,7 @@ func TestFastForwardBranchCheckedOutClean(t *testing.T) {
 }
 
 func TestFastForwardBranchCheckedOutDirty(t *testing.T) {
+	t.Parallel()
 	r, _, _ := ffFixture(t, 1, false)
 	write(t, r.Dir, "wip.txt", "wip\n")
 	before := mustRun(t, r, "rev-parse", "main")
@@ -1049,6 +1071,7 @@ func TestFastForwardBranchCheckedOutDirty(t *testing.T) {
 }
 
 func TestFastForwardBranchIgnoresExcludedChanges(t *testing.T) {
+	t.Parallel()
 	r, _, tip := ffFixture(t, 1, false)
 	r.Exclude = ".ralph"
 	write(t, r.Dir, ".ralph/state.txt", "x\n")
@@ -1061,6 +1084,7 @@ func TestFastForwardBranchIgnoresExcludedChanges(t *testing.T) {
 }
 
 func TestFastForwardBranchDiverged(t *testing.T) {
+	t.Parallel()
 	for _, checkedOut := range []bool{true, false} {
 		r, _, _ := ffFixture(t, 1, !checkedOut)
 		mustRun(t, r, "switch", "--quiet", "main")
@@ -1079,6 +1103,7 @@ func TestFastForwardBranchDiverged(t *testing.T) {
 }
 
 func TestFastForwardBranchCheckedOutInAnotherWorktree(t *testing.T) {
+	t.Parallel()
 	r, _, _ := ffFixture(t, 1, true)
 	wt := filepath.Join(t.TempDir(), "wt")
 	mustRun(t, r, "worktree", "add", "--quiet", wt, "main")
@@ -1094,6 +1119,7 @@ func TestFastForwardBranchCheckedOutInAnotherWorktree(t *testing.T) {
 }
 
 func TestFastForwardBranchCurrentAndAhead(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r, _ := pushedRepo(t)
 	if err := r.FastForwardBranch(ctx, "origin", "main"); err != nil {
@@ -1110,6 +1136,7 @@ func TestFastForwardBranchCurrentAndAhead(t *testing.T) {
 }
 
 func TestFastForwardBranchMissingRefs(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	r, _ := pushedRepo(t)
 	mustRun(t, r, "update-ref", "-d", "refs/remotes/origin/main")

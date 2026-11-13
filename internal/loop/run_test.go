@@ -54,6 +54,7 @@ type runEnv struct {
 	root string
 	svc  *service.Service
 	cfg  *config.Config
+	st   *sqlite.Store
 	mID  int64
 	out  bytes.Buffer
 }
@@ -82,44 +83,29 @@ func newRunEnvWith(t *testing.T, tm taskmanager.Provider, titles ...string) *run
 	return newRunEnvKinds(t, tm, nil, titles...)
 }
 
-func newRunEnvKinds(t *testing.T, tm taskmanager.Provider, kinds []domain.Kind, titles ...string) *runEnv {
+// useGitEnv skips the test when git is missing. TestMain sets HOME and the
+// git identity.
+func useGitEnv(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", home)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	for _, k := range []string{"GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"} {
-		t.Setenv(k, "Ralph Test")
-	}
-	for _, k := range []string{"GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"} {
-		t.Setenv(k, "ralph@example.com")
-	}
+}
 
+func newRunEnvKinds(t *testing.T, tm taskmanager.Provider, kinds []domain.Kind, titles ...string) *runEnv {
+	t.Helper()
+	useGitEnv(t)
 	root := t.TempDir()
-	gitCmd(t, root, "init", "--quiet", "--initial-branch=main")
-	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("hi\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitCmd(t, root, "add", ".")
-	gitCmd(t, root, "commit", "--quiet", "-m", "initial")
+	restoreTree(t, root, initialRepo(t))
+	return openRunEnv(t, root, tm, kinds, titles...)
+}
 
+// openRunEnv opens the ralph store under root and creates the initiative,
+// milestone, and a TODO task per title.
+func openRunEnv(t *testing.T, root string, tm taskmanager.Provider, kinds []domain.Kind, titles ...string) *runEnv {
+	t.Helper()
+	svc, cfg, st := openStore(t, root, tm, kinds)
 	ctx := context.Background()
-	st, err := sqlite.Open(ctx, filepath.Join(root, project.DirName, "ralph.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	cfg, err := config.Defaults()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.Loop.StallThreshold = 2
-	cfg.Loop.MaxIterations = 10
-	svc := service.New(st, &search.Index{Store: st, Chunker: search.Chunker{MaxChars: 500}}, service.Options{StallThreshold: cfg.Loop.StallThreshold, TaskManager: tm, CardKinds: kinds})
-
 	i, _ := svc.CreateInitiative(ctx, service.InitiativeInput{Title: "SSO"})
 	iID, _ := domain.ParseID(domain.KindInitiative, i.ID)
 	m, _ := svc.CreateMilestone(ctx, service.MilestoneInput{InitiativeID: iID, Title: "OIDC login"})
@@ -134,7 +120,25 @@ func newRunEnvKinds(t *testing.T, tm taskmanager.Provider, kinds []domain.Kind, 
 			t.Fatal(err)
 		}
 	}
-	return &runEnv{root: root, svc: svc, cfg: cfg, mID: mID}
+	return &runEnv{root: root, svc: svc, cfg: cfg, st: st, mID: mID}
+}
+
+func openStore(t *testing.T, root string, tm taskmanager.Provider, kinds []domain.Kind) (*service.Service, *config.Config, *sqlite.Store) {
+	t.Helper()
+	ctx := context.Background()
+	st, err := sqlite.Open(ctx, filepath.Join(root, project.DirName, "ralph.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	cfg, err := config.Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Loop.StallThreshold = 2
+	cfg.Loop.MaxIterations = 10
+	svc := service.New(st, &search.Index{Store: st, Chunker: search.Chunker{MaxChars: 500}}, service.Options{StallThreshold: cfg.Loop.StallThreshold, TaskManager: tm, CardKinds: kinds})
+	return svc, cfg, st
 }
 
 // run runs the loop and then checks the milestone branch back out, so tests
@@ -142,7 +146,7 @@ func newRunEnvKinds(t *testing.T, tm taskmanager.Provider, kinds []domain.Kind, 
 func (e *runEnv) run(t *testing.T, ctx context.Context, h harness.Harness) (Outcome, error) {
 	t.Helper()
 	out, err := e.runRaw(t, ctx, h)
-	if out.Iterations > 0 && gitCmd(t, e.root, "branch", "--show-current") != out.Branch {
+	if out.Iterations > 0 {
 		gitCmd(t, e.root, "switch", "--quiet", out.Branch)
 	}
 	return out, err
@@ -178,6 +182,7 @@ func (e *runEnv) complete(id int64) (harness.Result, error) {
 }
 
 func TestRunCompletesMilestone(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "first", "second")
 	h := &fakeHarness{script: func(_ int, id int64, req harness.Request) (harness.Result, error) {
 		if e.status(t, id).Status != "IN_PROGRESS" {
@@ -241,6 +246,7 @@ func TestRunCompletesMilestone(t *testing.T) {
 }
 
 func TestRunSkipsBlockedAndStopsForHuman(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "flaky", "fine")
 	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) {
 		if id == 1 {
@@ -271,6 +277,7 @@ func TestRunSkipsBlockedAndStopsForHuman(t *testing.T) {
 }
 
 func TestRunAgentKickbacks(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "unclear", "blocked")
 	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) {
 		to, reason := domain.StatusProposed, "acceptance criteria contradict the design"
@@ -290,6 +297,7 @@ func TestRunAgentKickbacks(t *testing.T) {
 }
 
 func TestRunIterationLimit(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a", "b", "c")
 	e.cfg.Loop.MaxIterations = 2
 	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
@@ -308,6 +316,7 @@ func TestRunIterationLimit(t *testing.T) {
 }
 
 func TestRunDirtyTree(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	os.WriteFile(filepath.Join(e.root, "README.md"), []byte("local edit\n"), 0o644)
 	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
@@ -332,6 +341,7 @@ func TestRunDirtyTree(t *testing.T) {
 }
 
 func TestRunResumesInProgressTask(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	e.svc.SetTaskStatus(context.Background(), 1, domain.StatusInProgress, "")
 	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
@@ -344,6 +354,7 @@ func TestRunResumesInProgressTask(t *testing.T) {
 }
 
 func TestRunInterruptedLeavesTaskInProgress(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &fakeHarness{script: func(int, int64, harness.Request) (harness.Result, error) {
@@ -367,6 +378,7 @@ func TestRunInterruptedLeavesTaskInProgress(t *testing.T) {
 }
 
 func TestRunToolsUnavailableCountsNoFailure(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	h := &fakeHarness{script: func(int, int64, harness.Request) (harness.Result, error) {
 		return harness.Result{}, fmt.Errorf("%w: not approved", harness.ErrToolsUnavailable)
@@ -381,6 +393,7 @@ func TestRunToolsUnavailableCountsNoFailure(t *testing.T) {
 }
 
 func TestRunLockContention(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	lock, err := looplock.Acquire(filepath.Join(e.root, ".ralph", "loop.lock"), "milestone M-9")
 	if err != nil {
@@ -400,6 +413,7 @@ func TestRunLockContention(t *testing.T) {
 }
 
 func TestRunWithoutCommits(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	e.cfg.Loop.CommitPerTask = false
 	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) {
@@ -422,6 +436,7 @@ func TestRunWithoutCommits(t *testing.T) {
 }
 
 func TestRunWithoutCommitTrailer(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a", "b")
 	e.cfg.Loop.CommitTrailer = false
 	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
@@ -440,6 +455,7 @@ func TestRunWithoutCommitTrailer(t *testing.T) {
 }
 
 func TestRunRecordsHeadForUnfinishedIterations(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "flaky", "unclear")
 	var heads []string
 	h := &fakeHarness{script: func(call int, id int64, _ harness.Request) (harness.Result, error) {
@@ -481,6 +497,7 @@ func TestRunRecordsHeadForUnfinishedIterations(t *testing.T) {
 }
 
 func TestRunCommitHookFailureRecordsNoTaskCommit(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	hook := filepath.Join(e.root, ".git", "hooks", "pre-commit")
 	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho 'lint failed' >&2\nexit 1\n"), 0o755); err != nil {
@@ -503,6 +520,7 @@ func TestRunCommitHookFailureRecordsNoTaskCommit(t *testing.T) {
 }
 
 func TestRunCommitTemplateAndBaseFallback(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	e.cfg.Loop.CommitTemplate = "feat({{.Milestone.Slug}}): {{.Task.Title}} [{{.Task.ID}}]"
 	e.cfg.PR.BaseBranch = "develop"
@@ -520,6 +538,7 @@ func TestRunCommitTemplateAndBaseFallback(t *testing.T) {
 }
 
 func TestSessionReason(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		res  harness.Result
 		want string
@@ -540,6 +559,7 @@ func TestSessionReason(t *testing.T) {
 }
 
 func TestRunStashesUnfinishedWorkBeforeNextTask(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "blocked", "fine")
 	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) {
 		if id == 1 {
@@ -568,6 +588,7 @@ func TestRunStashesUnfinishedWorkBeforeNextTask(t *testing.T) {
 }
 
 func TestRunKeepsWorkForRetryOfSameTask(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	h := &fakeHarness{script: func(call int, id int64, _ harness.Request) (harness.Result, error) {
 		if call == 1 {
@@ -589,6 +610,7 @@ func TestRunKeepsWorkForRetryOfSameTask(t *testing.T) {
 }
 
 func TestRunReportsLeftoverAtEnd(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) {
 		os.WriteFile(filepath.Join(e.root, "partial.txt"), []byte("x\n"), 0o644)
@@ -657,6 +679,7 @@ func (e *runEnv) assertHead(t *testing.T) string {
 }
 
 func TestRunRecordsCreatedBranch(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	mainHash := gitCmd(t, e.root, "rev-parse", "main")
 	plan, err := Planner{Service: e.svc, Config: e.cfg, Root: e.root}.Plan(context.Background(), e.mID)
@@ -678,6 +701,7 @@ func TestRunRecordsCreatedBranch(t *testing.T) {
 }
 
 func TestRunAdoptsExistingUnrecordedBranch(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	gitCmd(t, e.root, "switch", "--quiet", "-c", "ralph/oidc-login")
 	e.commitFile(t, "earlier.txt")
@@ -700,6 +724,7 @@ func TestRunAdoptsExistingUnrecordedBranch(t *testing.T) {
 }
 
 func TestRunAdoptsUnrelatedBranchWithoutBase(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	gitCmd(t, e.root, "switch", "--quiet", "--orphan", "ralph/oidc-login")
 	e.commitFile(t, "unrelated.txt")
@@ -718,6 +743,7 @@ func TestRunAdoptsUnrelatedBranchWithoutBase(t *testing.T) {
 }
 
 func TestRunUsesRecordedBranch(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	gitCmd(t, e.root, "branch", "feature/custom")
 	g := domain.MilestoneGit{Branch: "feature/custom"}
@@ -830,6 +856,7 @@ func (e *runEnv) assertDriftRefusal(t *testing.T, want string) {
 }
 
 func TestRunRefusesDivergedBranch(t *testing.T) {
+	t.Parallel()
 	e := newRecordedEnv(t)
 	recorded := e.milestone(t).HeadCommit
 	gitCmd(t, e.root, "switch", "--quiet", "main")
@@ -847,12 +874,14 @@ func TestRunRefusesDivergedBranch(t *testing.T) {
 }
 
 func TestRunRefusesBranchBehind(t *testing.T) {
+	t.Parallel()
 	e := newRecordedEnv(t)
 	gitCmd(t, e.root, "reset", "--quiet", "--hard", "HEAD~1")
 	e.assertDriftRefusal(t, "M-1 branch ralph/oidc-login is 1 commit behind its recorded head")
 }
 
 func TestRunRefusesMergedBranch(t *testing.T) {
+	t.Parallel()
 	e := newRecordedEnv(t)
 	gitCmd(t, e.root, "switch", "--quiet", "main")
 	gitCmd(t, e.root, "merge", "--quiet", "--ff-only", "ralph/oidc-login")
@@ -860,6 +889,7 @@ func TestRunRefusesMergedBranch(t *testing.T) {
 }
 
 func TestRunRefusesMissingRecordedBranch(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	stale := strings.Repeat("ab", 20)
 	if err := e.svc.RecordMilestoneGit(context.Background(), e.mID, domain.MilestoneGit{Branch: "gone/branch", BaseCommit: stale, HeadCommit: stale}); err != nil {
@@ -872,6 +902,7 @@ func TestRunRefusesMissingRecordedBranch(t *testing.T) {
 }
 
 func TestRunAdoptsCommitsAheadOfRecordedHead(t *testing.T) {
+	t.Parallel()
 	e := newRecordedEnv(t)
 	record := e.milestone(t)
 	e.commitFile(t, "manual.txt")
@@ -910,6 +941,7 @@ func newUnstartedEnv(t *testing.T) *runEnv {
 }
 
 func TestRunRerecordsUnstartedBranchMovedToBase(t *testing.T) {
+	t.Parallel()
 	e := newUnstartedEnv(t)
 	e.commitFile(t, "main-moves-on.txt")
 	tip := gitCmd(t, e.root, "rev-parse", "HEAD")
@@ -932,6 +964,7 @@ func TestRunRerecordsUnstartedBranchMovedToBase(t *testing.T) {
 }
 
 func TestRunRerecordsMovedBranchBeforeAnySession(t *testing.T) {
+	t.Parallel()
 	e := newUnstartedEnv(t)
 	e.commitFile(t, "main-moves-on.txt")
 	tip := gitCmd(t, e.root, "rev-parse", "HEAD")
@@ -948,6 +981,7 @@ func TestRunRerecordsMovedBranchBeforeAnySession(t *testing.T) {
 }
 
 func TestRunUnstartedBranchWithOwnCommitRecordsHeadOnly(t *testing.T) {
+	t.Parallel()
 	e := newUnstartedEnv(t)
 	record := e.milestone(t)
 	gitCmd(t, e.root, "switch", "--quiet", "ralph/oidc-login")
@@ -971,6 +1005,7 @@ func TestRunUnstartedBranchWithOwnCommitRecordsHeadOnly(t *testing.T) {
 }
 
 func TestRunResumesUnchangedBranch(t *testing.T) {
+	t.Parallel()
 	e := newRecordedEnv(t)
 	record := e.milestone(t)
 	gitCmd(t, e.root, "switch", "--quiet", "main")
@@ -995,6 +1030,7 @@ func TestRunResumesUnchangedBranch(t *testing.T) {
 }
 
 func TestPlanRecordsNothing(t *testing.T) {
+	t.Parallel()
 	e := newRunEnv(t, "a")
 	gitCmd(t, e.root, "branch", "ralph/oidc-login")
 	plan, err := Planner{Service: e.svc, Config: e.cfg, Root: e.root}.Plan(context.Background(), e.mID)
@@ -1013,6 +1049,7 @@ func TestPlanRecordsNothing(t *testing.T) {
 }
 
 func TestRunNamesBranchAfterCardAndKeepsIt(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newRunEnv(t, "a")
 	e.cfg.TaskManager.Provider = config.TaskManagerJira
@@ -1101,6 +1138,7 @@ func (e *runEnv) assertFastForwarded(t *testing.T, tip string) {
 }
 
 func TestRunFastForwardsStaleUnstartedBranch(t *testing.T) {
+	t.Parallel()
 	for _, onBranch := range []bool{false, true} {
 		e, _, tip := newStaleUnstartedEnv(t)
 		if onBranch {
@@ -1123,6 +1161,7 @@ func TestRunFastForwardsStaleUnstartedBranch(t *testing.T) {
 }
 
 func TestRunDoesNotFastForwardInDirtyTree(t *testing.T) {
+	t.Parallel()
 	e, base, tip := newStaleUnstartedEnv(t)
 	gitCmd(t, e.root, "switch", "--quiet", "ralph/oidc-login")
 	if err := os.WriteFile(filepath.Join(e.root, "scratch.txt"), []byte("x"), 0o644); err != nil {
@@ -1146,6 +1185,7 @@ func TestRunDoesNotFastForwardInDirtyTree(t *testing.T) {
 }
 
 func TestRunDoesNotFastForwardBranchWithOwnCommit(t *testing.T) {
+	t.Parallel()
 	e, base, _ := newStaleUnstartedEnv(t)
 	gitCmd(t, e.root, "switch", "--quiet", "ralph/oidc-login")
 	e.commitFile(t, "manual.txt")
@@ -1162,6 +1202,7 @@ func TestRunDoesNotFastForwardBranchWithOwnCommit(t *testing.T) {
 }
 
 func TestRunDoesNotFastForwardStartedMilestone(t *testing.T) {
+	t.Parallel()
 	e := newRecordedEnv(t)
 	record := e.milestone(t)
 	gitCmd(t, e.root, "switch", "--quiet", "main")
@@ -1179,6 +1220,7 @@ func TestRunDoesNotFastForwardStartedMilestone(t *testing.T) {
 }
 
 func TestRunUnstartedBranchAtBaseTipIsLeftAlone(t *testing.T) {
+	t.Parallel()
 	e := newUnstartedEnv(t)
 	record := e.milestone(t)
 	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
@@ -1210,6 +1252,7 @@ func failInProgress(p *tmfake.Provider, n int, err error) {
 }
 
 func TestRunBlocksAndStopsOnAssigneeConflict(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		nth      int
@@ -1260,6 +1303,7 @@ func TestRunBlocksAndStopsOnAssigneeConflict(t *testing.T) {
 }
 
 func TestRunBlocksOnMilestoneCardConflictWhenTaskHasNoCard(t *testing.T) {
+	t.Parallel()
 	p := tmfake.New()
 	e := newRunEnvKinds(t, p, []domain.Kind{domain.KindInitiative, domain.KindMilestone}, "first", "second")
 	failInProgress(p, 1, &taskmanager.AssigneeConflictError{Key: "AIN-12", Assignee: "Pat Lee"})
@@ -1286,6 +1330,7 @@ func TestRunBlocksOnMilestoneCardConflictWhenTaskHasNoCard(t *testing.T) {
 }
 
 func TestRunCardFailureWithoutConflictDoesNotStop(t *testing.T) {
+	t.Parallel()
 	p := tmfake.New()
 	e := newRunEnvWith(t, p, "only")
 	p.SetError(errors.New("jira is down"))

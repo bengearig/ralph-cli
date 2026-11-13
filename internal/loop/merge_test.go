@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/bengearig/ralph/internal/domain"
@@ -21,16 +22,47 @@ const mergeBranch = "ralph/oidc-login"
 // out main so the merge starts from the base branch.
 func newMergeEnv(t *testing.T) *runEnv {
 	t.Helper()
-	e := newRunEnv(t, "a")
-	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
-	if _, err := e.run(t, context.Background(), h); err != nil {
-		t.Fatalf("setup run: %v\n%s", err, e.out.String())
-	}
-	if got := e.milestone(t).Status; got != "DONE" {
-		t.Fatalf("milestone is %s", got)
-	}
-	gitCmd(t, e.root, "switch", "--quiet", "main")
-	return e
+	useGitEnv(t)
+	files, mID := mergeRepo(t)
+	root := t.TempDir()
+	restoreTree(t, root, files)
+	svc, cfg, st := openStore(t, root, nil, nil)
+	return &runEnv{root: root, svc: svc, cfg: cfg, st: st, mID: mID}
+}
+
+var (
+	mergeOnce  sync.Once
+	mergeFiles tree
+	mergeMID   int64
+)
+
+// mergeRepo returns the repository and database newMergeEnv hands out, built
+// once per test process by looping a one-task milestone to DONE. Neither
+// holds an absolute path, so any directory can host them.
+func mergeRepo(t *testing.T) (tree, int64) {
+	t.Helper()
+	mergeOnce.Do(func() {
+		root, err := os.MkdirTemp("", "ralph-merge-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.RemoveAll(root)
+		restoreTree(t, root, initialRepo(t))
+		e := openRunEnv(t, root, nil, nil, "a")
+		h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
+		if _, err := e.run(t, context.Background(), h); err != nil {
+			t.Fatalf("setup run: %v\n%s", err, e.out.String())
+		}
+		if got := e.milestone(t).Status; got != "DONE" {
+			t.Fatalf("milestone is %s", got)
+		}
+		gitCmd(t, root, "switch", "--quiet", "main")
+		if err := e.st.Close(); err != nil {
+			t.Fatal(err)
+		}
+		mergeFiles, mergeMID = readTree(t, root), e.mID
+	})
+	return mergeFiles, mergeMID
 }
 
 func (e *runEnv) merge(opts MergeOptions) (MergeResult, error) {
@@ -41,10 +73,14 @@ type snapshot struct{ branch, head, base, tree string }
 
 func (e *runEnv) snapshot(t *testing.T) snapshot {
 	t.Helper()
+	heads := strings.Fields(gitCmd(t, e.root, "rev-parse", "HEAD", "main"))
+	if len(heads) != 2 {
+		t.Fatalf("rev-parse HEAD main: %q", heads)
+	}
 	return snapshot{
 		branch: gitCmd(t, e.root, "branch", "--show-current"),
-		head:   gitCmd(t, e.root, "rev-parse", "HEAD"),
-		base:   gitCmd(t, e.root, "rev-parse", "main"),
+		head:   heads[0],
+		base:   heads[1],
 		tree:   gitCmd(t, e.root, "status", "--porcelain"),
 	}
 }
@@ -76,6 +112,7 @@ func (e *runEnv) assertRefusal(t *testing.T, opts MergeOptions, want error, cont
 }
 
 func TestMergeFastForwards(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	oldBase := gitCmd(t, e.root, "rev-parse", "main")
 	tip := gitCmd(t, e.root, "rev-parse", mergeBranch)
@@ -119,6 +156,7 @@ func TestMergeFastForwards(t *testing.T) {
 }
 
 func TestMergeDeleteBranch(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	res, err := e.merge(MergeOptions{DeleteBranch: true})
 	if err != nil {
@@ -133,6 +171,7 @@ func TestMergeDeleteBranch(t *testing.T) {
 }
 
 func TestMergeDeleteRefusedWarns(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	// The safe delete refuses a branch checked out in another worktree.
 	other := filepath.Join(t.TempDir(), "wt")
@@ -150,6 +189,7 @@ func TestMergeDeleteRefusedWarns(t *testing.T) {
 }
 
 func TestMergeDryRun(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	oldBase := gitCmd(t, e.root, "rev-parse", "main")
 	tip := gitCmd(t, e.root, "rev-parse", mergeBranch)
@@ -170,6 +210,7 @@ func TestMergeDryRun(t *testing.T) {
 }
 
 func TestMergeRefusesUnfinishedMilestone(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	ctx := context.Background()
 	tv, err := e.svc.CreateTask(ctx, service.TaskInput{MilestoneID: e.mID, Title: "more", Description: "d", AcceptanceCriteria: "c"})
@@ -184,6 +225,7 @@ func TestMergeRefusesUnfinishedMilestone(t *testing.T) {
 }
 
 func TestMergeRefusesArchivedInitiative(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	if _, err := e.svc.ArchiveInitiative(context.Background(), 1, service.DocumentChoice{}); err != nil {
 		t.Fatal(err)
@@ -192,6 +234,7 @@ func TestMergeRefusesArchivedInitiative(t *testing.T) {
 }
 
 func TestMergeRefusesHeldLock(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	lock, err := looplock.Acquire(filepath.Join(e.root, ".ralph", "loop.lock"), "milestone M-9")
 	if err != nil {
@@ -202,6 +245,7 @@ func TestMergeRefusesHeldLock(t *testing.T) {
 }
 
 func TestMergeRefusesDrift(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	gitCmd(t, e.root, "switch", "--quiet", mergeBranch)
 	e.commitFile(t, "extra.txt")
@@ -210,6 +254,7 @@ func TestMergeRefusesDrift(t *testing.T) {
 }
 
 func TestMergeRefusesDirtyTree(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	if err := os.WriteFile(filepath.Join(e.root, "scratch.txt"), []byte("x\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -218,6 +263,7 @@ func TestMergeRefusesDirtyTree(t *testing.T) {
 }
 
 func TestMergeRefusesMissingBranches(t *testing.T) {
+	t.Parallel()
 	t.Run("base", func(t *testing.T) {
 		e := newMergeEnv(t)
 		e.cfg.PR.BaseBranch = "trunk"
@@ -231,12 +277,14 @@ func TestMergeRefusesMissingBranches(t *testing.T) {
 }
 
 func TestMergeRefusesAdvancedBase(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	e.commitFile(t, "mainline.txt")
 	e.assertRefusal(t, MergeOptions{}, errs.ErrNeedsHuman, "rebase")
 }
 
 func TestMergeFromAnotherBranch(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	gitCmd(t, e.root, "switch", "--quiet", "-c", "scratch")
 	res, err := e.merge(MergeOptions{})
@@ -249,6 +297,7 @@ func TestMergeFromAnotherBranch(t *testing.T) {
 }
 
 func TestMergeFromDetachedHead(t *testing.T) {
+	t.Parallel()
 	e := newMergeEnv(t)
 	gitCmd(t, e.root, "switch", "--quiet", "--detach")
 	res, err := e.merge(MergeOptions{})
@@ -261,6 +310,7 @@ func TestMergeFromDetachedHead(t *testing.T) {
 }
 
 func TestMergeFailureRestoresStart(t *testing.T) {
+	t.Parallel()
 	// A lock on main's ref passes every check and fails the fast-forward.
 	for _, start := range []string{"scratch", "detached"} {
 		t.Run(start, func(t *testing.T) {

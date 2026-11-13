@@ -21,6 +21,7 @@ import (
 const prefixTemplate = "{{.Task.CardKeyPrefix}}{{.Task.ID}}: {{.Task.Title}}"
 
 func TestCommitMessageFallsBackToMilestoneKey(t *testing.T) {
+	t.Parallel()
 	i, m := Ref{ID: "I-1", Slug: "sso", Title: "SSO"}, Ref{ID: "M-2", Slug: "login", Title: "Login"}
 	base := service.TaskView{ID: "T-12", Title: "Title"}
 	own := base
@@ -54,6 +55,7 @@ func TestCommitMessageFallsBackToMilestoneKey(t *testing.T) {
 }
 
 func TestCommitSubjectsMilestoneKey(t *testing.T) {
+	t.Parallel()
 	i, m := Ref{ID: "I-1", Slug: "sso", Title: "SSO"}, Ref{ID: "M-2", Slug: "login", Title: "Login"}
 	base := service.TaskView{ID: "T-12", Title: "Title"}
 	own := base
@@ -110,6 +112,7 @@ func newMilestoneKeyEnv(t *testing.T, taskKey, milestoneKey string) (*runEnv, *f
 }
 
 func TestRunCommitMilestoneKeyFallback(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, taskKey, milestoneKey string
 		cardTrailer                 bool
@@ -141,6 +144,7 @@ func TestRunCommitMilestoneKeyFallback(t *testing.T) {
 }
 
 func TestRunCommitTemplateWithoutKeyUnchangedByMilestoneCard(t *testing.T) {
+	t.Parallel()
 	e, _ := newMilestoneKeyEnv(t, "", "ABC-9")
 	e.cfg.Loop.CommitTemplate = "{{.Task.ID}}: {{.Task.Title}}"
 	h := &fakeHarness{script: func(_ int, id int64, _ harness.Request) (harness.Result, error) { return e.complete(id) }}
@@ -153,6 +157,7 @@ func TestRunCommitTemplateWithoutKeyUnchangedByMilestoneCard(t *testing.T) {
 }
 
 func TestPlanAndDriftInputNeverCallProvider(t *testing.T) {
+	t.Parallel()
 	e, prov := newMilestoneKeyEnv(t, "", "ABC-9")
 	ctx := context.Background()
 	plan, err := Planner{Service: e.svc, Config: e.cfg, Root: e.root}.Plan(ctx, e.mID)
@@ -176,6 +181,7 @@ func TestPlanAndDriftInputNeverCallProvider(t *testing.T) {
 
 // Commits whose patch no longer matches and that carry no trailer are found by subject.
 func TestDriftMatchesMilestoneKeyAndKeylessSubjects(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, milestoneKeyAtCommit string
 	}{
