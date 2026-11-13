@@ -194,6 +194,13 @@ task_manager:
     # When true, a card is assigned to the API token's own user when its card
     # is moved to in progress. A card held by someone else is never reassigned.
     assign_on_start: false
+    # Turns on adding a milestone card to a board's active sprint. board is
+    # the board's ID, found in the board's URL; 0 means off. when is "created"
+    # (when the card is created) or "started" (when its card moves to In
+    # Progress).
+    sprint:
+      board: 0
+      when: created
     # Maps a ralph status (task or milestone) to the Jira status its card
     # moves to: one name, or a list of names to pass through in order for
     # workflows that do not allow the jump (for example [To Do, In Progress,

@@ -1027,3 +1027,102 @@ func TestValidateStoreID(t *testing.T) {
 		})
 	}
 }
+
+func TestSprintConfigDefaults(t *testing.T) {
+	cfg, _ := Defaults()
+	if s := cfg.TaskManager.Jira.Sprint; s.Board != 0 || s.When != SprintWhenCreated {
+		t.Errorf("sprint defaults = %+v, want board 0 and when created", s)
+	}
+	cfg.TaskManager.Provider = TaskManagerJira
+	cfg.TaskManager.Jira.BaseURL = "https://example.atlassian.net"
+	cfg.TaskManager.Jira.ProjectKey = "RAL"
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("defaults should validate: %v", err)
+	}
+}
+
+func TestSprintConfigLayers(t *testing.T) {
+	project := writeFile(t, t.TempDir(), "p.yaml", "task_manager:\n  jira:\n    sprint:\n      board: 7\n      when: created\n")
+	l, err := Load(Sources{ProjectFile: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := l.Config.TaskManager.Jira.Sprint; s.Board != 7 || s.When != SprintWhenCreated {
+		t.Errorf("file sprint = %+v, want board 7 and when created", s)
+	}
+	started := writeFile(t, t.TempDir(), "s.yaml", "task_manager:\n  jira:\n    sprint:\n      when: started\n")
+	l, err = Load(Sources{ProjectFile: started})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := l.Config.TaskManager.Jira.Sprint; s.When != SprintWhenStarted {
+		t.Errorf("file when = %q, want started", s.When)
+	}
+	l, err = Load(Sources{ProjectFile: project, Environ: []string{
+		"RALPH_TASK_MANAGER__JIRA__SPRINT__BOARD=12",
+		"RALPH_TASK_MANAGER__JIRA__SPRINT__WHEN=started",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := l.Config.TaskManager.Jira.Sprint; s.Board != 12 || s.When != SprintWhenStarted {
+		t.Errorf("env sprint = %+v, want board 12 and when started over the file", s)
+	}
+}
+
+func TestSprintConfigValidate(t *testing.T) {
+	cases := []struct {
+		name     string
+		provider string
+		board    int
+		when     string
+		want     []string
+	}{
+		{"board and started", TaskManagerJira, 12, SprintWhenStarted, nil},
+		{"negative board", TaskManagerJira, -1, SprintWhenCreated, []string{"task_manager.jira.sprint.board:"}},
+		{"bad when with a board", TaskManagerJira, 12, "sometimes", []string{"task_manager.jira.sprint.when:"}},
+		{"bad when without a board", TaskManagerJira, 0, "sometimes", []string{"task_manager.jira.sprint.when:"}},
+		{"both bad", TaskManagerJira, -3, "sometimes", []string{"task_manager.jira.sprint.board:", "task_manager.jira.sprint.when:"}},
+		{"not validated for none", TaskManagerNone, -1, "sometimes", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, _ := Defaults()
+			cfg.TaskManager.Provider = tc.provider
+			cfg.TaskManager.Jira.BaseURL = "https://example.atlassian.net"
+			cfg.TaskManager.Jira.ProjectKey = "RAL"
+			cfg.TaskManager.Jira.Sprint = JiraSprintConfig{Board: tc.board, When: tc.when}
+			err := cfg.Validate()
+			if tc.want == nil {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			for _, key := range tc.want {
+				if !strings.Contains(err.Error(), key) {
+					t.Errorf("missing %s in:\n%v", key, err)
+				}
+			}
+		})
+	}
+}
+
+func TestSprintConfigDocumented(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "docs", "configuration.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"task_manager.jira.sprint.board", "task_manager.jira.sprint.when",
+		"RALPH_TASK_MANAGER__JIRA__SPRINT__BOARD", "RALPH_TASK_MANAGER__JIRA__SPRINT__WHEN",
+		"jira.md#adding-cards-to-a-sprint",
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("docs/configuration.md does not mention %s", want)
+		}
+	}
+}
