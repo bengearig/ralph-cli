@@ -151,14 +151,14 @@ const forcePolicy = "Never pass force without the user's explicit approval. "
 func (t *tools) register(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_create", Annotations: write("Create initiative"),
 		Description: "Record a newly received set of instructions as an initiative. Put the instructions verbatim in brief. " +
-			"Takes an optional parent_card, the Jira key of an existing card to attach the initiative's card to. " +
+			"Takes an optional parent_card, the Jira key of an existing card to attach the initiative's card to, and an optional sprint, the name of the Jira sprint to add its milestone cards to. " +
 			"The result's confirm_outline says whether Receive must ask the user before creating the outline."}, t.initiativeCreate)
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_list", Annotations: readOnly("List initiatives"),
 		Description: "List initiatives, each with its card when a task manager is configured. Archived ones are hidden unless include_archived is set."}, t.initiativeList)
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_get", Annotations: readOnly("Get initiative"),
 		Description: "Get an initiative with its brief and, when a task manager is configured, its card (key, URL, and pending when it is behind)."}, t.initiativeGet)
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_update", Annotations: write("Update initiative"),
-		Description: "Edit an initiative's title, brief, or parent card. Omitted fields are unchanged."}, t.initiativeUpdate)
+		Description: "Edit an initiative's title, brief, parent card, or sprint. Omitted fields are unchanged."}, t.initiativeUpdate)
 	mcp.AddTool(s, &mcp.Tool{Name: "initiative_delete", Annotations: destructive("Delete initiative"),
 		Description: deletePolicy + forcePolicy + "Cascades to the initiative's milestones, their tasks and notes, and its documents. " +
 			"Refused without force when the initiative has milestones or documents, and while a loop is running on one of its milestones."}, t.initiativeDelete)
