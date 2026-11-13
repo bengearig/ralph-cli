@@ -79,6 +79,9 @@ type IssueFields struct {
 	ParentKey   string
 	// ParentChange applies only to UpdateIssue.
 	ParentChange ParentChange
+	// AddLabels applies only to UpdateIssue and adds to the card's labels
+	// without replacing them.
+	AddLabels []string
 }
 
 // ParentChange says what UpdateIssue does with a card's parent.
@@ -168,9 +171,23 @@ func (c *Client) UpdateIssue(ctx context.Context, key string, f IssueFields) err
 	case ParentClear:
 		uf.Parent = json.RawMessage("null")
 	}
+	type labelAdd struct {
+		Add string `json:"add"`
+	}
+	type updateOps struct {
+		Labels []labelAdd `json:"labels"`
+	}
+	var ops *updateOps
+	if len(f.AddLabels) > 0 {
+		ops = &updateOps{}
+		for _, l := range f.AddLabels {
+			ops.Labels = append(ops.Labels, labelAdd{Add: l})
+		}
+	}
 	body, err := json.Marshal(struct {
 		Fields updateFields `json:"fields"`
-	}{uf})
+		Update *updateOps   `json:"update,omitempty"`
+	}{uf, ops})
 	if err != nil {
 		return fmt.Errorf("jira: encode update request: %w", err)
 	}

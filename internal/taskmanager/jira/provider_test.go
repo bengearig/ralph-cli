@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -1033,5 +1034,40 @@ func TestStoreLabelNotSentOnUpdate(t *testing.T) {
 	}
 	if l, ok := r.fields()["labels"]; ok {
 		t.Errorf("update sent labels %v", l)
+	}
+}
+
+func TestUpdateAddLabel(t *testing.T) {
+	for _, tc := range []struct {
+		name, storeID string
+		want          []any
+	}{
+		{"with store id", "ab", []any{map[string]any{"add": "ralph-store-ab"}}},
+		{"without store id", "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeJira(t)
+			cfg := testCfg(f.URL)
+			cfg.Labels = []string{"ralph"}
+			p := NewProvider(cfg, 0, env(goodEnv), nil)
+			req := taskmanager.CardRequest{Kind: domain.KindTask, ID: "T-12", Title: "t", StoreID: tc.storeID, ParentKey: "PROJ-5"}
+			if err := p.Update(context.Background(), "PROJ-9", req); err != nil {
+				t.Fatal(err)
+			}
+			r := f.last(t)
+			if _, ok := r.fields()["labels"]; ok {
+				t.Errorf("update sent fields.labels")
+			}
+			update, ok := r.body["update"].(map[string]any)
+			if tc.want == nil {
+				if ok {
+					t.Errorf("unexpected update %v", update)
+				}
+				return
+			}
+			if !ok || !reflect.DeepEqual(update["labels"], tc.want) {
+				t.Errorf("update = %v, want labels %v", update, tc.want)
+			}
+		})
 	}
 }

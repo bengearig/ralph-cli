@@ -189,6 +189,9 @@ func (p *Provider) Update(ctx context.Context, key string, req taskmanager.CardR
 			fields.ParentChange = ParentClear
 		}
 	}
+	if req.StoreID != "" {
+		fields.AddLabels = []string{storeLabel(req.StoreID)}
+	}
 	c, err := p.getClient()
 	if err != nil {
 		return err
