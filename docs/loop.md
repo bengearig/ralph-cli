@@ -132,7 +132,8 @@ flowchart TD
    [Archiving](data-model.md#archiving).
 1. **Lock.** The loop takes an exclusive lock on `.ralph/loop.lock` for the whole project, because one working tree
    can only serve one loop. A second `ralph loop` fails and names the PID and milestone holding the lock. The
-   operating system releases the lock if ralph dies.
+   operating system releases the lock if ralph dies. While a loop holds the lock, other commands skip the automatic update of
+   the integration files and only warn, so the loop's working tree is not changed under it.
 2. **Drift check.** When the milestone has a recorded branch, the loop compares the branch with the record (see
    [Drift and reconcile](#drift-and-reconcile)) before it switches branches or touches the working tree:
 
@@ -292,6 +293,7 @@ optional `Card:` trailer's. See
 | A task's card, or its milestone's card, is held by someone else (see [Jira](jira.md#in-the-loop)) | `3` | the task becomes `BLOCKED`, with no session started and no failure counted; reassign the card, move the task to `TODO`, rerun |
 | Ctrl-C or `SIGTERM` | `1` | current task stays `IN_PROGRESS`; rerun resumes it |
 | The `ralph` MCP server did not connect in the session | `1` | stays `IN_PROGRESS`, no failure counted |
+| `ralph loop` just updated the repository's [integration files](claude-code.md#keeping-the-integration-files-current), which are now uncommitted | `3` | unchanged, and nothing ran; commit the files, then rerun the same command |
 | The recorded branch has drifted: `behind`, `diverged`, `merged`, or `branch_missing` | `3` | unchanged; run `ralph milestone reconcile` |
 | Harness could not start, or a git failure | `1` | stays `IN_PROGRESS`; see the message |
 | A `DONE` task's commit failed (for example, a hook rejected it) | `1` | stays `DONE`; commit by hand, then rerun |
@@ -412,7 +414,7 @@ if it takes more steps than the milestones could need.
 | Code | When |
 |---|---|
 | `0` | The milestone that was run ended `DONE`, or the initiative is complete (also for a dry run). |
-| `3` | A person is needed: any stop above, a run that ended with `BLOCKED` or `PROPOSED` tasks or at the iteration limit, or a merge refused because a person has to act (an unfinished or drifted milestone, a dirty working tree, a base branch that cannot be fast-forwarded). |
+| `3` | A person is needed: any stop above, an automatic update of the integration files that must be committed first, a run that ended with `BLOCKED` or `PROPOSED` tasks or at the iteration limit, or a merge refused because a person has to act (an unfinished or drifted milestone, a dirty working tree, a base branch that cannot be fast-forwarded). |
 | `1` | An error, including a merge that failed for another reason, and an interrupted run. |
 
 **Which branch is checked out.** Each run returns to the branch it started from, as described in

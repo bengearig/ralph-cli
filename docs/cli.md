@@ -21,7 +21,8 @@ Commit hashes recorded by the loop are shown shortened in text output and in ful
 `ralph <command> --help` is the authoritative reference; this page gives an overview.
 
 Commands that find a project also check that its integration files are current. When they are not, the command
-still runs and prints a warning on standard error, never on standard output, so `--json` is unaffected. `init`,
+updates them (the default, `init.update: auto`) or warns (`manual`), and prints what it did on standard error, never on
+standard output, so `--json` is unaffected. `init`,
 `version`, `help`, and `completion` do not check. See
 [Keeping the integration files current](claude-code.md#keeping-the-integration-files-current).
 
@@ -51,7 +52,16 @@ leaves `dry_run` out.
 
 ### Out-of-date integration files
 
-When another command finds integration files that `ralph init` would change, it warns on standard error:
+When another command finds integration files that `ralph init` would change, it updates them in the default
+`init.update: auto` mode, as `ralph init` without `--force` would, and reports on standard error:
+
+```
+warning: updated its integration files: .claude/commands/ralph/import.md (created), CLAUDE.md (updated)
+         review and commit them
+```
+
+The update is skipped under `--dry-run` and while a loop holds the project lock; the command warns instead. With
+`init.update: manual` it only warns:
 
 ```
 warning: the integration files in this repository are out of date: .claude/commands/ralph/import.md, CLAUDE.md
@@ -60,9 +70,10 @@ warning: these customized files are left alone: .claude/commands/ralph/receive.m
          `ralph init --force` overwrites them; add them to init.ignore to stop this warning
 ```
 
-Run `ralph init` to update the files, or list a file you customized on purpose in
-[`init.ignore`](configuration.md#init). Projects set up with `ralph init --no-harness` are never checked.
-`ralph init --dry-run` shows the same changes as a table.
+`ralph loop` exits with code `3` without running after it updated files, so they can be committed first. List a file
+you customized on purpose in [`init.ignore`](configuration.md#init). Projects set up with `ralph init --no-harness` are
+never checked. `ralph init --dry-run` shows the same changes as a table. See
+[Keeping the integration files current](claude-code.md#keeping-the-integration-files-current).
 
 ### `ralph update`
 

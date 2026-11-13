@@ -52,7 +52,30 @@ every file with what the running ralph would write, so a stale file is found wha
   and `ralph completion`. Outside a project nothing is checked. The check runs once per command and reads no
   database and makes no network call.
 
-Warnings go to standard error, so `--json` and other standard output are unchanged:
+Notices go to standard error, so `--json` and other standard output are unchanged.
+
+**Auto update (the default).** With [`init.update`](configuration.md#init) set to `auto`, a command that finds stale
+files updates them instead of only warning. It is the same update as `ralph init` without `--force`: files that are
+missing are created, files that ralph wrote and you never edited are brought up to date, and a file you customized is
+never overwritten. The config file and the database are never touched. The command then runs as usual, after saying what
+changed on standard error:
+
+```
+warning: updated its integration files: .claude/commands/ralph/import.md (created), CLAUDE.md (updated)
+         review and commit them
+```
+
+The update leaves the working tree with uncommitted changes, so a person has to review and commit the files. If the
+update cannot be written, the command prints `warning: could not update ralph's integration files: <error>` and carries
+on.
+
+Auto update is skipped, and the manual warning below is printed instead, in two cases:
+
+- The command was given `--dry-run`, because a dry run changes nothing.
+- A loop holds the project lock. Rewriting files in the middle of a loop would dirty the working tree the loop is
+  committing into.
+
+**Manual mode.** With `init.update: manual`, a command never writes. It warns on every command until you fix the files:
 
 ```
 warning: the integration files in this repository are out of date: .claude/commands/ralph/import.md, CLAUDE.md
@@ -61,22 +84,38 @@ warning: these customized files are left alone: .claude/commands/ralph/receive.m
          `ralph init --force` overwrites them; add them to init.ignore to stop this warning
 ```
 
-Either warning is left out when it has nothing to list. The warnings repeat on every command until they are fixed. If
-the dry run cannot finish, for example because `.mcp.json` is not valid JSON, the command prints
-`warning: could not check ralph's integration files: <error>` and carries on.
+Either warning is left out when it has nothing to list. The second one is printed in auto mode too, after the update,
+because a customized file is never overwritten. If the dry run cannot finish, for example because `.mcp.json` is not
+valid JSON, the command prints `warning: could not check ralph's integration files: <error>` and carries on.
 
-To fix the first warning, run `ralph init`, then review and commit the files. A slash command you edited is the
-second warning: `ralph init` skips it and `ralph init --force` overwrites it. To keep your version and stop the
-warning, list its path in [`init.ignore`](configuration.md#init):
+**Why `ralph loop` stops after an update.** The loop works in a clean working tree and commits each finished task. Files
+that the update just rewrote would be mixed into the first task's changes. So when the update in the same command
+created or updated a file, `ralph loop` prints the following, exits with code `3`, and does not run:
+
+```
+warning: updated its integration files: .claude/commands/ralph/import.md, CLAUDE.md
+         they must be committed before the loop can run; commit them, then rerun: ralph loop --milestone M-1
+```
+
+Commit the files and run the same command again. `ralph loop --dry-run` is not stopped. See
+[Stopping](loop.md#stopping).
+
+**The MCP notice.** `ralph mcp` writes standard output only for the protocol, so it reports on standard error and in the
+server instructions that the agent reads. The notice says that ralph updated its integration files (auto mode) or that
+they are out of date (manual mode), names them, and tells the agent to tell you to commit them, or run `ralph init`,
+before running any loop. While a loop holds the project lock, the instructions get no notice, so an agent that the loop
+started is never prompted to touch the repository; the standard error line may still be written. See
+[MCP server](mcp.md).
+
+**Opting out and keeping customizations.** Set `init.update: manual` to stop ralph from writing files for you. To keep a
+file you edited on purpose, and stop it being reported, list its path in [`init.ignore`](configuration.md#init):
 
 ```yaml
 init:
+  update: manual
   ignore:
     - .claude/commands/ralph/receive.md
 ```
-
-[`init.update`](configuration.md#init) chooses between `auto` and `manual`. Auto mode, which updates the files for
-you, is described with the next milestone's documentation; until then both values warn as above.
 
 ### First run
 
