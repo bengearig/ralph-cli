@@ -341,6 +341,53 @@ this prevents.
 - **What to do.** Reassign the card to the token's user, or unassign it, in Jira. Then move the task back to `TODO`
   (`ralph task status <id> TODO`) and rerun the loop. Until the card is reassigned, the rerun meets the same conflict.
 
+## Adding cards to a sprint
+
+Ralph can put a milestone's card in the active sprint of a board. It is opt-in, and it needs a Jira Software project
+with a board: a Kanban board has no sprints, and neither does a Jira Work Management project.
+
+```yaml
+task_manager:
+  jira:
+    sprint:
+      board: 42
+      when: created
+```
+
+- `task_manager.jira.sprint.board` is the ID of the board, which is the number in the board's URL
+  (`.../boards/42`). `0`, the default, means off: ralph makes no sprint calls and nothing changes. It must not be
+  negative.
+- `task_manager.jira.sprint.when` is `created` by default, which adds the card when it is created, or `started`,
+  which adds it the moment its card moves to In Progress, the same moment as
+  [auto-assign](#assigning-cards). It is validated whether or not a board is set.
+- Both are team settings, so they can live in the committed project config. See
+  [Configuration](configuration.md) for the environment variables.
+
+How it behaves:
+
+- **Milestone cards only.** Sub-tasks follow their parent into the sprint, and Features and Epics cannot be put in
+  one, so task and initiative cards are never added.
+- **The sprint is looked up when it is needed**, not stored: it is the board's active sprint at that moment. A new
+  sprint every couple of weeks needs no change to the configuration.
+- **A card already in an active or future sprint is left alone**, including one a person put in the next sprint. A
+  card that is only in closed sprints is added.
+- **Several active sprints.** The one that started most recently is used; with equal or missing start dates, the one
+  with the higher sprint ID.
+- **No active sprint.** The card stays in the backlog and ralph warns, `board <ID> has no active sprint; the card
+  stays in the backlog`. Ralph does not retry, so the card is not added when a sprint starts later; add it by hand.
+- **A failure is a warning.** A failed lookup or add never fails the command and never stops the loop, and it does not
+  mark the card as pending. The warning reads `jira card <KEY> for <ID>: not added to a sprint: <cause>`. When
+  cards are created by `ralph cards sync`, the warning is shown in parentheses beside the created item.
+- **What counts as a creation.** A card created with its resource is added, and so is a creation that failed earlier
+  and is retried, by an edit or by `ralph cards sync`. A card that `ralph cards sync` creates as a backfill, for work
+  that had no card row at all, is not added. Cards that already exist when the feature is turned on are not added
+  either.
+
+Ralph uses the Jira Software Agile API (`/rest/agile/1.0`): it lists the board's active sprints, reads the card's
+sprint, and adds the card to the chosen sprint. The token's user needs access to the board and permission to schedule
+issues in the project; without them Jira answers 401, 403, or 404 and the warning names the setting or permission to
+check.
+
 ## Deleting
 
 Before an initiative, milestone, or task is deleted, the cards of the resource and of everything the delete removes

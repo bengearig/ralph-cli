@@ -138,6 +138,8 @@ held by someone else: it saves the change and prints the conflict as a warning. 
   no card with the reason `kind not in task_manager.card_kinds`; see
   [Choosing which kinds get cards](jira.md#choosing-which-kinds-get-cards). It is safe to rerun, and it skips cancelled
   work that has no card.
+- When a created milestone card could not be added to a sprint, the warning is shown in parentheses beside the created
+  item; see [Adding cards to a sprint](jira.md#adding-cards-to-a-sprint).
 - Before creating anything it asks the task manager to check the configuration (for Jira, that the issue types exist
   and sit on adjacent hierarchy levels). If the check fails, nothing is synced and the command exits `1`.
 - `--initiative` limits it to one initiative, `--include-archived` also syncs archived initiatives, and `--verbose`
