@@ -954,3 +954,123 @@ func TestNoticeAppendedToInstructions(t *testing.T) {
 		t.Errorf("notice missing: %q", got)
 	}
 }
+
+func TestInitiativeParentCardTools(t *testing.T) {
+	cs := connect(t)
+
+	var created map[string]any
+	mustOK(t, cs, "initiative_create", map[string]any{"title": "With parent", "parent_card": "PROJ-12"}, &created)
+	if created["parent_card"] != "PROJ-12" {
+		t.Errorf("create parent_card = %v", created["parent_card"])
+	}
+	if _, ok := created["confirm_outline"]; !ok {
+		t.Errorf("create result lacks confirm_outline: %v", created)
+	}
+	var got service.InitiativeView
+	mustOK(t, cs, "initiative_get", map[string]any{"id": "I-1"}, &got)
+	if got.ParentCard != "PROJ-12" {
+		t.Errorf("get parent_card = %q", got.ParentCard)
+	}
+
+	var bare map[string]any
+	mustOK(t, cs, "initiative_create", map[string]any{"title": "No parent"}, &bare)
+	if _, ok := bare["parent_card"]; ok {
+		t.Errorf("create without parent_card returned one: %v", bare)
+	}
+
+	var list struct {
+		Initiatives []service.InitiativeView `json:"initiatives"`
+	}
+	mustOK(t, cs, "initiative_list", map[string]any{}, &list)
+	if len(list.Initiatives) != 2 || list.Initiatives[0].ParentCard != "PROJ-12" || list.Initiatives[1].ParentCard != "" {
+		t.Errorf("list = %+v", list.Initiatives)
+	}
+
+	var upd service.InitiativeView
+	mustOK(t, cs, "initiative_update", map[string]any{"id": "I-1", "parent_card": "ABC-7"}, &upd)
+	if upd.ParentCard != "ABC-7" {
+		t.Errorf("update parent_card = %q", upd.ParentCard)
+	}
+	mustOK(t, cs, "initiative_update", map[string]any{"id": "I-1", "title": "Renamed"}, &upd)
+	if upd.ParentCard != "ABC-7" || upd.Title != "Renamed" {
+		t.Errorf("title-only update = %+v", upd)
+	}
+	var cleared, after service.InitiativeView
+	mustOK(t, cs, "initiative_update", map[string]any{"id": "I-1", "parent_card": ""}, &cleared)
+	if cleared.ParentCard != "" {
+		t.Errorf("clearing parent_card left %q", cleared.ParentCard)
+	}
+	mustOK(t, cs, "initiative_get", map[string]any{"id": "I-1"}, &after)
+	if after.ParentCard != "" {
+		t.Errorf("get after clear = %q", after.ParentCard)
+	}
+}
+
+func TestInitiativeParentCardInvalid(t *testing.T) {
+	cs := connect(t)
+	res := call(t, cs, "initiative_create", map[string]any{"title": "Bad", "parent_card": "proj-12"}, nil)
+	if !res.IsError || !strings.Contains(text(res), "parent_card") {
+		t.Errorf("create = error:%v %q", res.IsError, text(res))
+	}
+	var list struct {
+		Initiatives []service.InitiativeView `json:"initiatives"`
+	}
+	mustOK(t, cs, "initiative_list", map[string]any{}, &list)
+	if len(list.Initiatives) != 0 {
+		t.Errorf("refused create stored %+v", list.Initiatives)
+	}
+
+	mustOK(t, cs, "initiative_create", map[string]any{"title": "Good", "parent_card": "PROJ-1"}, nil)
+	res = call(t, cs, "initiative_update", map[string]any{"id": "I-1", "parent_card": "nope"}, nil)
+	if !res.IsError || !strings.Contains(text(res), "parent_card") {
+		t.Errorf("update = error:%v %q", res.IsError, text(res))
+	}
+	var got service.InitiativeView
+	mustOK(t, cs, "initiative_get", map[string]any{"id": "I-1"}, &got)
+	if got.ParentCard != "PROJ-1" {
+		t.Errorf("refused update changed parent to %q", got.ParentCard)
+	}
+}
+
+func TestInitiativeParentCardSchema(t *testing.T) {
+	cs := connect(t)
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, tool := range res.Tools {
+		if tool.Name != "initiative_create" && tool.Name != "initiative_update" {
+			continue
+		}
+		seen++
+		raw, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var schema struct {
+			Properties map[string]struct {
+				Description string `json:"description"`
+			} `json:"properties"`
+			Required []string `json:"required"`
+		}
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatal(err)
+		}
+		p, ok := schema.Properties["parent_card"]
+		if !ok || p.Description == "" {
+			t.Errorf("%s input schema lacks a described parent_card: %s", tool.Name, raw)
+		}
+		for _, r := range schema.Required {
+			if r == "parent_card" {
+				t.Errorf("%s requires parent_card", tool.Name)
+			}
+		}
+		if !strings.Contains(tool.Description, "parent") {
+			t.Errorf("%s description omits the parent card: %q", tool.Name, tool.Description)
+		}
+	}
+	if seen != 2 {
+		t.Errorf("found %d initiative tools", seen)
+	}
+}
