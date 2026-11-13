@@ -20,7 +20,8 @@ automatically when the database is opened. Applied versions are tracked in `sche
 ### Initiative (`I-n`)
 
 One received set of instructions. `brief` holds them verbatim. `slug` is unique. `parent_card` is the Jira key of an existing card the initiative's card is attached to, empty for none; see
-[Attaching an initiative's card to a parent card](jira.md#attaching-an-initiatives-card-to-a-parent-card). `archived_at` is empty until the
+[Attaching an initiative's card to a parent card](jira.md#attaching-an-initiatives-card-to-a-parent-card). `sprint` is the name of the Jira sprint the initiative's milestone cards are added to, empty for the board's active sprint; see
+[Naming a sprint on an initiative](jira.md#naming-a-sprint-on-an-initiative). `archived_at` is empty until the
 initiative is [archived](#archiving).
 
 ### Milestone (`M-n`)

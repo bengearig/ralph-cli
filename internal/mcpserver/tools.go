@@ -28,6 +28,7 @@ type initiativeCreateIn struct {
 	Slug       string   `json:"slug,omitempty" jsonschema:"optional slug; derived from title when omitted"`
 	DependsOn  []string `json:"depends_on,omitempty" jsonschema:"IDs of milestones this one depends on, for example M-15; may be in other initiatives; cycles are refused"`
 	ParentCard string   `json:"parent_card,omitempty" jsonschema:"Jira key of an existing card to attach this initiative's card to, for example PROJ-123; set it only when the user names a parent card, otherwise leave it out"`
+	Sprint     string   `json:"sprint,omitempty" jsonschema:"name of the Jira sprint to add this initiative's milestone cards to, for example Sprint 42; set it only when the user names a sprint, otherwise leave it out and cards go to the board's active sprint; never guess a name"`
 }
 
 // initiativeCreateOut adds MCP-only guidance to the shared view (ADR 10).
@@ -37,7 +38,7 @@ type initiativeCreateOut struct {
 }
 
 func (t *tools) initiativeCreate(ctx context.Context, _ *mcp.CallToolRequest, in initiativeCreateIn) (*mcp.CallToolResult, initiativeCreateOut, error) {
-	v, err := t.svc.CreateInitiative(ctx, service.InitiativeInput{Title: in.Title, Brief: in.Brief, Slug: in.Slug, ParentCard: in.ParentCard})
+	v, err := t.svc.CreateInitiative(ctx, service.InitiativeInput{Title: in.Title, Brief: in.Brief, Slug: in.Slug, ParentCard: in.ParentCard, Sprint: in.Sprint})
 	if err != nil {
 		return nil, initiativeCreateOut{}, toolError(err)
 	}
@@ -193,6 +194,7 @@ type initiativeUpdateIn struct {
 	Title      *string `json:"title,omitempty" jsonschema:"new title"`
 	Brief      *string `json:"brief,omitempty" jsonschema:"new brief, replacing the old one"`
 	ParentCard *string `json:"parent_card,omitempty" jsonschema:"Jira key of the card to attach this initiative's card to, for example PROJ-123; an empty string removes the parent; omit the field to leave it unchanged"`
+	Sprint     *string `json:"sprint,omitempty" jsonschema:"name of the sprint for this initiative's milestone cards, for example Sprint 42; an empty string removes it; omit the field to leave it unchanged"`
 }
 
 func (t *tools) initiativeUpdate(ctx context.Context, _ *mcp.CallToolRequest, in initiativeUpdateIn) (*mcp.CallToolResult, service.InitiativeView, error) {
@@ -200,7 +202,7 @@ func (t *tools) initiativeUpdate(ctx context.Context, _ *mcp.CallToolRequest, in
 	if err != nil {
 		return nil, service.InitiativeView{}, err
 	}
-	v, err := t.svc.UpdateInitiative(ctx, id, service.InitiativePatch{Title: in.Title, Brief: in.Brief, ParentCard: in.ParentCard})
+	v, err := t.svc.UpdateInitiative(ctx, id, service.InitiativePatch{Title: in.Title, Brief: in.Brief, ParentCard: in.ParentCard, Sprint: in.Sprint})
 	return nil, v, toolError(err)
 }
 

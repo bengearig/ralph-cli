@@ -136,3 +136,26 @@ func TestInitiativeCreateSendsParentCard(t *testing.T) {
 	}
 	t.Errorf("no initiative card created: %+v", prov.Calls())
 }
+
+func TestInitiativeSprintReachesMilestoneCard(t *testing.T) {
+	st, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "r.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	ix := &search.Index{Store: st, Embedder: fake.New(), Chunker: search.Chunker{MaxChars: 1000, OverlapChars: 100}}
+	prov := tmfake.New()
+	cs := connectService(t, service.New(st, ix, service.Options{TaskManager: prov}), Options{})
+
+	mustOK(t, cs, "initiative_create", map[string]any{"title": "Sprinty", "sprint": "Sprint 42"}, nil)
+	mustOK(t, cs, "milestone_create", map[string]any{"initiative_id": "I-1", "title": "First"}, nil)
+	calls := prov.SprintCalls()
+	if len(calls) == 0 {
+		t.Fatalf("no sprint calls recorded: %+v", prov.Calls())
+	}
+	for _, c := range calls {
+		if c.Request.Sprint != "Sprint 42" {
+			t.Errorf("sprint call = %+v", c)
+		}
+	}
+}

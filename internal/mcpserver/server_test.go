@@ -1074,3 +1074,112 @@ func TestInitiativeParentCardSchema(t *testing.T) {
 		t.Errorf("found %d initiative tools", seen)
 	}
 }
+
+func TestInitiativeSprintTools(t *testing.T) {
+	cs := connect(t)
+
+	var created map[string]any
+	mustOK(t, cs, "initiative_create", map[string]any{"title": "With sprint", "sprint": "Sprint 42"}, &created)
+	if created["sprint"] != "Sprint 42" {
+		t.Errorf("create sprint = %v", created["sprint"])
+	}
+	if _, ok := created["confirm_outline"]; !ok {
+		t.Errorf("create result lacks confirm_outline: %v", created)
+	}
+	var got service.InitiativeView
+	mustOK(t, cs, "initiative_get", map[string]any{"id": "I-1"}, &got)
+	if got.Sprint != "Sprint 42" {
+		t.Errorf("get sprint = %q", got.Sprint)
+	}
+
+	var bare map[string]any
+	mustOK(t, cs, "initiative_create", map[string]any{"title": "No sprint"}, &bare)
+	if _, ok := bare["sprint"]; ok {
+		t.Errorf("create without sprint returned one: %v", bare)
+	}
+
+	var list struct {
+		Initiatives []service.InitiativeView `json:"initiatives"`
+	}
+	mustOK(t, cs, "initiative_list", map[string]any{}, &list)
+	if len(list.Initiatives) != 2 || list.Initiatives[0].Sprint != "Sprint 42" || list.Initiatives[1].Sprint != "" {
+		t.Errorf("list = %+v", list.Initiatives)
+	}
+
+	var upd service.InitiativeView
+	mustOK(t, cs, "initiative_update", map[string]any{"id": "I-1", "sprint": "Sprint 43"}, &upd)
+	if upd.Sprint != "Sprint 43" {
+		t.Errorf("update sprint = %q", upd.Sprint)
+	}
+	mustOK(t, cs, "initiative_update", map[string]any{"id": "I-1", "title": "Renamed"}, &upd)
+	if upd.Sprint != "Sprint 43" || upd.Title != "Renamed" {
+		t.Errorf("title-only update = %+v", upd)
+	}
+	var cleared, after service.InitiativeView
+	mustOK(t, cs, "initiative_update", map[string]any{"id": "I-1", "sprint": ""}, &cleared)
+	if cleared.Sprint != "" {
+		t.Errorf("clearing sprint left %q", cleared.Sprint)
+	}
+	mustOK(t, cs, "initiative_get", map[string]any{"id": "I-1"}, &after)
+	if after.Sprint != "" {
+		t.Errorf("get after clear = %q", after.Sprint)
+	}
+}
+
+func TestInitiativeSprintInvalid(t *testing.T) {
+	cs := connect(t)
+	res := call(t, cs, "initiative_create", map[string]any{"title": "Bad", "sprint": "Sprint\n42"}, nil)
+	if !res.IsError || !strings.Contains(text(res), "sprint") {
+		t.Errorf("create = error:%v %q", res.IsError, text(res))
+	}
+	var list struct {
+		Initiatives []service.InitiativeView `json:"initiatives"`
+	}
+	mustOK(t, cs, "initiative_list", map[string]any{}, &list)
+	if len(list.Initiatives) != 0 {
+		t.Errorf("refused create stored %+v", list.Initiatives)
+	}
+}
+
+func TestInitiativeSprintSchema(t *testing.T) {
+	cs := connect(t)
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, tool := range res.Tools {
+		if tool.Name != "initiative_create" && tool.Name != "initiative_update" {
+			continue
+		}
+		seen++
+		raw, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var schema struct {
+			Properties map[string]struct {
+				Description string `json:"description"`
+			} `json:"properties"`
+			Required []string `json:"required"`
+		}
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatal(err)
+		}
+		p, ok := schema.Properties["sprint"]
+		if !ok || p.Description == "" {
+			t.Errorf("%s input schema lacks a described sprint: %s", tool.Name, raw)
+		}
+		for _, r := range schema.Required {
+			if r == "sprint" {
+				t.Errorf("%s requires sprint", tool.Name)
+			}
+		}
+		if !strings.Contains(tool.Description, "sprint") {
+			t.Errorf("%s description omits the sprint: %q", tool.Name, tool.Description)
+		}
+	}
+	if seen != 2 {
+		t.Errorf("found %d initiative tools", seen)
+	}
+}

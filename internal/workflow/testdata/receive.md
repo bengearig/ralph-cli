@@ -21,9 +21,12 @@ Do the following, using the `ralph` MCP tools:
 2. Call `search` with the gist of the instructions to find related initiatives, documents, and tasks. Mention anything
    relevant.
 3. Call `initiative_create` with a short title and the instructions **verbatim** as the `brief`. Do not paraphrase the
-   brief; it keeps any mention of the parent card. When the user names a parent Jira card for the initiative (for
-   example "under PROJ-123" or "attach it to ABC-9"), pass its key as `parent_card`; otherwise leave `parent_card` out.
-   Never guess a key. Note `confirm_outline` in the result; step 8 uses it.
+   brief; it keeps any mention of the parent card and the sprint. When the user names a parent Jira card for the
+   initiative (for example "under PROJ-123" or "attach it to ABC-9"), pass its key as `parent_card`; otherwise leave
+   `parent_card` out. Never guess a key. When the user names a Jira sprint for the initiative's cards (for example "put
+   it in Sprint 42" or "in the current sprint's successor, Sprint 43"), pass the name as `sprint`; otherwise leave
+   `sprint` out, which means the board's active sprint. Never guess a sprint name. Note `confirm_outline` in the
+   result; step 8 uses it.
 4. Read the codebase only as far as needed to understand where the work lands.
 5. Ask the user high-level questions, a few at a time, most consequential first: goals and what success looks like,
    scope and non-goals, who is affected, constraints, integrations, risks, and the order in which value should be
@@ -74,11 +77,11 @@ approved.
 1. Do the read-only work of steps 1, 2, 4, and 5 above: search, read the code, and ask the high-level questions. Do
    not call `initiative_create` or `doc_create` yet.
 2. Write the plan: the initiative title, the instructions **verbatim** as the brief, the `brief`, `decision`, and any
-   `architecture` documents to record (as in step 6), the parent card when the user named one, and the outline (as in
-   step 7).
+   `architecture` documents to record (as in step 6), the parent card and the sprint when the user named them, and the outline
+   (as in step 7).
 3. Call `ExitPlanMode` to request approval. If the user rejects the plan with feedback, revise it and present it
    again.
-4. Once the plan is approved, call `initiative_create` (passing the same `parent_card`, if any), then
+4. Once the plan is approved, call `initiative_create` (passing the same `parent_card` and `sprint`, if any), then
    `doc_create` for each document, then create the outline as in step 8 and show it with its IDs. Approval has already
    been given, so `confirm_outline` in the `initiative_create` result changes nothing.
 5. Finish as in step 9 above.
@@ -91,7 +94,8 @@ Use this when the arguments are an initiative ID, typically after a kickback fro
    the initiative. Read the `KICKBACK` notes (`task_get`) to learn what prompted the revision.
 2. Discuss the high-level change with the user, as in step 5 above. Record it as `brief` or `decision` documents; the
    initiative's brief stays verbatim. When the user gives, changes, or removes the parent card, call
-   `initiative_update` with `parent_card` (an empty string removes it).
+   `initiative_update` with `parent_card` (an empty string removes it). When the user gives, changes, or removes the
+   sprint, call `initiative_update` with `sprint` (an empty string removes it).
 3. Revisions always need approval. Present the revised outline in plan mode, as in **Approving through plan mode**
    above, and once the plan is approved, apply it:
    - new milestones with `milestone_create`, changed ones with `milestone_update`, setting `depends_on` for any

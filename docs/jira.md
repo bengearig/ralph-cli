@@ -383,6 +383,31 @@ How it behaves:
   that had no card row at all, is not added. Cards that already exist when the feature is turned on are not added
   either.
 
+### Naming a sprint on an initiative
+
+An initiative can name the sprint its milestone cards go to, instead of the board's active sprint. Set it with the
+`--sprint` flag of `ralph initiative create` and `update`, or the `sprint` field of the `initiative_create` and
+`initiative_update` MCP tools, so it can be said in any prompt, such as the Receive command:
+
+```sh
+ralph initiative create --title "Customer SSO" --brief-file brief.txt --sprint "Sprint 42"
+ralph initiative update I-3 --sprint "Sprint 43"
+ralph initiative update I-3 --sprint ""
+```
+
+- **Stored with the initiative,** not a configuration setting, so it can differ from one initiative to the next.
+  `ralph initiative show` prints it as a `sprint:` line.
+- **It applies to every milestone card under the initiative** and wins over the board's active sprint. It still needs
+  `task_manager.jira.sprint.board`, because the sprint is looked up on that board.
+- **The name is matched exactly,** ignoring case and surrounding spaces, among the board's open sprints, which are its
+  active and future sprints. A future sprint can be named before it starts.
+- **A name that matches no open sprint, or more than one, falls back** to the board's active sprint, with a warning
+  that says the named sprint was not usable. A sprint that has closed, or that does not exist, matches none. A renamed
+  sprint no longer matches its old name.
+- **Changing it moves no existing card.** A card already in an active or future sprint is left alone, as above, so the
+  new name applies to cards added afterwards.
+- **An empty value removes it,** and the board's active sprint is used again.
+
 Ralph uses the Jira Software Agile API (`/rest/agile/1.0`): it lists the board's active sprints, reads the card's
 sprint, and adds the card to the chosen sprint. The token's user needs access to the board and permission to schedule
 issues in the project; without them Jira answers 401, 403, or 404 and the warning names the setting or permission to
