@@ -94,8 +94,8 @@ an update is available, it lists what the release notes say changed, one line pe
 
 | Command | Purpose |
 |---|---|
-| `ralph initiative create --title <t> [--brief <text> \| --brief-file <path>] [--slug <s>]` | Record received instructions. |
-| `ralph initiative list [--watch]` / `show <id>` / `update <id> [--title] [--brief \| --brief-file]` | Browse and edit. `show` includes the milestone table. |
+| `ralph initiative create --title <t> [--brief <text> \| --brief-file <path>] [--slug <s>] [--parent-card <key>]` | Record received instructions. `--parent-card PROJ-123` attaches the initiative's Jira card to an existing card; see [Attaching an initiative's card to a parent card](jira.md#attaching-an-initiatives-card-to-a-parent-card). |
+| `ralph initiative list [--watch]` / `show <id>` / `update <id> [--title] [--brief \| --brief-file] [--parent-card <key>]` | Browse and edit. `show` includes the milestone table and a `parent card:` line when the initiative has one. An empty `--parent-card` clears it. See [Attaching an initiative's card to a parent card](jira.md#attaching-an-initiatives-card-to-a-parent-card). |
 | `ralph milestone create --initiative <id> --title <t> [--description] [--position] [--slug] [--depends-on <ids>]` | Add a milestone. `--depends-on M-15,M-16` (repeatable) records the milestones it depends on; see [Milestone dependencies](#milestone-dependencies). |
 | `ralph milestone list [--initiative <id>] [--watch]` / `show <id>` / `update <id> ...` | Browse and edit. `show` includes tasks in loop order, and a `branch:` line with the base and head commits once the loop has recorded them, and a `depends on:` line when the milestone has dependencies. `update` never changes the recorded git state; `--depends-on <ids>` replaces the milestone's dependencies and `--no-depends-on` removes them (use one or the other). |
 | `ralph task create --milestone <id> --title <t> [--description] [--criteria] [--position]` | Propose a task (status `PROPOSED`). |

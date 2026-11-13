@@ -114,3 +114,25 @@ func TestCardsSyncToolKindOff(t *testing.T) {
 		}
 	}
 }
+
+func TestInitiativeCreateSendsParentCard(t *testing.T) {
+	st, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "r.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	ix := &search.Index{Store: st, Embedder: fake.New(), Chunker: search.Chunker{MaxChars: 1000, OverlapChars: 100}}
+	prov := tmfake.New()
+	cs := connectService(t, service.New(st, ix, service.Options{TaskManager: prov}), Options{})
+
+	mustOK(t, cs, "initiative_create", map[string]any{"title": "Child", "parent_card": "PROJ-12"}, nil)
+	for _, c := range prov.Calls() {
+		if c.Method == "Create" && c.Request.Kind == domain.KindInitiative {
+			if c.Request.ParentKey != "PROJ-12" {
+				t.Errorf("parent key = %q", c.Request.ParentKey)
+			}
+			return
+		}
+	}
+	t.Errorf("no initiative card created: %+v", prov.Calls())
+}

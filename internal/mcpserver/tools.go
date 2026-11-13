@@ -23,10 +23,11 @@ type empty struct{}
 // ---- initiatives ----
 
 type initiativeCreateIn struct {
-	Title     string   `json:"title" jsonschema:"short title for the initiative"`
-	Brief     string   `json:"brief,omitempty" jsonschema:"the instructions exactly as received"`
-	Slug      string   `json:"slug,omitempty" jsonschema:"optional slug; derived from title when omitted"`
-	DependsOn []string `json:"depends_on,omitempty" jsonschema:"IDs of milestones this one depends on, for example M-15; may be in other initiatives; cycles are refused"`
+	Title      string   `json:"title" jsonschema:"short title for the initiative"`
+	Brief      string   `json:"brief,omitempty" jsonschema:"the instructions exactly as received"`
+	Slug       string   `json:"slug,omitempty" jsonschema:"optional slug; derived from title when omitted"`
+	DependsOn  []string `json:"depends_on,omitempty" jsonschema:"IDs of milestones this one depends on, for example M-15; may be in other initiatives; cycles are refused"`
+	ParentCard string   `json:"parent_card,omitempty" jsonschema:"Jira key of an existing card to attach this initiative's card to, for example PROJ-123; set it only when the user names a parent card, otherwise leave it out"`
 }
 
 // initiativeCreateOut adds MCP-only guidance to the shared view (ADR 10).
@@ -36,7 +37,7 @@ type initiativeCreateOut struct {
 }
 
 func (t *tools) initiativeCreate(ctx context.Context, _ *mcp.CallToolRequest, in initiativeCreateIn) (*mcp.CallToolResult, initiativeCreateOut, error) {
-	v, err := t.svc.CreateInitiative(ctx, service.InitiativeInput{Title: in.Title, Brief: in.Brief, Slug: in.Slug})
+	v, err := t.svc.CreateInitiative(ctx, service.InitiativeInput{Title: in.Title, Brief: in.Brief, Slug: in.Slug, ParentCard: in.ParentCard})
 	if err != nil {
 		return nil, initiativeCreateOut{}, toolError(err)
 	}
@@ -188,9 +189,10 @@ func (t *tools) initiativeGet(ctx context.Context, _ *mcp.CallToolRequest, in id
 }
 
 type initiativeUpdateIn struct {
-	ID    string  `json:"id" jsonschema:"initiative ID, for example I-1"`
-	Title *string `json:"title,omitempty" jsonschema:"new title"`
-	Brief *string `json:"brief,omitempty" jsonschema:"new brief, replacing the old one"`
+	ID         string  `json:"id" jsonschema:"initiative ID, for example I-1"`
+	Title      *string `json:"title,omitempty" jsonschema:"new title"`
+	Brief      *string `json:"brief,omitempty" jsonschema:"new brief, replacing the old one"`
+	ParentCard *string `json:"parent_card,omitempty" jsonschema:"Jira key of the card to attach this initiative's card to, for example PROJ-123; an empty string removes the parent; omit the field to leave it unchanged"`
 }
 
 func (t *tools) initiativeUpdate(ctx context.Context, _ *mcp.CallToolRequest, in initiativeUpdateIn) (*mcp.CallToolResult, service.InitiativeView, error) {
@@ -198,7 +200,7 @@ func (t *tools) initiativeUpdate(ctx context.Context, _ *mcp.CallToolRequest, in
 	if err != nil {
 		return nil, service.InitiativeView{}, err
 	}
-	v, err := t.svc.UpdateInitiative(ctx, id, service.InitiativePatch{Title: in.Title, Brief: in.Brief})
+	v, err := t.svc.UpdateInitiative(ctx, id, service.InitiativePatch{Title: in.Title, Brief: in.Brief, ParentCard: in.ParentCard})
 	return nil, v, toolError(err)
 }
 

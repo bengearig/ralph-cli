@@ -20,7 +20,7 @@ func (a *app) newInitiativeCommand() *cobra.Command {
 		Short: "Manage initiatives (one received set of instructions each)",
 	}
 
-	var title, slug, brief, briefFile string
+	var title, slug, brief, briefFile, parentCard string
 	create := &cobra.Command{
 		Use:   "create",
 		Short: "Record newly received instructions as an initiative",
@@ -30,7 +30,7 @@ func (a *app) newInitiativeCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			in := service.InitiativeInput{Title: title, Slug: slug}
+			in := service.InitiativeInput{Title: title, Slug: slug, ParentCard: parentCard}
 			if b != nil {
 				in.Brief = *b
 			}
@@ -54,6 +54,7 @@ func (a *app) newInitiativeCommand() *cobra.Command {
 	create.Flags().StringVar(&slug, "slug", "", "slug (default: derived from title)")
 	create.Flags().StringVar(&brief, "brief", "", "the instructions as received")
 	create.Flags().StringVar(&briefFile, "brief-file", "", "read the brief from a file, or - for stdin")
+	create.Flags().StringVar(&parentCard, "parent-card", "", "the Jira key of an existing card to attach this initiative's card to, such as PROJ-123")
 	_ = create.MarkFlagRequired("title")
 
 	var listArchived bool
@@ -118,10 +119,10 @@ interrupted (exit 130) or an error occurs.`,
 		},
 	}
 
-	var upTitle, upBrief, upBriefFile string
+	var upTitle, upBrief, upBriefFile, upParentCard string
 	update := &cobra.Command{
 		Use:   "update <id>",
-		Short: "Edit an initiative's title or brief",
+		Short: "Edit an initiative's title, brief, or parent card",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := parseIDArg(domain.KindInitiative, args[0])
@@ -136,11 +137,12 @@ interrupted (exit 130) or an error occurs.`,
 			if err != nil {
 				return err
 			}
-			v, err := svc.UpdateInitiative(cmd.Context(), id, service.InitiativePatch{Title: optString(cmd, "title", upTitle), Brief: b})
+			v, err := svc.UpdateInitiative(cmd.Context(), id, service.InitiativePatch{Title: optString(cmd, "title", upTitle), Brief: b, ParentCard: optString(cmd, "parent-card", upParentCard)})
 			if err != nil {
 				return err
 			}
 			a.warn(v.IndexWarning)
+			a.warn(v.CardWarning)
 			if a.jsonOut {
 				return a.writeJSON(v)
 			}
@@ -150,6 +152,7 @@ interrupted (exit 130) or an error occurs.`,
 	update.Flags().StringVar(&upTitle, "title", "", "new title")
 	update.Flags().StringVar(&upBrief, "brief", "", "new brief")
 	update.Flags().StringVar(&upBriefFile, "brief-file", "", "read the new brief from a file, or - for stdin")
+	update.Flags().StringVar(&upParentCard, "parent-card", "", "the Jira key of an existing card to attach this initiative's card to, such as PROJ-123; empty clears it")
 
 	cmd.AddCommand(create, list, show, a.newInitiativeWatchCommand(), update, a.newInitiativeArchiveCommand(true), a.newInitiativeArchiveCommand(false), a.newDeleteCommand(domain.KindInitiative, true, "Delete an initiative. Without --force it must have no milestones or documents; with --force they are deleted too."))
 	return cmd
@@ -202,7 +205,11 @@ func (a *app) renderInitiativeShow(v initiativeShow) error {
 	if err := a.printf("%s  %s\nslug: %s\ntasks: %s\n", v.ID, v.Title, v.Slug, service.FormatCounts(v.Status.TaskCounts)); err != nil {
 		return err
 	}
-	if err := a.printf("%s%s", cardLine(v.Card), archivedLine(v.ArchivedAt, false, "")); err != nil {
+	parent := ""
+	if v.ParentCard != "" {
+		parent = "parent card: " + v.ParentCard + "\n"
+	}
+	if err := a.printf("%s%s%s", parent, cardLine(v.Card), archivedLine(v.ArchivedAt, false, "")); err != nil {
 		return err
 	}
 	if err := a.section("Brief", v.Brief); err != nil {
