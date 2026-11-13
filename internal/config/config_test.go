@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -63,6 +64,9 @@ func TestDefaults(t *testing.T) {
 	}
 	if cfg.Import.MaxFileBytes != 1048576 {
 		t.Errorf("import.max_file_bytes = %d", cfg.Import.MaxFileBytes)
+	}
+	if cfg.Init.Update != InitUpdateAuto || len(cfg.Init.Ignore) != 0 {
+		t.Errorf("init defaults = %+v", cfg.Init)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("default config should validate: %v", err)
@@ -384,6 +388,8 @@ func TestValidateReportsAllProblems(t *testing.T) {
 	cfg.PR.StaleBase = "rebase"
 	cfg.Harness.ClaudeCode.MaxBudgetUSD = -1
 	cfg.Loop.CommitTemplate = "{{.Task"
+	cfg.Init.Update = "sometimes"
+	cfg.Init.Ignore = []string{"../x"}
 
 	err = cfg.Validate()
 	if err == nil {
@@ -393,6 +399,7 @@ func TestValidateReportsAllProblems(t *testing.T) {
 		"log.level", "embeddings.provider", "embeddings.timeout", "embeddings.chunk.overlap_chars",
 		"search.limit", "import.max_file_bytes", "steps.loop.harness", "loop.stall_threshold", "loop.branch_template",
 		"pr.provider", "pr.base_branch", "pr.remote", "pr.stale_base", "harness.claude_code.max_budget_usd", "loop.commit_template",
+		"init.update", "init.ignore",
 	} {
 		if !strings.Contains(err.Error(), key+":") {
 			t.Errorf("missing problem for %s in:\n%v", key, err)
@@ -734,6 +741,53 @@ func TestImportMaxFileBytes(t *testing.T) {
 	}
 	if l.Config.Import.MaxFileBytes != 4096 {
 		t.Errorf("env: import.max_file_bytes = %d", l.Config.Import.MaxFileBytes)
+	}
+}
+
+func TestInitSettings(t *testing.T) {
+	project := writeFile(t, t.TempDir(), "p.yaml", "init:\n  update: manual\n  ignore: [.claude/commands/ralph/receive.md, docs/x.md]\n")
+	l, err := Load(Sources{ProjectFile: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Config.Init.Update != InitUpdateManual || !slices.Equal(l.Config.Init.Ignore, []string{".claude/commands/ralph/receive.md", "docs/x.md"}) {
+		t.Errorf("file: init = %+v", l.Config.Init)
+	}
+	file := writeFile(t, t.TempDir(), "q.yaml", "init:\n  update: auto\n")
+	l, err = Load(Sources{ProjectFile: file, Environ: []string{"RALPH_INIT__UPDATE=manual"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Config.Init.Update != InitUpdateManual {
+		t.Errorf("env: init.update = %q", l.Config.Init.Update)
+	}
+}
+
+func TestValidateInit(t *testing.T) {
+	for _, u := range []string{InitUpdateAuto, InitUpdateManual} {
+		cfg, _ := Defaults()
+		cfg.Init.Update = u
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("update %q: %v", u, err)
+		}
+	}
+	cfg, _ := Defaults()
+	cfg.Init.Update = "sometimes"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "init.update:") || !strings.Contains(err.Error(), "auto, manual") {
+		t.Errorf("update err = %v", err)
+	}
+	for _, p := range []string{"", "/x", `a\b`, "../x", "a/../b", "a/.."} {
+		cfg, _ := Defaults()
+		cfg.Init.Ignore = []string{p}
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "init.ignore:") || !strings.Contains(err.Error(), fmt.Sprintf("%q", p)) {
+			t.Errorf("ignore %q: err = %v", p, err)
+		}
+	}
+	cfg, _ = Defaults()
+	cfg.Init.Ignore = []string{".claude/commands/ralph/receive.md"}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("valid ignore: %v", err)
 	}
 }
 

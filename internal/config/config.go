@@ -35,6 +35,9 @@ const (
 
 	TaskManagerNone = "none"
 	TaskManagerJira = "jira"
+
+	InitUpdateAuto   = "auto"
+	InitUpdateManual = "manual"
 )
 
 var jiraDurationRE = regexp.MustCompile(`^[0-9]+[wdhm]( [0-9]+[wdhm])*$`)
@@ -46,6 +49,7 @@ var (
 	knownStaleBases     = []string{StaleBaseRefuse, StaleBaseSync}
 	knownBitbucketAuths = []string{BitbucketAuthBasic, BitbucketAuthBearer}
 	knownTaskManagers   = []string{TaskManagerNone, TaskManagerJira}
+	knownInitUpdates    = []string{InitUpdateAuto, InitUpdateManual}
 	knownLogLevels      = []string{"debug", "info", "warn", "error"}
 	knownLogFormats     = []string{"text", "json"}
 )
@@ -73,6 +77,7 @@ type Config struct {
 	Steps      StepsConfig      `koanf:"steps"`
 	Receive    ReceiveConfig    `koanf:"receive"`
 	Import     ImportConfig     `koanf:"import"`
+	Init       InitConfig       `koanf:"init"`
 	Loop       LoopConfig       `koanf:"loop"`
 	PR         PRConfig         `koanf:"pr"`
 
@@ -146,6 +151,11 @@ type ReceiveConfig struct {
 
 type ImportConfig struct {
 	MaxFileBytes int `koanf:"max_file_bytes"`
+}
+
+type InitConfig struct {
+	Update string   `koanf:"update"`
+	Ignore []string `koanf:"ignore"`
 }
 
 type LoopConfig struct {
@@ -347,6 +357,13 @@ func (c *Config) Validate() error {
 
 	if c.Import.MaxFileBytes < 1 {
 		bad("import.max_file_bytes", "must be at least 1")
+	}
+
+	oneOf("init.update", c.Init.Update, knownInitUpdates)
+	for _, p := range c.Init.Ignore {
+		if p == "" || strings.HasPrefix(p, "/") || strings.Contains(p, `\`) || slices.Contains(strings.Split(p, "/"), "..") {
+			bad("init.ignore", "%q must be a non-empty, slash-separated path relative to the project root, without ..", p)
+		}
 	}
 
 	if c.Loop.MaxIterations < 1 {
