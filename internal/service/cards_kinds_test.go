@@ -104,7 +104,7 @@ func TestEditTaskWithFailedCardAndKindOff(t *testing.T) {
 		if enabled {
 			e.svc.cardKinds = append(e.svc.cardKinds, domain.KindTask)
 		}
-		e.svc.cardClaimStale = time.Nanosecond
+		e.svc.cardClaimStale = -time.Minute
 		before := len(p.Calls())
 		title := "T2"
 		if _, err := e.svc.UpdateTask(ctx, task, TaskPatch{Title: &title}); err != nil {
