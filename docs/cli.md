@@ -155,14 +155,18 @@ held by someone else: it saves the change and prints the conflict as a warning. 
 
 - It searches for open cards in the configured project carrying every configured label, and needs at least one label.
   A card is an orphan only when its ID and key are both unknown to ralph; cards that cannot be matched are listed as
-  skipped and never changed.
+  skipped and never changed. A card stamped with another store's identifier is skipped with the reason
+  `belongs to store <id>`; see [The store stamp](jira.md#the-store-stamp). Unstamped cards are classified as before.
+  It reads this store's identifier without creating one.
 - Without `--apply` it changes nothing. `--created-after` takes a date and limits the search to cards created on or
   after it.
 - `--apply` cancels the orphans by moving each to `task_manager.jira.canceled_status`. It is refused without
   `--created-after` or without `canceled_status` set, and asks no confirmation. Labels identify the Jira project and
-  not the ralph store, so other people's cards with the same labels can look like orphans: review the dry run first.
+  not the ralph store, so unstamped cards of other people with the same labels can look like orphans: review the dry
+  run first.
 - Output is one line per orphan, cancelled, failed, or skipped card, then a line of totals. With `--json` it is the
-  report. With `--apply`, each card is also named on standard error as it is handled.
+  report, whose `items` each have `key`, `url`, `id`, `store` (the stamp, when the card has one), `summary`, `status`,
+  `outcome`, and `reason`. With `--apply`, each card is also named on standard error as it is handled.
 - Exit code `0` means success, and every dry run exits `0`. With `--apply`, `3` means at least one card could not be
   cancelled, and `1` is any other error, including a missing scope or `canceled_status` and an invalid date.
 

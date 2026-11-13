@@ -371,7 +371,8 @@ ralph cards reconcile --created-after 2026-01-01 --apply
   reads it in the Jira user's time zone.
 - `--apply` cancels the orphans. Without it the command changes nothing.
 - `--json` prints the report: counts of each outcome and `items`, each with its `outcome`, `key`, `url`, the parsed `id`
-  when there is one, `summary`, `status`, and a `reason` for a skip or a failure.
+  when there is one, the `store` stamp when the summary has one, `summary`, `status`, and a `reason` for a skip or a
+  failure.
 
 ### The search
 
@@ -390,11 +391,36 @@ matches decides:
 |---|---|
 | skipped | The card's key is recorded for a resource in ralph. The reason names that resource. |
 | skipped | The summary has no ralph ID, so there is nothing to match. |
+| skipped | The summary is stamped with another store's identifier. The reason is `belongs to store <id>`. |
 | skipped | The ID exists in ralph, including archived and cancelled work, under a different key or with no recorded card. |
 | orphan | Otherwise: the ID and the key are both unknown to ralph. |
 
 Skipped cards are listed with their reason for a person to review, and are never changed. Cards of archived or
 cancelled work are skipped because they are [`ralph cards sync`](#syncing-existing-work)'s business.
+
+### The store stamp
+
+Reconcile reads the [store identifier](#store-identifier) stamp from the summary: a leading `[<id>] ` before the ralph
+ID, as in `[ab] T-12: Add the login form`. It is part of the match, and it is checked after the key and ID rules above
+and before the check for an existing ID:
+
+- A card stamped with another store's identifier is skipped with the reason `belongs to store <id>` and is never
+  cancelled, whether or not its ID exists in this store.
+- A card stamped with this store's identifier, and a card with no stamp, are classified as before.
+- Each item in the `--json` report carries the stamp it was read from as `store`, left out when the card has none.
+
+Reconcile reads this store's identifier without creating one, and writes nothing to the store. A store that has no
+identifier yet has nothing to match a stamp against, so every stamped card is treated as another store's.
+
+**Teammates.** Two clones sharing a Jira project number their resources separately, so each has its own `T-12`. Before
+cards were stamped, a teammate's card could have an ID unknown to this store and look like an orphan. Now a card
+stamped by another store is skipped. Cards with no stamp, created before stamping existed and not yet restamped by
+[`ralph cards sync`](#syncing-existing-work), stay ambiguous: they can still look like orphans. The date scope and
+reviewing the list still matter for them.
+
+**A deleted store.** A fresh store generates a new identifier, so the cards made under the old one look like another
+store's and are skipped rather than cancelled. To treat them as this store's again, set `task_manager.store_id` to the
+old value. The [store identifier](#store-identifier) section covers how identifiers are generated.
 
 ### Applying
 
@@ -406,9 +432,11 @@ deleted in Jira.
 
 ### The shared-label risk
 
-Labels identify the Jira project, not the ralph store. Another person's cards, or another repository's, that carry the
-same labels in the same project have IDs unknown to this store, so they look like orphans, and `--apply` would cancel
-them. Review the dry run, and scope the search with `--created-after` to the date this repository started using ralph.
+Labels identify the Jira project, not the ralph store. The [store stamp](#the-store-stamp) is what protects another
+store's cards: those stamped with another identifier are skipped. Cards with no stamp, from another person or another
+repository, that carry the same labels in the same project have IDs unknown to this store, so they look like orphans,
+and `--apply` would cancel them. Review the dry run, and scope the search with `--created-after` to the date this
+repository started using ralph.
 
 ### Permissions and exit codes
 
