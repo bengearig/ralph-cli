@@ -66,7 +66,12 @@ func OpenWithTaskManager(ctx context.Context, cfg *config.Config, root string, l
 	for _, k := range cfg.TaskManager.CardKinds {
 		cardKinds = append(cardKinds, domain.Kind(k))
 	}
-	svc := New(st, ix, Options{TaskManager: tm, CardKinds: cardKinds, CardClaimStale: 3 * cfg.TaskManager.Timeout, CardTimeout: cfg.TaskManager.Timeout,
+	storeID, err := config.NormalizeStoreID(cfg.TaskManager.StoreID)
+	if err != nil {
+		st.Close()
+		return nil, nil, err
+	}
+	svc := New(st, ix, Options{StoreID: storeID, TaskManager: tm, CardKinds: cardKinds, CardClaimStale: 3 * cfg.TaskManager.Timeout, CardTimeout: cfg.TaskManager.Timeout,
 		CardCanceledStatus: cfg.TaskManager.Jira.CanceledStatus,
 		StallThreshold:     cfg.Loop.StallThreshold, SearchLimit: cfg.Search.Limit, Log: log,
 		LoopLockPath: filepath.Join(root, project.DirName, "loop.lock")})
