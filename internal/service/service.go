@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/search"
@@ -273,6 +275,8 @@ type InitiativeInput struct {
 	Brief string
 	// ParentCard is a Jira issue key; empty means none.
 	ParentCard string
+	// Sprint is the name of the sprint milestone cards are added to; empty means none.
+	Sprint string
 }
 
 type InitiativePatch struct {
@@ -280,6 +284,8 @@ type InitiativePatch struct {
 	Brief *string
 	// ParentCard nil leaves the parent unchanged; a pointer to an empty string clears it.
 	ParentCard *string
+	// Sprint nil leaves the sprint unchanged; a pointer to an empty string clears it.
+	Sprint *string
 }
 
 var parentCardKey = regexp.MustCompile(`^[A-Z][A-Z0-9_]*-[0-9]+$`)
@@ -292,6 +298,21 @@ func normalizeParentCard(s string) (string, error) {
 	return s, nil
 }
 
+const maxSprintRunes = 255
+
+func normalizeSprint(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if utf8.RuneCountInString(s) > maxSprintRunes {
+		return "", fmt.Errorf("%w: sprint is longer than %d characters", domain.ErrInvalid, maxSprintRunes)
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return "", fmt.Errorf("%w: sprint must not contain control characters", domain.ErrInvalid)
+		}
+	}
+	return s, nil
+}
+
 func (s *Service) CreateInitiative(ctx context.Context, in InitiativeInput) (InitiativeView, error) {
 	if err := domain.RequireText("title", in.Title); err != nil {
 		return InitiativeView{}, err
@@ -300,7 +321,11 @@ func (s *Service) CreateInitiative(ctx context.Context, in InitiativeInput) (Ini
 	if err != nil {
 		return InitiativeView{}, err
 	}
-	i := domain.Initiative{Title: strings.TrimSpace(in.Title), Brief: strings.TrimSpace(in.Brief), ParentCard: parent}
+	sprint, err := normalizeSprint(in.Sprint)
+	if err != nil {
+		return InitiativeView{}, err
+	}
+	i := domain.Initiative{Title: strings.TrimSpace(in.Title), Brief: strings.TrimSpace(in.Brief), ParentCard: parent, Sprint: sprint}
 	err = createWithSlug(in.Slug, i.Title, "initiative", func(slug string) error {
 		i.Slug = slug
 		return s.store.CreateInitiative(ctx, &i)
@@ -375,6 +400,13 @@ func (s *Service) UpdateInitiative(ctx context.Context, id int64, p InitiativePa
 			return InitiativeView{}, err
 		}
 		i.ParentCard = parent
+	}
+	if p.Sprint != nil {
+		sprint, err := normalizeSprint(*p.Sprint)
+		if err != nil {
+			return InitiativeView{}, err
+		}
+		i.Sprint = sprint
 	}
 	if err := s.store.UpdateInitiative(ctx, &i); err != nil {
 		return InitiativeView{}, err

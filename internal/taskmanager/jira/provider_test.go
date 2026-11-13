@@ -1078,7 +1078,9 @@ type sprintJira struct {
 	reqs       []string
 	cardSprint string
 	active     string
+	open       string
 	status     int
+	states     []string
 }
 
 func newSprintJira(t *testing.T, cardSprint, active string) *sprintJira {
@@ -1098,7 +1100,15 @@ func newSprintJira(t *testing.T, cardSprint, active string) *sprintJira {
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/rest/agile/1.0/issue/"):
 			_, _ = w.Write([]byte(`{"fields":{"sprint":` + f.cardSprint + `}}`))
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/sprint"):
-			_, _ = w.Write([]byte(`{"isLast":true,"values":` + f.active + `}`))
+			state := r.URL.Query().Get("state")
+			f.mu.Lock()
+			f.states = append(f.states, state)
+			f.mu.Unlock()
+			values := f.active
+			if state == "active,future" {
+				values = f.open
+			}
+			_, _ = w.Write([]byte(`{"isLast":true,"values":` + values + `}`))
 		default:
 			w.WriteHeader(http.StatusNoContent)
 		}
@@ -1230,5 +1240,102 @@ func TestAddToSprintAPIError(t *testing.T) {
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusForbidden {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func namedSprintRequest(name string) taskmanager.SprintRequest {
+	return taskmanager.SprintRequest{Kind: domain.KindMilestone, Moment: taskmanager.SprintMomentCreated, Sprint: name}
+}
+
+func (f *sprintJira) sprintStates() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.states...)
+}
+
+func TestAddToSprintNamedSprintMatchesOneOpenSprint(t *testing.T) {
+	tests := []struct {
+		name, sprint, want string
+	}{
+		{"exact", "Sprint 5", "5"},
+		{"case and spaces", "  sPRINT 5 ", "5"},
+		{"future", "Sprint 6", "6"},
+		{"stored name padded", "Sprint 8", "8"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newSprintJira(t, `null`, `[{"id":7,"name":"Sprint 7","state":"active"}]`)
+			f.open = `[{"id":7,"name":"Sprint 7","state":"active"},{"id":5,"name":"Sprint 5","state":"active"},{"id":6,"name":"Sprint 6","state":"future"},{"id":8,"name":" Sprint 8 ","state":"future"}]`
+			note, err := sprintProvider(f, 12, "created").AddToSprint(context.Background(), "PROJ-1", namedSprintRequest(tt.sprint))
+			if note != "" || err != nil {
+				t.Fatalf("got %q, %v", note, err)
+			}
+			want := []string{
+				"GET /rest/agile/1.0/issue/PROJ-1",
+				"GET /rest/agile/1.0/board/12/sprint",
+				"POST /rest/agile/1.0/sprint/" + tt.want + "/issue",
+			}
+			if got := f.requests(); !slices.Equal(got, want) {
+				t.Fatalf("requests = %v, want %v", got, want)
+			}
+			if got := f.sprintStates(); !slices.Equal(got, []string{"active,future"}) {
+				t.Fatalf("states = %v", got)
+			}
+		})
+	}
+}
+
+func TestAddToSprintNamedSprintFallsBackToActiveSprint(t *testing.T) {
+	tests := []struct {
+		name, open, wantNote string
+	}{
+		{"no match", `[{"id":5,"name":"Other","state":"future"}]`, `sprint "Sprint 5" is not an open sprint on board 12`},
+		{"closed only", `[]`, `sprint "Sprint 5" is not an open sprint on board 12`},
+		{"two matches", `[{"id":5,"name":"Sprint 5","state":"active"},{"id":6,"name":"sprint 5","state":"future"}]`, `sprint "Sprint 5" matches more than one open sprint on board 12`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newSprintJira(t, `null`, `[{"id":7,"name":"Sprint 7","state":"active"}]`)
+			f.open = tt.open
+			note, err := sprintProvider(f, 12, "created").AddToSprint(context.Background(), "PROJ-1", namedSprintRequest("Sprint 5"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(note, tt.wantNote) || !strings.Contains(note, "active sprint") {
+				t.Fatalf("note = %q, want %q and the active sprint", note, tt.wantNote)
+			}
+			got := f.requests()
+			if got[len(got)-1] != "POST /rest/agile/1.0/sprint/7/issue" {
+				t.Fatalf("requests = %v", got)
+			}
+			if got := f.sprintStates(); !slices.Equal(got, []string{"active,future", "active"}) {
+				t.Fatalf("states = %v", got)
+			}
+		})
+	}
+}
+
+func TestAddToSprintNamedSprintUnusableWithoutActiveSprint(t *testing.T) {
+	f := newSprintJira(t, `null`, `[]`)
+	f.open = `[]`
+	_, err := sprintProvider(f, 12, "created").AddToSprint(context.Background(), "PROJ-1", namedSprintRequest("Sprint 5"))
+	if err == nil || !strings.Contains(err.Error(), "Sprint 5") || !strings.Contains(err.Error(), "board 12") {
+		t.Fatalf("err = %v", err)
+	}
+	for _, r := range f.requests() {
+		if strings.HasPrefix(r, "POST") {
+			t.Fatalf("unexpected add: %v", f.requests())
+		}
+	}
+}
+
+func TestAddToSprintNamedSprintBlankNameUsesActiveSprint(t *testing.T) {
+	f := newSprintJira(t, `null`, `[{"id":7,"name":"S7","state":"active"}]`)
+	note, err := sprintProvider(f, 12, "created").AddToSprint(context.Background(), "PROJ-1", namedSprintRequest("   "))
+	if note != "" || err != nil {
+		t.Fatalf("got %q, %v", note, err)
+	}
+	if got := f.sprintStates(); !slices.Equal(got, []string{"active"}) {
+		t.Fatalf("states = %v", got)
 	}
 }

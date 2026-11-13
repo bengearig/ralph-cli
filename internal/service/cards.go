@@ -133,6 +133,11 @@ func buildCardRequest(ctx context.Context, st store.Store, kind domain.Kind, id 
 			return req, err
 		}
 		req.Status = MilestoneStatus(tasks)
+		i, err := st.GetInitiative(ctx, m.InitiativeID)
+		if err != nil {
+			return req, err
+		}
+		req.Sprint = i.Sprint
 	case domain.KindTask:
 		t, err := st.GetTask(ctx, id)
 		if err != nil {
@@ -254,7 +259,7 @@ func (s *Service) addToSprint(ctx context.Context, kind domain.Kind, key string,
 	if !ok {
 		return ""
 	}
-	note, err := adder.AddToSprint(ctx, key, taskmanager.SprintRequest{Kind: kind, Moment: moment})
+	note, err := adder.AddToSprint(ctx, key, taskmanager.SprintRequest{Kind: kind, Moment: moment, Sprint: req.Sprint})
 	prefix := fmt.Sprintf("%s card %s for %s", s.taskManager.Name(), key, req.ID)
 	switch {
 	case err != nil:

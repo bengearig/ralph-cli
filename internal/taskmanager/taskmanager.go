@@ -49,9 +49,12 @@ type CardRequest struct {
 	Status string
 	// StoreID is the identifier of the ralph store the card belongs to.
 	StoreID string
+	// Sprint is the initiative's named sprint, set only for a milestone card, empty for none.
+	Sprint string
 }
 
 // Hash returns a deterministic SHA-256 hex digest of the request's content.
+// PreviousParentKey and Sprint are ignored.
 // Adding Status or StoreID changed every existing hash once, so existing cards
 // show as pending an update until next synced.
 func (r CardRequest) Hash() string {

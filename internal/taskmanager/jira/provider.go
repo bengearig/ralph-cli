@@ -294,9 +294,11 @@ func (p *Provider) LinkPullRequest(ctx context.Context, key string, l taskmanage
 	return c.AddRemoteLink(ctx, key, l)
 }
 
-// AddToSprint puts a milestone card in the board's active sprint. It does
-// nothing, without a request, when sprints are off or the kind or moment is not
-// the configured one. A card already in an open sprint is left alone.
+// AddToSprint puts a milestone card in the request's named sprint when it is
+// exactly one open sprint of the board, and otherwise in the board's active
+// sprint, with a note saying why the name was not used. It does nothing,
+// without a request, when sprints are off or the kind or moment is not the
+// configured one. A card already in an open sprint is left alone.
 func (p *Provider) AddToSprint(ctx context.Context, key string, r taskmanager.SprintRequest) (string, error) {
 	board := p.cfg.Sprint.Board
 	if board == 0 || r.Kind != domain.KindMilestone || r.Moment != p.cfg.Sprint.When {
@@ -313,11 +315,38 @@ func (p *Provider) AddToSprint(ctx context.Context, key string, r taskmanager.Sp
 	if current != nil && !strings.EqualFold(current.State, "closed") {
 		return "", nil
 	}
+	var reason string
+	if name := strings.TrimSpace(r.Sprint); name != "" {
+		open, err := c.BoardSprints(ctx, board, "active,future")
+		if err != nil {
+			return "", err
+		}
+		var matches []Sprint
+		for _, s := range open {
+			if strings.EqualFold(strings.TrimSpace(s.Name), name) {
+				matches = append(matches, s)
+			}
+		}
+		if len(matches) == 1 {
+			return "", c.AddToSprint(ctx, matches[0].ID, key)
+		}
+		if len(matches) == 0 {
+			reason = fmt.Sprintf("sprint %q is not an open sprint on board %d", name, board)
+		} else {
+			reason = fmt.Sprintf("sprint %q matches more than one open sprint on board %d", name, board)
+		}
+	}
 	active, err := c.BoardSprints(ctx, board, "active")
 	if err != nil {
+		if reason != "" {
+			return "", fmt.Errorf("%s; the active sprint could not be used: %w", reason, err)
+		}
 		return "", err
 	}
 	if len(active) == 0 {
+		if reason != "" {
+			return "", fmt.Errorf("%s, and board %d has no active sprint; the card stays in the backlog", reason, board)
+		}
 		return "", fmt.Errorf("board %d has no active sprint; the card stays in the backlog", board)
 	}
 	chosen := active[0]
@@ -326,7 +355,13 @@ func (p *Provider) AddToSprint(ctx context.Context, key string, r taskmanager.Sp
 			chosen = s
 		}
 	}
-	return "", c.AddToSprint(ctx, chosen.ID, key)
+	if err := c.AddToSprint(ctx, chosen.ID, key); err != nil {
+		return "", err
+	}
+	if reason != "" {
+		return reason + "; the card was added to the active sprint instead", nil
+	}
+	return "", nil
 }
 
 // FindOpenCards lists the open cards in the project that carry every
