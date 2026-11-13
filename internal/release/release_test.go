@@ -268,6 +268,112 @@ func TestNewest(t *testing.T) {
 	}
 }
 
+func TestReleaseBodyDecodes(t *testing.T) {
+	const withBody = `{"tag_name":"v1.2.3","body":"* notes\n* more"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, withBody)
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, nil)
+	for name, get := range map[string]func() (Release, error){
+		"Latest": func() (Release, error) { return c.Latest(context.Background()) },
+		"ByTag":  func() (Release, error) { return c.ByTag(context.Background(), "v1.2.3") },
+	} {
+		rel, err := get()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if rel.Body != "* notes\n* more" {
+			t.Errorf("%s: body = %q", name, rel.Body)
+		}
+	}
+}
+
+func TestBetween(t *testing.T) {
+	const list = `[
+ {"tag_name":"v1.4.0","body":"b1.4.0"},
+ {"tag_name":"nightly","body":"bn"},
+ {"tag_name":"v1.3.0","body":"page1.3.0"},
+ {"tag_name":"v1.2.0-rc.1","prerelease":true,"body":"b1.2.0-rc.1"},
+ {"tag_name":"v1.2.0","body":"b1.2.0"},
+ {"tag_name":"v1.1.5","draft":true,"body":"draft"},
+ {"tag_name":"v1.1.0","body":"b1.1.0"},
+ {"tag_name":"v1.0.0","body":"b1.0.0"},
+ {"tag_name":"v0.9.0","body":"b0.9.0"}]`
+	var query string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		checkHeaders(t, r)
+		query = r.URL.RawQuery
+		if r.URL.Path != "/repos/bengearig/ralph-cli/releases" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprint(w, list)
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, nil)
+	ctx := context.Background()
+
+	type tb struct{ tag, body string }
+	got := func(rels []Release) []tb {
+		var out []tb
+		for _, r := range rels {
+			out = append(out, tb{r.Tag, r.Body})
+		}
+		return out
+	}
+	check := func(name string, rels []Release, err error, want ...tb) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		g := got(rels)
+		if len(g) != len(want) {
+			t.Fatalf("%s: got %v, want %v", name, g, want)
+		}
+		for i := range want {
+			if g[i] != want[i] {
+				t.Fatalf("%s: got %v, want %v", name, g, want)
+			}
+		}
+	}
+
+	v100 := mustVersion(t, "v1.0.0")
+	target := Release{Tag: "v1.3.0", Body: "target1.3.0"}
+
+	rels, err := c.Between(ctx, v100, target, false)
+	check("stable", rels, err, tb{"v1.1.0", "b1.1.0"}, tb{"v1.2.0", "b1.2.0"}, tb{"v1.3.0", "target1.3.0"})
+	if query != "per_page=100" {
+		t.Errorf("query = %q", query)
+	}
+
+	rels, err = c.Between(ctx, v100, target, true)
+	check("with pre-releases", rels, err, tb{"v1.1.0", "b1.1.0"}, tb{"v1.2.0-rc.1", "b1.2.0-rc.1"}, tb{"v1.2.0", "b1.2.0"}, tb{"v1.3.0", "target1.3.0"})
+
+	absent := Release{Tag: "v1.3.1", Body: "absent"}
+	rels, err = c.Between(ctx, mustVersion(t, "v1.2.0"), absent, false)
+	check("target off the page", rels, err, tb{"v1.3.0", "page1.3.0"}, tb{"v1.3.1", "absent"})
+
+	rels, err = c.Between(ctx, v100, Release{Tag: "v1.3.0", Prerelease: true, Body: "pre target"}, false)
+	check("pre-release target", rels, err, tb{"v1.1.0", "b1.1.0"}, tb{"v1.2.0", "b1.2.0"}, tb{"v1.3.0", "pre target"})
+
+	rels, err = c.Between(ctx, mustVersion(t, "v1.3.0"), target, false)
+	check("target equals after", rels, err, tb{"v1.3.0", "target1.3.0"})
+
+	if _, err := c.Between(ctx, v100, Release{Tag: "nightly"}, false); err == nil {
+		t.Error("non-release target accepted")
+	}
+
+	fail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer fail.Close()
+	rels, err = NewClient(fail.URL, nil).Between(ctx, v100, target, false)
+	if err == nil || !strings.Contains(err.Error(), "500") || rels != nil {
+		t.Errorf("server error = %v, %v", rels, err)
+	}
+}
+
 func TestDownload(t *testing.T) {
 	body := bytes.Repeat([]byte("ralph"), 1000)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

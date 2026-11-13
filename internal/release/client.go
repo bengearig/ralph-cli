@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -41,6 +42,7 @@ type Release struct {
 	Tag        string  `json:"tag_name"`
 	Draft      bool    `json:"draft"`
 	Prerelease bool    `json:"prerelease"`
+	Body       string  `json:"body"`
 	Assets     []Asset `json:"assets"`
 }
 
@@ -113,6 +115,46 @@ func (c *Client) Newest(ctx context.Context, includePre bool) (Release, error) {
 		return Release{}, fmt.Errorf("%w: no eligible release in %s/%s", ErrNotFound, Owner, Repo)
 	}
 	return best, nil
+}
+
+// Between returns, oldest first, the releases on the first page of releases
+// whose version is greater than after and not greater than the target's,
+// skipping drafts, tags that are not release versions, and pre-releases unless
+// includePre is set. The target is always included, exactly once.
+func (c *Client) Between(ctx context.Context, after Version, target Release, includePre bool) ([]Release, error) {
+	targetVersion, err := ParseVersion(target.Tag)
+	if err != nil {
+		return nil, fmt.Errorf("target release: %w", err)
+	}
+	var list []Release
+	if err := c.getJSON(ctx, repoPath("releases")+"?per_page=100", &list); err != nil {
+		return nil, err
+	}
+	type entry struct {
+		release Release
+		version Version
+	}
+	entries := []entry{{target, targetVersion}}
+	for _, r := range list {
+		if r.Draft || (r.Prerelease && !includePre) || r.Tag == target.Tag {
+			continue
+		}
+		v, err := ParseVersion(r.Tag)
+		if err != nil {
+			continue
+		}
+		if Compare(v, after) > 0 && Compare(v, targetVersion) <= 0 {
+			entries = append(entries, entry{r, v})
+		}
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		return Compare(entries[i].version, entries[j].version) < 0
+	})
+	out := make([]Release, len(entries))
+	for i, e := range entries {
+		out[i] = e.release
+	}
+	return out, nil
 }
 
 // Download streams the body at url to dst and returns its lowercase hex
