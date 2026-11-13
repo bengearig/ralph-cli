@@ -77,6 +77,11 @@ import:
   # Largest file `ralph import` will queue, in bytes; bigger files are skipped.
   max_file_bytes: 1048576
 
+ui:
+  # auto shows progress on stderr when it is a terminal and one plain line per
+  # item otherwise; never turns it off.
+  progress: auto
+
 init:
   # auto | manual. auto brings ralph's integration files up to date by itself
   # when a newer ralph needs it; manual only warns and leaves ralph init to you.
