@@ -131,6 +131,7 @@ held by someone else: it saves the change and prints the conflict as a warning. 
 |---|---|
 | `ralph cards sync [--initiative <id>] [--include-archived] [--verbose] [--no-progress]` | Create cards, for the kinds in `task_manager.card_kinds`, for work that has none and bring pending and out-of-date cards up to date, parents first. |
 | `ralph cards reconcile [--created-after <YYYY-MM-DD>] [--apply]` | Find open cards whose ralph resource no longer exists, and with `--apply` move them to `canceled_status`. CLI only. |
+| `ralph cards id` | Show the store identifier and where it comes from. Writes nothing. |
 
 - Sync is explicit: it is the only way work that predates the task manager gets cards, and nothing runs it
   automatically. It creates cards only for the kinds in `task_manager.card_kinds`, and skips other resources that have
@@ -164,6 +165,16 @@ held by someone else: it saves the change and prints the conflict as a warning. 
   report. With `--apply`, each card is also named on standard error as it is handled.
 - Exit code `0` means success, and every dry run exits `0`. With `--apply`, `3` means at least one card could not be
   cancelled, and `1` is any other error, including a missing scope or `canceled_status` and an invalid date.
+
+`ralph cards id` shows the store identifier that tells this clone apart from others in a shared task manager project.
+See [Store identifier](jira.md#store-identifier) for how it is set and generated.
+
+- It reads the identifier without creating one, so it writes nothing, and it works with the task manager disabled.
+- It takes no arguments. The output is one of three lines: `ab (configured)` when `task_manager.store_id` is set,
+  `k7f (generated, kept in the store)` when one was generated, and
+  `none yet; one is generated when the first card is created` when there is neither.
+- With `--json` it prints `store_id` and `source`, which is `config`, `store`, or `none`.
+- Exit code `0` means success, and `1` is any error.
 
 ### Deleting
 
