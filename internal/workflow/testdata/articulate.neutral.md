@@ -19,7 +19,11 @@ Work with the user, using the `ralph` MCP tools:
      cases and error handling, and which tests or commands will prove it works;
    - store decisions that matter beyond this one task as `design` or `decision` documents;
    - write the result with `task_update`: a description that an agent with **no access to this conversation** could
-     implement from, and acceptance criteria that are verifiable, preferably by tests or commands;
+     implement from, and acceptance criteria that are verifiable, preferably by tests or commands. A criterion that
+     runs tests names the narrowest command that proves the task: the package or packages the task touches, and any
+     tests it adds by name or filter, not the whole suite. The whole-suite command belongs only on the last task of a
+     milestone, or in the milestone's final check. Never write a task so that it needs the whole suite run
+     repeatedly;
    - as soon as both are settled, promote the task with `task_set_status` to `TODO`, giving a short reason. Do not
      ask for separate permission to promote.
 4. Within a milestone, and with the user's agreement, you may add tasks (`task_create`), split or merge them, reorder

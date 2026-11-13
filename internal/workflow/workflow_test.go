@@ -230,3 +230,21 @@ func TestImportWorkflowTrackerSection(t *testing.T) {
 		}
 	}
 }
+
+func TestArticulateNarrowCheckGuidance(t *testing.T) {
+	cmd, err := RenderCommand("articulate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	neutral, err := Render("articulate", Data{Target: Neutral})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, out := range map[string]string{"claude_code": string(cmd), "neutral": neutral} {
+		for _, want := range []string{"names the narrowest command that proves the task", "not the whole suite", "the last task of a", "milestone's final check"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s rendering lacks %q", name, want)
+			}
+		}
+	}
+}
