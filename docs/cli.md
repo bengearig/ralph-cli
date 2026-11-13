@@ -95,9 +95,9 @@ an update is available, it lists what the release notes say changed, one line pe
 | Command | Purpose |
 |---|---|
 | `ralph initiative create --title <t> [--brief <text> \| --brief-file <path>] [--slug <s>]` | Record received instructions. |
-| `ralph initiative list` / `show <id>` / `update <id> [--title] [--brief \| --brief-file]` | Browse and edit. `show` includes the milestone table. |
+| `ralph initiative list [--watch]` / `show <id>` / `update <id> [--title] [--brief \| --brief-file]` | Browse and edit. `show` includes the milestone table. |
 | `ralph milestone create --initiative <id> --title <t> [--description] [--position] [--slug] [--depends-on <ids>]` | Add a milestone. `--depends-on M-15,M-16` (repeatable) records the milestones it depends on; see [Milestone dependencies](#milestone-dependencies). |
-| `ralph milestone list [--initiative <id>]` / `show <id>` / `update <id> ...` | Browse and edit. `show` includes tasks in loop order, and a `branch:` line with the base and head commits once the loop has recorded them, and a `depends on:` line when the milestone has dependencies. `update` never changes the recorded git state; `--depends-on <ids>` replaces the milestone's dependencies and `--no-depends-on` removes them (use one or the other). |
+| `ralph milestone list [--initiative <id>] [--watch]` / `show <id>` / `update <id> ...` | Browse and edit. `show` includes tasks in loop order, and a `branch:` line with the base and head commits once the loop has recorded them, and a `depends on:` line when the milestone has dependencies. `update` never changes the recorded git state; `--depends-on <ids>` replaces the milestone's dependencies and `--no-depends-on` removes them (use one or the other). |
 | `ralph task create --milestone <id> --title <t> [--description] [--criteria] [--position]` | Propose a task (status `PROPOSED`). |
 | `ralph task list [--milestone] [--initiative] [--status S,...] [--watch]` | List tasks in loop order. With `--watch` it follows the list; see [Watching lists](#watching-lists). |
 | `ralph task show <id>` | Show a task with its notes and allowed next statuses, and a `commit:` line once the loop has committed it. |
@@ -283,6 +283,7 @@ MCP server, or another CLI process.
 | `ralph milestone watch <id>` | A milestone and its tasks, as `ralph milestone show` prints it. |
 | `ralph task watch <id>` | A task and its notes, as `ralph task show` prints it. |
 | `ralph status --watch` | The overview, as `ralph status` prints it. See [Watching the overview](#watching-the-overview). |
+| `ralph task list --watch`, `ralph milestone list --watch`, `ralph initiative list --watch` | A list, as the plain command prints it. See [Watching lists](#watching-lists). |
 
 The three `watch` commands take the same flags:
 
@@ -366,11 +367,57 @@ The overview never finishes, so it has no `--until-done`. It runs until it is in
 
 ### Watching lists
 
-`ralph task list --watch` (short `-w`) follows the table `ralph task list` prints. Every filter (`--milestone`,
-`--initiative`, `--status`, `--archived`) works as without `--watch`, and `--interval` is accepted only with `--watch`.
-A task entering or leaving the filtered set is an ordinary change. The list never finishes, so there is no
-`--until-done`; the watch ends when it is interrupted, an error occurs, or the filtered milestone or initiative no
-longer exists.
+`--watch` (short `-w`) on `ralph task list`, `ralph milestone list`, and `ralph initiative list` follows the table the
+command prints, as `ralph status --watch` follows the overview. The list is a flag on `list`, not a `watch` subcommand,
+because it is the same command with the same filters.
+
+| Flag | Meaning |
+|---|---|
+| `--watch`, `-w` | Poll and show the output again whenever it changes. |
+| `--interval <duration>` | How often to poll, as for the other watches. It is accepted only together with `--watch`; without it the command fails with `--interval requires --watch`. |
+
+Every filter the list takes without `--watch` (`--milestone`, `--initiative`, `--status`, and `--archived`) keeps
+working with it, and filters combine as they do in a plain list. An unknown filter value, such as a status that does not
+exist, fails when the watch starts, with the same error as the plain list.
+
+A list never finishes, so there is no `--until-done`. The watch runs until it is interrupted, an error occurs, or the
+milestone or initiative named by a filter no longer exists; the watch then ends with an error such as
+`M-18 no longer exists` and exit code `1`.
+
+A row entering the filtered set appears as a new, highlighted line, and a row leaving it disappears, so a task that
+moves from `IN_PROGRESS` to `BLOCKED` shows up in a watch of blocked tasks the moment it changes. A row whose text
+changed while it stayed in the set is highlighted too. Output, the footer, exit codes, and the global flags behave as
+for the other watches.
+
+With `--json`, or when the output is not a terminal, each line is one JSON array, the same data the plain list prints
+with `--json`. The first line is written immediately and one more for each change. An empty list is `[]`.
+
+To follow every blocked task:
+
+```sh
+ralph task list --status BLOCKED --watch
+```
+
+To follow the milestones of one initiative, shortening the flag:
+
+```sh
+ralph milestone list --initiative I-8 -w
+```
+
+In a script, read the stream a line at a time. Each line is a complete array, so this prints how many tasks are blocked
+whenever that changes:
+
+```sh
+ralph task list --status BLOCKED -w | while read -r line; do
+  echo "$line" | jq length
+done
+```
+
+Piped, the milestone watch above writes one line per change, such as this array with one milestone:
+
+```
+[{"id":"M-1","initiative_id":"I-1","slug":"first","title":"First","description":"","position":1,"status":"ARTICULATING","task_counts":{"PROPOSED":2},"created_at":"2026-11-13T19:11:35Z","updated_at":"2026-11-13T19:11:35Z"}]
+```
 
 ### Exit codes and errors
 
@@ -389,7 +436,8 @@ If the watched initiative, milestone, or task is deleted while it is watched, th
 `M-18 no longer exists` and exit code `1`. An archived item is still watched, and its view shows that it is archived.
 A watch never writes to the store, the repository, or a task manager. See
 [ADR 35](adr/0035-watch-by-polling-and-snapshot-comparison.md) and
-[ADR 36](adr/0036-watch-milestones-tasks-and-the-overview.md).
+[ADR 36](adr/0036-watch-milestones-tasks-and-the-overview.md), and
+[ADR 48](adr/0048-watch-lists-with-a-flag-on-list.md).
 
 ## Search
 
