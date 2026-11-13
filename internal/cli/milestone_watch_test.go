@@ -91,7 +91,7 @@ func TestMilestoneWatchUntilDoneFinished(t *testing.T) {
 	h := newTestEnv(t, true)
 	seedWatch(h)
 	completeTask(h, "T-1")
-	w := h.startWatch(false, "milestone", "watch", "M-1", "--until-done")
+	w := h.startWatch(false, "milestone", "watch", "M-1", "--until-done", "--interval", "100ms")
 	if err := w.finish(t); err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestMilestoneWatchUntilDoneStuck(t *testing.T) {
 	seedWatch(h)
 	h.ok("task", "status", "T-1", "in_progress")
 	h.ok("task", "status", "T-1", "blocked", "--reason", "need help")
-	w := h.startWatch(false, "milestone", "watch", "M-1", "--until-done")
+	w := h.startWatch(false, "milestone", "watch", "M-1", "--until-done", "--interval", "100ms")
 	if err := w.finish(t); !errors.Is(err, errs.ErrNeedsHuman) {
 		t.Fatalf("err = %v", err)
 	}
@@ -119,7 +119,7 @@ func TestMilestoneWatchUntilDoneStuckBesideDoneTask(t *testing.T) {
 	completeTask(h, "T-1")
 	h.ok("task", "status", "T-2", "in_progress")
 	h.ok("task", "status", "T-2", "blocked", "--reason", "need help")
-	w := h.startWatch(false, "milestone", "watch", "M-1", "--until-done")
+	w := h.startWatch(false, "milestone", "watch", "M-1", "--until-done", "--interval", "100ms")
 	if err := w.finish(t); !errors.Is(err, errs.ErrNeedsHuman) {
 		t.Fatalf("err = %v", err)
 	}

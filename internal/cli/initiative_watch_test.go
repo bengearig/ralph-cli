@@ -105,22 +105,26 @@ type runningWatch struct {
 	out, errOut *syncBuf
 	cancel      context.CancelFunc
 	done        chan error
+	exited      chan struct{}
 }
 
 func (h *testEnv) startWatch(terminal bool, args ...string) *runningWatch {
 	h.t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	w := &runningWatch{out: &syncBuf{}, errOut: &syncBuf{}, cancel: cancel, done: make(chan error, 1)}
+	w := &runningWatch{out: &syncBuf{}, errOut: &syncBuf{}, cancel: cancel, done: make(chan error, 1), exited: make(chan struct{})}
 	streams := Streams{Out: w.out, Err: w.errOut, OutIsTerminal: terminal}
 	if terminal {
 		streams.OutSize = func() (int, int, bool) { return 100, 40, true }
 	}
 	full := append([]string{"--project-dir", h.dir}, args...)
-	go func() { w.done <- Execute(ctx, streams, full) }()
+	go func() {
+		w.done <- Execute(ctx, streams, full)
+		close(w.exited)
+	}()
 	h.t.Cleanup(func() {
 		cancel()
 		select {
-		case <-w.done:
+		case <-w.exited:
 		case <-time.After(5 * time.Second):
 		}
 	})
@@ -247,7 +251,7 @@ func TestInitiativeWatchUntilDoneFinished(t *testing.T) {
 	h := newTestEnv(t, true)
 	seedWatch(h)
 	completeTask(h, "T-1")
-	w := h.startWatch(false, "initiative", "watch", "I-1", "--until-done")
+	w := h.startWatch(false, "initiative", "watch", "I-1", "--until-done", "--interval", "100ms")
 	if err := w.finish(t); err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +265,7 @@ func TestInitiativeWatchUntilDoneStuck(t *testing.T) {
 	seedWatch(h)
 	h.ok("task", "status", "T-1", "in_progress")
 	h.ok("task", "status", "T-1", "blocked", "--reason", "need help")
-	w := h.startWatch(false, "initiative", "watch", "I-1", "--until-done")
+	w := h.startWatch(false, "initiative", "watch", "I-1", "--until-done", "--interval", "100ms")
 	if err := w.finish(t); !errors.Is(err, errs.ErrNeedsHuman) {
 		t.Fatalf("err = %v", err)
 	}
@@ -289,7 +293,7 @@ func TestInitiativeWatchUntilDoneDoneAndCancelled(t *testing.T) {
 	h.ok("milestone", "create", "--initiative", "I-1", "--title", "Second")
 	h.ok("task", "create", "--milestone", "M-2", "--title", "B", "--description", "d", "--criteria", "c")
 	h.ok("task", "status", "T-2", "cancelled", "--reason", "no")
-	w := h.startWatch(false, "initiative", "watch", "I-1", "--until-done")
+	w := h.startWatch(false, "initiative", "watch", "I-1", "--until-done", "--interval", "100ms")
 	if err := w.finish(t); err != nil {
 		t.Fatal(err)
 	}

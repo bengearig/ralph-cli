@@ -106,7 +106,7 @@ func TestTaskWatchUntilDoneFinished(t *testing.T) {
 			} else {
 				h.ok("task", "status", "T-1", "cancelled", "--reason", "no")
 			}
-			w := h.startWatch(false, "task", "watch", "T-1", "--until-done")
+			w := h.startWatch(false, "task", "watch", "T-1", "--until-done", "--interval", "100ms")
 			if err := w.finish(t); err != nil {
 				t.Fatal(err)
 			}
@@ -122,7 +122,7 @@ func TestTaskWatchUntilDoneStuck(t *testing.T) {
 	seedWatch(h)
 	h.ok("task", "status", "T-1", "in_progress")
 	h.ok("task", "status", "T-1", "blocked", "--reason", "need help")
-	w := h.startWatch(false, "task", "watch", "T-1", "--until-done")
+	w := h.startWatch(false, "task", "watch", "T-1", "--until-done", "--interval", "100ms")
 	if err := w.finish(t); !errors.Is(err, errs.ErrNeedsHuman) {
 		t.Fatalf("err = %v", err)
 	}
