@@ -2,14 +2,17 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/service"
+	"github.com/bengearig/ralph/internal/store"
 )
 
 func (a *app) newTaskCommand() *cobra.Command {
@@ -59,11 +62,23 @@ func (a *app) newTaskCommand() *cobra.Command {
 	var listMilestone, listInitiative string
 	var listStatus []string
 	var listArchived bool
+	var lw *listWatch
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List tasks in loop order",
-		Args:  cobra.NoArgs,
+		Long: `List tasks in loop order.
+
+With --watch it polls and shows the list again whenever it changes, keeping
+every filter. It is read-only. On a terminal it redraws in place and highlights
+what changed; otherwise (or with --json) it writes one line of JSON for the
+first snapshot and for every change. The list never finishes, so the watch runs
+until it is interrupted (exit 130), an error occurs, or the filtered milestone
+or initiative no longer exists.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := lw.check(cmd); err != nil {
+				return err
+			}
 			mID, err := parseIDFlag(domain.KindMilestone, listMilestone)
 			if err != nil {
 				return err
@@ -80,20 +95,25 @@ func (a *app) newTaskCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			tasks, err := svc.ListTasks(cmd.Context(), service.TaskFilter{MilestoneID: mID, InitiativeID: iID, Statuses: statuses, IncludeArchived: listArchived})
+			filter := service.TaskFilter{MilestoneID: mID, InitiativeID: iID, Statuses: statuses, IncludeArchived: listArchived}
+			if lw.Watch {
+				return a.watchTaskList(cmd.Context(), svc, filter, lw.Interval)
+			}
+			tasks, err := fetchTaskList(cmd.Context(), svc, filter)
 			if err != nil {
 				return err
 			}
 			if a.jsonOut {
 				return a.writeJSON(tasks)
 			}
-			return a.printTaskTable(tasks)
+			return a.renderTaskList(tasks)
 		},
 	}
 	list.Flags().StringVar(&listMilestone, "milestone", "", "only this milestone")
 	list.Flags().StringVar(&listInitiative, "initiative", "", "only this initiative")
 	list.Flags().StringSliceVar(&listStatus, "status", nil, "only these statuses (comma-separated or repeated)")
 	list.Flags().BoolVar(&listArchived, "archived", false, "include archived initiatives and documents, and their contents")
+	lw = addListWatchFlags(list)
 
 	show := &cobra.Command{
 		Use:   "show <id>",
@@ -258,7 +278,7 @@ func (a *app) newTaskCommand() *cobra.Command {
 	return cmd
 }
 
-func (a *app) printTaskTable(tasks []service.TaskView) error {
+func (a *app) renderTaskList(tasks []service.TaskView) error {
 	if len(tasks) == 0 {
 		return a.printf("\nno tasks\n")
 	}
@@ -277,6 +297,42 @@ func (a *app) printTaskTable(tasks []service.TaskView) error {
 		return err
 	}
 	return a.writeTable(header, rows)
+}
+
+func fetchTaskList(ctx context.Context, svc *service.Service, filter service.TaskFilter) ([]service.TaskView, error) {
+	return svc.ListTasks(ctx, filter)
+}
+
+func (a *app) watchTaskList(ctx context.Context, svc *service.Service, filter service.TaskFilter, interval time.Duration) error {
+	var seenMilestone, seenInitiative bool
+	src := watchSource{Fetch: func(ctx context.Context) (snapshot, error) {
+		tasks, err := fetchTaskList(ctx, svc, filter)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				if seenMilestone {
+					if _, merr := svc.GetMilestone(ctx, filter.MilestoneID); errors.Is(merr, store.ErrNotFound) {
+						return snapshot{}, fmt.Errorf("%s no longer exists", domain.FormatID(domain.KindMilestone, filter.MilestoneID))
+					}
+				}
+				if seenInitiative {
+					return snapshot{}, fmt.Errorf("%s no longer exists", domain.FormatID(domain.KindInitiative, filter.InitiativeID))
+				}
+			}
+			return snapshot{}, err
+		}
+		seenMilestone = filter.MilestoneID != 0
+		seenInitiative = filter.InitiativeID != 0
+		text, err := a.capture(func() error { return a.renderTaskList(tasks) })
+		if err != nil {
+			return snapshot{}, err
+		}
+		js, err := snapshotJSON(tasks)
+		if err != nil {
+			return snapshot{}, err
+		}
+		return snapshot{Text: text, JSON: js, State: notDone}, nil
+	}}
+	return a.runWatch(ctx, src, watchOptions{Interval: interval}, a.newWatchRenderer(interval))
 }
 
 // taskInitiative names a task's initiative, looked up only when it is archived.

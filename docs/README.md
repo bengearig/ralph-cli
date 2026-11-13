@@ -53,5 +53,6 @@ provider, [ADR 22](adr/0022-create-cards-when-resources-are-created.md) records 
 [ADR 45](adr/0045-choose-which-kinds-get-jira-cards.md) records how the kinds that get Jira cards are chosen, and
 [ADR 46](adr/0046-keep-the-test-suite-fast.md) records how the test suite is kept fast, and
 [ADR 47](adr/0047-show-a-changelog-from-the-release-notes-when-updating.md) records how `ralph update` shows a changelog from
-the release notes. Add a new
+the release notes, and
+[ADR 48](adr/0048-watch-lists-with-a-flag-on-list.md) records how lists are watched. Add a new
 record rather than editing an accepted one; mark the old record superseded.

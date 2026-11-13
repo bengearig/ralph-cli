@@ -226,3 +226,16 @@ func (a *app) capture(fn func() error) (string, error) {
 	err := fn()
 	return buf.String(), err
 }
+
+// listSnapshot builds the never-finishing snapshot of a list from its render function.
+func (a *app) listSnapshot(v any, render func() error) (snapshot, error) {
+	text, err := a.capture(render)
+	if err != nil {
+		return snapshot{}, err
+	}
+	js, err := snapshotJSON(v)
+	if err != nil {
+		return snapshot{}, err
+	}
+	return snapshot{Text: text, JSON: js, State: notDone}, nil
+}
