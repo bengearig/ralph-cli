@@ -975,3 +975,63 @@ func TestSummaryStoreIDTruncation(t *testing.T) {
 		t.Errorf("summary %q", s)
 	}
 }
+
+func storeLabelsOf(t *testing.T, r recorded) []string {
+	t.Helper()
+	raw, ok := r.fields()["labels"].([]any)
+	if !ok {
+		return nil
+	}
+	var got []string
+	for _, l := range raw {
+		got = append(got, l.(string))
+	}
+	return got
+}
+
+func TestStoreLabelOnCreate(t *testing.T) {
+	tests := []struct {
+		name    string
+		storeID string
+		labels  []string
+		want    []string
+	}{
+		{"appended after configured", "ab", []string{"ralph", "team"}, []string{"ralph", "team", "ralph-store-ab"}},
+		{"empty store id", "", []string{"ralph", "team"}, []string{"ralph", "team"}},
+		{"no configured labels", "ab", nil, []string{"ralph-store-ab"}},
+		{"already configured", "ab", []string{"ralph-store-ab", "team"}, []string{"ralph-store-ab", "team"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeJira(t)
+			cfg := testCfg(f.URL)
+			cfg.Labels = tc.labels
+			p := NewProvider(cfg, 0, env(goodEnv), nil)
+			req := taskmanager.CardRequest{Kind: domain.KindTask, ID: "T-12", Title: "t", StoreID: tc.storeID, ParentKey: "PROJ-5"}
+			if _, err := p.Create(context.Background(), req); err != nil {
+				t.Fatal(err)
+			}
+			if got := storeLabelsOf(t, f.last(t)); !slices.Equal(got, tc.want) {
+				t.Errorf("labels %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStoreLabelNotSentOnUpdate(t *testing.T) {
+	f := newFakeJira(t)
+	cfg := testCfg(f.URL)
+	cfg.Labels = []string{"ralph"}
+	p := NewProvider(cfg, 0, env(goodEnv), nil)
+	req := taskmanager.CardRequest{Kind: domain.KindTask, ID: "T-12", Title: "t", StoreID: "ab", ParentKey: "PROJ-5"}
+	if err := p.Update(context.Background(), "PROJ-9", req); err != nil {
+		t.Fatal(err)
+	}
+	r := f.last(t)
+	if r.method != http.MethodPut {
+		t.Fatalf("method %s", r.method)
+	}
+	if l, ok := r.fields()["labels"]; ok {
+		t.Errorf("update sent labels %v", l)
+	}
+}

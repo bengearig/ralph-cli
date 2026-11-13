@@ -362,15 +362,23 @@ func (p *Provider) mapRequest(req taskmanager.CardRequest) (IssueFields, error) 
 	if req.Kind != domain.KindInitiative && req.ParentKey == "" {
 		return IssueFields{}, fmt.Errorf("jira: %s needs its parent card; create the parent first", req.ID)
 	}
+	labels := p.labels()
+	if req.StoreID != "" {
+		if l := storeLabel(req.StoreID); !slices.Contains(labels, l) {
+			labels = append(labels, l)
+		}
+	}
 	return IssueFields{
 		Project:     p.cfg.ProjectKey,
 		IssueType:   issueType,
 		Summary:     summary(req),
 		Description: adf.FromMarkdown(body(req)).JSON(),
-		Labels:      p.labels(),
+		Labels:      labels,
 		ParentKey:   req.ParentKey,
 	}, nil
 }
+
+func storeLabel(id string) string { return "ralph-store-" + id }
 
 func (p *Provider) labels() []string {
 	var out []string
