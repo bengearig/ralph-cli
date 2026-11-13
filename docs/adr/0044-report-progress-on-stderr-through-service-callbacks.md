@@ -33,6 +33,11 @@ service layer already had a callback for each synced item, but it carried no tot
 - **The scope is `cards sync` and `ralph import`.** `ralph loop` keeps its own feed, and `ralph index`, `ralph pr
   create`, colour, time estimates, and progress over MCP are left out.
 
+`ralph import` uses the same reporter. Its service operations call back with the total once the files are collected
+and then with each file's path, and the command labels the run `queueing files` or, with `--as-new`, `importing
+files`. The modes, the `--no-progress` flag, and the `ui.progress` setting behave as for `cards sync`, and the MCP
+import tools pass no callback.
+
 ### Alternatives considered
 
 - **A spinner without a total.** It says something is happening but not how much remains.
