@@ -132,12 +132,20 @@ The global flags, such as `--json`, apply as for any command.
 
 ### Output
 
-An update prints the change and then the installed path:
+An update prints the change, the installed path, the changelog, and a reminder about `ralph init`. The changelog is a
+block per version, oldest first, with one line per milestone ([What the update includes](#what-the-update-includes)):
 
 ```
 $ ralph update
 updating ralph v1.2.3 -> v1.3.0
 installed /home/me/.local/bin/ralph
+
+v1.2.4
+  - [PROJ-41] M-12: Fix the watch redraw
+v1.3.0
+  - [PROJ-44] M-13: Add a changelog to ralph update
+  - [PROJ-47] M-14: Report progress on standard error
+
 projects refresh their integration files with ralph init
 ```
 
@@ -159,24 +167,57 @@ $ ralph update --check
 ralph v1.2.3
 latest v1.3.0
 an update is available
+
+v1.2.4
+  - [PROJ-41] M-12: Fix the watch redraw
+v1.3.0
+  - [PROJ-44] M-13: Add a changelog to ralph update
+  - [PROJ-47] M-14: Report progress on standard error
 ```
 
 A build that is not a release build adds the line `this build is not a release build`.
 
 With `--json`, `--check` prints the running version, the latest version, whether an update is available, and whether the
-running build is a release build:
+running build is a release build, plus the `changelog` when an update is available:
 
 ```
 $ ralph update --check --json
-{"current":"v1.2.3","latest":"v1.3.0","update_available":true,"release_build":true}
+{"current":"v1.2.3","latest":"v1.3.0","update_available":true,"release_build":true,"changelog":[{"version":"v1.2.4","changes":["[PROJ-41] M-12: Fix the watch redraw"]},{"version":"v1.3.0","changes":["[PROJ-44] M-13: Add a changelog to ralph update","[PROJ-47] M-14: Report progress on standard error"]}]}
 ```
 
-An update with `--json` prints the previous version, the installed version, and the path:
+An update with `--json` prints the previous version, the installed version, the path, and the `changelog`:
 
 ```
 $ ralph update --json
-{"previous":"v1.2.3","installed":"v1.3.0","path":"/home/me/.local/bin/ralph"}
+{"previous":"v1.2.3","installed":"v1.3.0","path":"/home/me/.local/bin/ralph","changelog":[{"version":"v1.2.4","changes":["[PROJ-41] M-12: Fix the watch redraw"]},{"version":"v1.3.0","changes":["[PROJ-44] M-13: Add a changelog to ralph update","[PROJ-47] M-14: Report progress on standard error"]}]}
 ```
+
+`changelog` is an array with one `{"version", "changes"}` object per version, oldest first, and is left out when there is
+no changelog to show. When the notes could not be read, `changelog_error` holds the reason as a string and `changelog` is
+left out:
+
+```
+$ ralph update --json
+{"previous":"v1.2.3","installed":"v1.3.0","path":"/home/me/.local/bin/ralph","changelog_error":"GitHub returned 403 Forbidden"}
+```
+
+### What the update includes
+
+The changelog is read from the release notes GitHub publishes with each release. Those notes list one line per merged
+pull request, and ralph opens one pull request per milestone, so each line is a milestone's title as published.
+
+- It lists every release between the running one and the new one, oldest first.
+- Lines are shown as published, card keys and milestone IDs included. Author handles, pull request links, the
+  new-contributors section, and the full-changelog link are left out.
+- A release with no recognisable lines shows `no release notes`.
+- It appears after the install, and on `--check` when an update is available. It does not appear for a downgrade, a
+  reinstall, or when ralph is already current.
+- A build that is not a release build, replaced with `--force`, shows only the new release's notes.
+- Only the first page of releases GitHub returns is read, so a very old installed version shows the releases on that
+  page.
+- Pre-releases between the two versions are listed only with `--pre` or when the new release is itself a pre-release.
+- A failure to read the notes is one warning line on standard error, `warning: changelog unavailable: <reason>`, and
+  never fails or undoes the update.
 
 ### When it refuses
 

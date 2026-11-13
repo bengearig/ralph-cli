@@ -51,5 +51,7 @@ provider, [ADR 22](adr/0022-create-cards-when-resources-are-created.md) records 
 [ADR 43](adr/0043-share-init-setup-code-and-preview-with-dry-run.md) records the shared setup code and `ralph init --dry-run`, and
 [ADR 44](adr/0044-report-progress-on-stderr-through-service-callbacks.md) records how progress is reported, and
 [ADR 45](adr/0045-choose-which-kinds-get-jira-cards.md) records how the kinds that get Jira cards are chosen, and
-[ADR 46](adr/0046-keep-the-test-suite-fast.md) records how the test suite is kept fast. Add a new
+[ADR 46](adr/0046-keep-the-test-suite-fast.md) records how the test suite is kept fast, and
+[ADR 47](adr/0047-show-a-changelog-from-the-release-notes-when-updating.md) records how `ralph update` shows a changelog from
+the release notes. Add a new
 record rather than editing an accepted one; mark the old record superseded.
