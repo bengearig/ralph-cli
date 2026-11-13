@@ -18,6 +18,7 @@ func (a *app) newCardsCommand() *cobra.Command {
 	}
 	cmd.AddCommand(a.newCardsSyncCommand())
 	cmd.AddCommand(a.newCardsReconcileCommand())
+	cmd.AddCommand(a.newCardsIDCommand())
 	return cmd
 }
 
