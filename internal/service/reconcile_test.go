@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bengearig/ralph/internal/domain"
+	"github.com/bengearig/ralph/internal/store"
 	"github.com/bengearig/ralph/internal/taskmanager"
 	tmfake "github.com/bengearig/ralph/internal/taskmanager/fake"
 )
@@ -366,6 +367,7 @@ func TestReconcileStampReported(t *testing.T) {
 
 func TestReconcileOrphanStoreID(t *testing.T) {
 	e, p, _, _, _ := reconcileFixture(t)
+	e.svc.storeID = "ab"
 	p.SetCandidates([]taskmanager.CardCandidate{cand("ZZ-1", "[ab] T-99: Gone")})
 	r, err := e.svc.ReconcileCards(context.Background(), ReconcileOptions{})
 	if err != nil {
@@ -373,5 +375,69 @@ func TestReconcileOrphanStoreID(t *testing.T) {
 	}
 	if r.Orphans != 1 || len(r.Items) != 1 || r.Items[0].ID != "T-99" || r.Items[0].Outcome != "orphan" {
 		t.Errorf("%+v", r)
+	}
+}
+
+func TestReconcileStoreClassification(t *testing.T) {
+	e, p, _, _, tk := reconcileFixture(t)
+	e.svc.storeID = "ab"
+	row, err := e.svc.store.GetCard(context.Background(), domain.KindTask, tid(t, tk.ID), "fake")
+	if err != nil || row.Key == "" {
+		t.Fatalf("card %+v %v", row, err)
+	}
+	p.SetCandidates([]taskmanager.CardCandidate{
+		cand("ZZ-1", "[ab] T-90: own"), cand("ZZ-2", "[cd] T-91: other"), cand("ZZ-3", "T-92: none"),
+		cand(row.Key, "[cd] "+tk.ID+": recorded"),
+	})
+	r, err := e.svc.ReconcileCards(context.Background(), ReconcileOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct{ outcome, reason string }{
+		{"orphan", ""}, {"skipped", "belongs to store cd"}, {"orphan", ""}, {"skipped", "key is recorded for " + tk.ID},
+	}
+	if len(r.Items) != len(want) {
+		t.Fatalf("%+v", r)
+	}
+	for n, w := range want {
+		if it := r.Items[n]; it.Outcome != w.outcome || it.Reason != w.reason {
+			t.Errorf("item %d: %+v", n, it)
+		}
+	}
+}
+
+func TestReconcileStoreNoIdentifierWritesNothing(t *testing.T) {
+	ctx := context.Background()
+	e, p := withProvider(newEnv(t))
+	p.SetCandidates([]taskmanager.CardCandidate{cand("ZZ-1", "[ab] T-90: a"), cand("ZZ-2", "[cd] T-91: b")})
+	r, err := e.svc.ReconcileCards(ctx, ReconcileOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Orphans != 0 || r.Skipped != 2 || r.Items[0].Reason != "belongs to store ab" || r.Items[1].Reason != "belongs to store cd" {
+		t.Errorf("%+v", r)
+	}
+	if _, err := e.svc.store.GetMeta(ctx, storeIDMetaKey); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("GetMeta err = %v", err)
+	}
+}
+
+func TestReconcileStoreApplyNeverCancelsOtherStores(t *testing.T) {
+	e, p, _, _, _ := reconcileFixture(t)
+	e.svc.storeID = "ab"
+	e.svc.cardCanceledStatus = "Canceled"
+	p.SetCandidates([]taskmanager.CardCandidate{
+		cand("O-1", "[ab] T-90: own"), cand("S-1", "[cd] T-91: other"), cand("O-2", "T-92: none"),
+	})
+	r, err := e.svc.ReconcileCards(context.Background(), ReconcileOptions{Apply: true, CreatedAfter: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, c := range setStatusCalls(p) {
+		keys = append(keys, c.Key)
+	}
+	if !reflect.DeepEqual(keys, []string{"O-1", "O-2"}) || r.Cancelled != 2 || r.Skipped != 1 {
+		t.Errorf("keys %v %+v", keys, r)
 	}
 }

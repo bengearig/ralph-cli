@@ -85,8 +85,9 @@ func (r *ReconcileReport) add(it ReconcileItem) {
 }
 
 // ReconcileCards finds the provider's open cards and classifies each as an
-// orphan or skipped. With Apply it then cancels the orphans in the provider.
-// It writes nothing to the store.
+// orphan or skipped. Cards stamped by another store are skipped, never
+// orphans. With Apply it then cancels the orphans in the provider. It writes
+// nothing to the store, and never creates a store identifier.
 func (s *Service) ReconcileCards(ctx context.Context, opts ReconcileOptions) (ReconcileReport, error) {
 	report := ReconcileReport{Items: []ReconcileItem{}}
 	if s.taskManager == nil {
@@ -116,6 +117,10 @@ func (s *Service) ReconcileCards(ctx context.Context, opts ReconcileOptions) (Re
 	if err != nil {
 		return report, err
 	}
+	own, _, err := s.StoreID(ctx)
+	if err != nil {
+		return report, err
+	}
 	for _, c := range cands {
 		stamp, id := parseSummary(c.Summary)
 		it := ReconcileItem{Key: c.Key, URL: c.URL, ID: id, Store: stamp, Summary: c.Summary, Status: c.Status}
@@ -124,6 +129,8 @@ func (s *Service) ReconcileCards(ctx context.Context, opts ReconcileOptions) (Re
 			it.Outcome, it.Reason = reconcileSkipped, "key is recorded for "+recorded[c.Key]
 		case it.ID == "":
 			it.Outcome, it.Reason = reconcileSkipped, "summary has no ralph ID"
+		case stamp != "" && stamp != own:
+			it.Outcome, it.Reason = reconcileSkipped, "belongs to store "+stamp
 		case exists[it.ID]:
 			it.Outcome, it.Reason = reconcileSkipped, it.ID+" exists in ralph with a different or no recorded card"
 		default:
