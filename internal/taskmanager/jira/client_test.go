@@ -954,3 +954,184 @@ func TestSearchOpenCardsBadCreated(t *testing.T) {
 		t.Fatalf("got %+v err=%v", got, err)
 	}
 }
+
+func TestAgileBoardSprints(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		if r.Method != "GET" || r.URL.Path != "/rest/agile/1.0/board/12/sprint" {
+			t.Errorf("got %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != authValue() {
+			t.Errorf("auth header = %q", r.Header.Get("Authorization"))
+		}
+		q := r.URL.Query()
+		if q.Get("state") != "active,future" || q.Get("maxResults") != "50" {
+			t.Errorf("query = %v", q)
+		}
+		switch q.Get("startAt") {
+		case "0":
+			_, _ = w.Write([]byte(`{"isLast":false,"values":[{"id":7,"name":"Sprint 7","state":"active","startDate":"2026-11-02T09:00:00.000+10:00"},{"id":8,"name":"Sprint 8","state":"future"}]}`))
+		case "2":
+			_, _ = w.Write([]byte(`{"isLast":true,"values":[{"id":9,"name":"Sprint 9","state":"future","startDate":"not a date"}]}`))
+		default:
+			t.Errorf("startAt = %q", q.Get("startAt"))
+		}
+	}))
+	defer srv.Close()
+	got, err := newTestClient(t, srv.URL, time.Second).BoardSprints(context.Background(), 12, "active,future")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || atomic.LoadInt32(&calls) != 2 {
+		t.Fatalf("got %+v after %d calls", got, calls)
+	}
+	want := time.Date(2026, 11, 1, 23, 0, 0, 0, time.UTC)
+	if got[0].ID != 7 || got[0].Name != "Sprint 7" || got[0].State != "active" || !got[0].StartDate.Equal(want) {
+		t.Errorf("first = %+v", got[0])
+	}
+	if got[1].ID != 8 || !got[1].StartDate.IsZero() {
+		t.Errorf("absent startDate = %+v", got[1])
+	}
+	if got[2].ID != 9 || !got[2].StartDate.IsZero() {
+		t.Errorf("unparseable startDate = %+v", got[2])
+	}
+}
+
+func TestAgileBoardSprintsStopsOnEmptyPage(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		_, _ = w.Write([]byte(`{"isLast":false,"values":[]}`))
+	}))
+	defer srv.Close()
+	got, err := newTestClient(t, srv.URL, time.Second).BoardSprints(context.Background(), 12, "active")
+	if err != nil || len(got) != 0 || atomic.LoadInt32(&calls) != 1 {
+		t.Fatalf("got %+v, %v after %d calls", got, err, calls)
+	}
+}
+
+func TestAgileBoardSprintsInvalidJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<html>`))
+	}))
+	defer srv.Close()
+	_, err := newTestClient(t, srv.URL, time.Second).BoardSprints(context.Background(), 12, "active")
+	if err == nil || !strings.Contains(err.Error(), "jira: GET /rest/agile/1.0/board/12/sprint: response is not valid JSON") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestAgileCardSprint(t *testing.T) {
+	cases := []struct {
+		name, body string
+		want       *Sprint
+	}{
+		{"object", `{"fields":{"sprint":{"id":7,"name":"Sprint 7","state":"active","startDate":"2026-11-02T09:00:00.000Z"}}}`,
+			&Sprint{ID: 7, Name: "Sprint 7", State: "active", StartDate: time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)}},
+		{"null", `{"fields":{"sprint":null}}`, nil},
+		{"missing", `{"fields":{}}`, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&calls, 1)
+				if r.Method != "GET" || r.URL.EscapedPath() != "/rest/agile/1.0/issue/AIN%2F1" || r.URL.Query().Get("fields") != "sprint" {
+					t.Errorf("got %s %s", r.Method, r.URL.String())
+				}
+				if r.Header.Get("Authorization") != authValue() {
+					t.Errorf("auth header = %q", r.Header.Get("Authorization"))
+				}
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			got, err := newTestClient(t, srv.URL, time.Second).CardSprint(context.Background(), "AIN/1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if atomic.LoadInt32(&calls) != 1 {
+				t.Errorf("calls = %d", calls)
+			}
+			switch {
+			case tc.want == nil && got != nil:
+				t.Errorf("got %+v, want nil", got)
+			case tc.want != nil && (got == nil || got.ID != tc.want.ID || got.Name != tc.want.Name || got.State != tc.want.State || !got.StartDate.Equal(tc.want.StartDate)):
+				t.Errorf("got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAgileAddToSprint(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		if r.Method != "POST" || r.URL.Path != "/rest/agile/1.0/sprint/5/issue" {
+			t.Errorf("got %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != authValue() {
+			t.Errorf("auth header = %q", r.Header.Get("Authorization"))
+		}
+		b, _ := io.ReadAll(r.Body)
+		if string(b) != `{"issues":["AIN-1"]}` {
+			t.Errorf("body = %s", b)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	if err := newTestClient(t, srv.URL, time.Second).AddToSprint(context.Background(), 5, "AIN-1"); err != nil {
+		t.Fatal(err)
+	}
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Errorf("calls = %d", calls)
+	}
+}
+
+func TestAgileErrorHints(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		call   func(c *Client) error
+		want   string
+		not    string
+	}{
+		{"board 404", 404, func(c *Client) error { _, err := c.BoardSprints(context.Background(), 12, "active"); return err },
+			"task_manager.jira.sprint.board", "project_key"},
+		{"board 401", 401, func(c *Client) error { _, err := c.BoardSprints(context.Background(), 12, "active"); return err },
+			"task_manager.jira.sprint.board", "create issues"},
+		{"board 403", 403, func(c *Client) error { _, err := c.BoardSprints(context.Background(), 12, "active"); return err },
+			"Jira Software project", "create issues"},
+		{"add 403", 403, func(c *Client) error { return c.AddToSprint(context.Background(), 5, "AIN-1") },
+			"permission to schedule issues", "create issues"},
+		{"add 404 unchanged", 404, func(c *Client) error { return c.AddToSprint(context.Background(), 5, "AIN-1") },
+			"task_manager.jira.base_url", "schedule"},
+		{"card 403 unchanged", 403, func(c *Client) error { _, err := c.CardSprint(context.Background(), "AIN-1"); return err },
+			"create issues in the project", "schedule"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&calls, 1)
+				w.WriteHeader(tc.status)
+			}))
+			defer srv.Close()
+			err := tc.call(newTestClient(t, srv.URL, time.Second))
+			var apiErr *APIError
+			if !errors.As(err, &apiErr) || apiErr.Status != tc.status {
+				t.Fatalf("err = %v", err)
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, tc.want) || strings.Contains(msg, tc.not) {
+				t.Errorf("message = %q, want %q and not %q", msg, tc.want, tc.not)
+			}
+			if strings.Contains(msg, testToken) || strings.Contains(msg, testEmail) || strings.Contains(msg, authValue()) {
+				t.Errorf("credential in error: %q", msg)
+			}
+			if atomic.LoadInt32(&calls) != 1 {
+				t.Errorf("calls = %d, want one attempt", calls)
+			}
+		})
+	}
+}
