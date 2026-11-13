@@ -8,13 +8,15 @@ import (
 	"github.com/bengearig/ralph/internal/domain"
 )
 
-const cardCols = `kind, entity_id, provider, card_key, url, content_hash, last_error, attempted_at, synced_at`
+const cardCols = `kind, entity_id, provider, card_key, url, content_hash, last_error, attempted_at, synced_at, parent_key`
+
+const cardWriteCols = `kind, entity_id, provider, card_key, url, content_hash, last_error, attempted_at, synced_at`
 
 func scanCard(sc scanner) (domain.Card, error) {
 	var c domain.Card
 	var kind, attempted, synced string
 	if err := sc.Scan(&kind, &c.EntityID, &c.Provider, &c.Key, &c.URL, &c.ContentHash, &c.LastError,
-		&attempted, &synced); err != nil {
+		&attempted, &synced, &c.ParentKey); err != nil {
 		return c, err
 	}
 	c.Kind = domain.Kind(kind)
@@ -35,13 +37,24 @@ func (s *Store) GetCard(ctx context.Context, kind domain.Kind, entityID int64, p
 
 func (s *Store) SetCard(ctx context.Context, c *domain.Card) error {
 	_, err := s.q.ExecContext(ctx,
-		`INSERT INTO cards (`+cardCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO cards (`+cardWriteCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (kind, entity_id, provider) DO UPDATE SET card_key = excluded.card_key, url = excluded.url,
 			content_hash = excluded.content_hash, last_error = excluded.last_error,
 			attempted_at = excluded.attempted_at, synced_at = excluded.synced_at`,
 		string(c.Kind), c.EntityID, c.Provider, c.Key, c.URL, c.ContentHash, c.LastError,
 		formatArchivedAt(c.AttemptedAt), formatArchivedAt(c.SyncedAt))
 	return mapErr(err, fmt.Sprintf("saving %s card of %s", c.Provider, domain.FormatID(c.Kind, c.EntityID)))
+}
+
+func (s *Store) SetCardParentKey(ctx context.Context, kind domain.Kind, entityID int64, provider, parentKey string) error {
+	what := fmt.Sprintf("setting parent of %s card of %s", provider, domain.FormatID(kind, entityID))
+	res, err := s.q.ExecContext(ctx,
+		`UPDATE cards SET parent_key = ? WHERE kind = ? AND entity_id = ? AND provider = ?`,
+		parentKey, string(kind), entityID, provider)
+	if err != nil {
+		return mapErr(err, what)
+	}
+	return checkAffected(res, what)
 }
 
 func (s *Store) ClaimCard(ctx context.Context, kind domain.Kind, entityID int64, provider string, staleAfter time.Duration) (bool, error) {

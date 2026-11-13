@@ -279,7 +279,22 @@ func (s *Service) ensureCard(ctx context.Context, kind domain.Kind, id int64, st
 		s.log.Error("recording card", "id", req.ID, "key", card.Key, "error", err)
 		return card.Key, fmt.Errorf("created %s but recording it failed: %w", card.Key, err)
 	}
+	if err := s.recordSentParent(ctx, kind, id, req); err != nil {
+		return card.Key, fmt.Errorf("created %s but recording its parent failed: %w", card.Key, err)
+	}
 	return card.Key, nil
+}
+
+// recordSentParent stores the parent just sent for an initiative card; other kinds are left alone.
+func (s *Service) recordSentParent(ctx context.Context, kind domain.Kind, id int64, req taskmanager.CardRequest) error {
+	if kind != domain.KindInitiative {
+		return nil
+	}
+	err := s.store.SetCardParentKey(ctx, kind, id, s.taskManager.Name(), req.ParentKey)
+	if err != nil {
+		s.log.Error("recording card parent", "id", req.ID, "parent", req.ParentKey, "error", err)
+	}
+	return err
 }
 
 type cardMode int
@@ -374,6 +389,9 @@ func (s *Service) syncCard(ctx context.Context, kind domain.Kind, id int64, mode
 	if err := s.RecordCard(ctx, kind, id, p.Name(), row.Key, row.URL, hash); err != nil {
 		s.log.Error("recording card", "id", name, "key", row.Key, "error", err)
 		return updated, fmt.Sprintf("%s card %s for %s updated but recording it failed: %v", p.Name(), row.Key, name, err), nil
+	}
+	if err := s.recordSentParent(ctx, kind, id, req); err != nil {
+		return updated, fmt.Sprintf("%s card %s for %s updated but recording its parent failed: %v", p.Name(), row.Key, name, err), nil
 	}
 	return updated, "", nil
 }

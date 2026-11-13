@@ -292,4 +292,6 @@ type Card struct {
 	LastError   string
 	AttemptedAt time.Time
 	SyncedAt    time.Time
+	// ParentKey is the parent card key last sent for this card; empty means none was sent.
+	ParentKey string
 }
