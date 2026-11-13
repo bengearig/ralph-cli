@@ -248,3 +248,28 @@ func TestArticulateNarrowCheckGuidance(t *testing.T) {
 		}
 	}
 }
+
+func TestReceiveParentCardGuidance(t *testing.T) {
+	cmd, err := RenderCommand("receive")
+	if err != nil {
+		t.Fatal(err)
+	}
+	neutral, err := Render("receive", Data{Target: Neutral})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, out := range map[string]string{"claude_code": string(cmd), "neutral": neutral} {
+		for _, want := range []string{
+			"pass its key as `parent_card`",
+			"leave `parent_card` out",
+			"Never guess a key",
+			"passing the same `parent_card`",
+			"the parent card when the user named one",
+			"`initiative_update` with `parent_card`",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s rendering lacks %q", name, want)
+			}
+		}
+	}
+}
