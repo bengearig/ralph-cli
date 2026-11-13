@@ -88,7 +88,12 @@ func TestCreateCardChain(t *testing.T) {
 		{Kind: domain.KindTask, ID: withAC.ID, Title: "Task", Description: "tdesc\n\n## Acceptance criteria\n\ndo it", ParentKey: "FAKE-2", Status: "PROPOSED"},
 		{Kind: domain.KindTask, ID: noAC.ID, Title: "Bare", Description: "only", ParentKey: "FAKE-2", Status: "PROPOSED"},
 	}
+	sid, err := e.svc.EnsureStoreID(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for n, w := range want {
+		w.StoreID = sid
 		if calls[n].Method != "Create" || calls[n].Request != w {
 			t.Errorf("call %d = %+v, want %+v", n, calls[n], w)
 		}
@@ -98,7 +103,7 @@ func TestCreateCardChain(t *testing.T) {
 		t.Fatalf("card = %+v, %v", c, err)
 	}
 	stored, _ := e.svc.store.GetCard(ctx, domain.KindInitiative, iid(t, i.ID), "fake")
-	if stored.ContentHash != want[0].Hash() {
+	if stored.ContentHash != calls[0].Request.Hash() {
 		t.Errorf("hash = %q", stored.ContentHash)
 	}
 }

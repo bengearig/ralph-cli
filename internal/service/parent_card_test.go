@@ -184,12 +184,16 @@ func TestInitiativeWithoutParentKeepsHash(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := iid(t, i.ID)
-	legacy := taskmanager.CardRequest{Kind: domain.KindInitiative, ID: i.ID, Title: "Init", Description: "b"}
+	sid, err := e.svc.EnsureStoreID(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := taskmanager.CardRequest{Kind: domain.KindInitiative, ID: i.ID, Title: "Init", Description: "b", StoreID: sid}
 	c, err := e.svc.store.GetCard(ctx, domain.KindInitiative, id, "fake")
 	if err != nil || c.ContentHash != legacy.Hash() {
 		t.Fatalf("stored hash %q, %v", c.ContentHash, err)
 	}
-	req, err := buildCardRequest(ctx, e.svc.store, domain.KindInitiative, id, "")
+	req, err := e.svc.cardRequest(ctx, domain.KindInitiative, id, "", true)
 	if err != nil || req.Hash() != legacy.Hash() {
 		t.Fatalf("hash %q, %v", req.Hash(), err)
 	}

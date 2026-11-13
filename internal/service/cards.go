@@ -148,6 +148,21 @@ func buildCardRequest(ctx context.Context, st store.Store, kind domain.Kind, id 
 	return req, nil
 }
 
+// cardRequest builds the request with the store identifier. With ensure it
+// generates and keeps an identifier when none exists; without, it only reads.
+func (s *Service) cardRequest(ctx context.Context, kind domain.Kind, id int64, parentKey string, ensure bool) (taskmanager.CardRequest, error) {
+	req, err := buildCardRequest(ctx, s.store, kind, id, parentKey)
+	if err != nil {
+		return req, err
+	}
+	if ensure {
+		req.StoreID, err = s.EnsureStoreID(ctx)
+	} else {
+		req.StoreID, _, err = s.StoreID(ctx)
+	}
+	return req, err
+}
+
 // cardParent returns the resource whose card is the parent of this one.
 func (s *Service) cardParent(ctx context.Context, kind domain.Kind, id int64) (domain.Kind, int64, error) {
 	switch kind {
@@ -249,7 +264,7 @@ func (s *Service) ensureCard(ctx context.Context, kind domain.Kind, id int64, st
 		}
 	}
 
-	req, err := buildCardRequest(ctx, s.store, kind, id, parentKey)
+	req, err := s.cardRequest(ctx, kind, id, parentKey, true)
 	if err != nil {
 		return "", err
 	}
@@ -364,7 +379,7 @@ func (s *Service) syncCard(ctx context.Context, kind domain.Kind, id int64, mode
 			return failed, fmt.Sprintf("%s card %s for %s not updated: %v", p.Name(), row.Key, name, err), nil
 		}
 	}
-	req, err := buildCardRequest(ctx, s.store, kind, id, parentKey)
+	req, err := s.cardRequest(ctx, kind, id, parentKey, true)
 	if err != nil {
 		return failed, fmt.Sprintf("%s card %s for %s not updated: %v", p.Name(), row.Key, name, err), nil
 	}
@@ -518,7 +533,7 @@ func (ix *cardIndex) view(ctx context.Context, kind domain.Kind, id int64, paren
 				return &v
 			}
 		}
-		req, err := buildCardRequest(ctx, ix.s.store, kind, id, parentKey)
+		req, err := ix.s.cardRequest(ctx, kind, id, parentKey, false)
 		if err == nil && req.Hash() != c.ContentHash {
 			v.Pending = "update"
 		}

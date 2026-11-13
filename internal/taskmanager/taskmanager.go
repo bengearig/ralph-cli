@@ -47,15 +47,17 @@ type CardRequest struct {
 	PreviousParentKey string
 	// Status is the ralph status of a task or milestone; empty for an initiative.
 	Status string
+	// StoreID is the identifier of the ralph store the card belongs to.
+	StoreID string
 }
 
 // Hash returns a deterministic SHA-256 hex digest of the request's content.
-// Adding Status changed every existing hash once, so existing cards show as
-// pending an update until next synced.
+// Adding Status or StoreID changed every existing hash once, so existing cards
+// show as pending an update until next synced.
 func (r CardRequest) Hash() string {
 	b, _ := json.Marshal(struct {
-		Kind, ID, Title, Description, ParentKey, Status string
-	}{string(r.Kind), r.ID, r.Title, r.Description, r.ParentKey, r.Status})
+		Kind, ID, Title, Description, ParentKey, Status, StoreID string
+	}{string(r.Kind), r.ID, r.Title, r.Description, r.ParentKey, r.Status, r.StoreID})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
