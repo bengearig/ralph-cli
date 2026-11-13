@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/bengearig/ralph/internal/config"
 	"github.com/bengearig/ralph/internal/domain"
@@ -53,6 +54,9 @@ something needs a person. A milestone that is not DONE is never merged, and
 --force never overrides a merge refusal.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := a.stopForIntegrationUpdate(cmd, dryRun); err != nil {
+				return err
+			}
 			opts := loopOptions{dryRun: dryRun, showPrompt: showPrompt, force: force, merge: merge}
 			if merge && initiative == "" {
 				return errors.New("--merge requires --initiative")
@@ -77,6 +81,36 @@ something needs a person. A milestone that is not DONE is never merged, and
 	cmd.MarkFlagsOneRequired("milestone", "initiative")
 	cmd.MarkFlagsMutuallyExclusive("milestone", "initiative")
 	return cmd
+}
+
+// stopForIntegrationUpdate refuses to run the loop when this process just
+// rewrote the integration files, which would dirty the loop's working tree.
+func (a *app) stopForIntegrationUpdate(cmd *cobra.Command, dryRun bool) error {
+	if dryRun || a.integration == nil || len(a.integration.Updated) == 0 {
+		return nil
+	}
+	parts := make([]string, len(a.integration.Updated))
+	for i, c := range a.integration.Updated {
+		parts[i] = c.Path
+	}
+	paths := strings.Join(parts, ", ")
+	rerun := loopRerunCommand(cmd)
+	a.warn("updated its integration files: " + paths + integrationIndent +
+		"they must be committed before the loop can run; commit them, then rerun: " + rerun)
+	return fmt.Errorf("%w: updated its integration files (%s); commit them, then rerun", errs.ErrNeedsHuman, paths)
+}
+
+// loopRerunCommand reproduces the command as typed from the flags that were set.
+func loopRerunCommand(cmd *cobra.Command) string {
+	parts := []string{cmd.CommandPath()}
+	cmd.Flags().Visit(func(f *pflag.Flag) {
+		if f.Value.Type() == "bool" {
+			parts = append(parts, "--"+f.Name)
+			return
+		}
+		parts = append(parts, "--"+f.Name, f.Value.String())
+	})
+	return strings.Join(parts, " ")
 }
 
 func (a *app) printPlan(plan loop.Plan, showPrompt bool) error {
