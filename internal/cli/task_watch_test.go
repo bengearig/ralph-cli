@@ -134,8 +134,8 @@ func TestTaskWatchUntilDoneWaits(t *testing.T) {
 	w := h.startWatch(false, "task", "watch", "T-1", "--until-done", "--interval", "100ms")
 	w.waitFor(t, time.Second, func() bool { return len(w.out.lines()) >= 1 })
 	select {
-	case err := <-w.done:
-		t.Fatalf("ended: %v", err)
+	case <-w.finished:
+		t.Fatalf("ended: %v", w.err)
 	case <-time.After(400 * time.Millisecond):
 	}
 	completeTask(h, "T-1")

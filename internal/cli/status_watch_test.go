@@ -99,8 +99,8 @@ func TestStatusWatchInitiativeScope(t *testing.T) {
 		t.Fatalf("line = %s", l)
 	}
 	select {
-	case err := <-w.done:
-		t.Fatalf("ended: %v", err)
+	case <-w.finished:
+		t.Fatalf("ended: %v", w.err)
 	case <-time.After(300 * time.Millisecond):
 	}
 	_ = w.stop(t)
