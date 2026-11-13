@@ -1071,3 +1071,164 @@ func TestUpdateAddLabel(t *testing.T) {
 		})
 	}
 }
+
+type sprintJira struct {
+	*httptest.Server
+	mu         sync.Mutex
+	reqs       []string
+	cardSprint string
+	active     string
+	status     int
+}
+
+func newSprintJira(t *testing.T, cardSprint, active string) *sprintJira {
+	t.Helper()
+	f := &sprintJira{cardSprint: cardSprint, active: active}
+	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.reqs = append(f.reqs, r.Method+" "+r.URL.Path)
+		status := f.status
+		f.mu.Unlock()
+		if status != 0 {
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`{"errorMessages":["nope"]}`))
+			return
+		}
+		switch {
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/rest/agile/1.0/issue/"):
+			_, _ = w.Write([]byte(`{"fields":{"sprint":` + f.cardSprint + `}}`))
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/sprint"):
+			_, _ = w.Write([]byte(`{"isLast":true,"values":` + f.active + `}`))
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	t.Cleanup(f.Close)
+	return f
+}
+
+func (f *sprintJira) requests() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.reqs...)
+}
+
+func sprintProvider(f *sprintJira, board int, when string) *Provider {
+	cfg := testCfg(f.URL)
+	cfg.Sprint = config.JiraSprintConfig{Board: board, When: when}
+	return NewProvider(cfg, 0, env(goodEnv), nil)
+}
+
+var milestoneCreated = taskmanager.SprintRequest{Kind: domain.KindMilestone, Moment: taskmanager.SprintMomentCreated}
+
+func TestAddToSprintAddsToActiveSprint(t *testing.T) {
+	f := newSprintJira(t, `null`, `[{"id":7,"name":"S7","state":"active"}]`)
+	note, err := sprintProvider(f, 12, "created").AddToSprint(context.Background(), "PROJ-1", milestoneCreated)
+	if note != "" || err != nil {
+		t.Fatalf("got %q, %v", note, err)
+	}
+	want := []string{
+		"GET /rest/agile/1.0/issue/PROJ-1",
+		"GET /rest/agile/1.0/board/12/sprint",
+		"POST /rest/agile/1.0/sprint/7/issue",
+	}
+	if got := f.requests(); !slices.Equal(got, want) {
+		t.Fatalf("requests = %v, want %v", got, want)
+	}
+}
+
+func TestAddToSprintLeavesCardInOpenSprint(t *testing.T) {
+	for _, state := range []string{"active", "future"} {
+		f := newSprintJira(t, `{"id":3,"name":"S3","state":"`+state+`"}`, `[]`)
+		note, err := sprintProvider(f, 12, "created").AddToSprint(context.Background(), "PROJ-1", milestoneCreated)
+		if note != "" || err != nil {
+			t.Fatalf("%s: got %q, %v", state, note, err)
+		}
+		if got := f.requests(); len(got) != 1 || got[0] != "GET /rest/agile/1.0/issue/PROJ-1" {
+			t.Fatalf("%s: requests = %v", state, got)
+		}
+	}
+}
+
+func TestAddToSprintAddsCardInClosedSprintOnly(t *testing.T) {
+	f := newSprintJira(t, `{"id":3,"name":"S3","state":"closed"}`, `[{"id":7,"state":"active"}]`)
+	if _, err := sprintProvider(f, 12, "created").AddToSprint(context.Background(), "PROJ-1", milestoneCreated); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.requests(); len(got) != 3 || got[2] != "POST /rest/agile/1.0/sprint/7/issue" {
+		t.Fatalf("requests = %v", got)
+	}
+}
+
+func TestAddToSprintNoActiveSprint(t *testing.T) {
+	f := newSprintJira(t, `null`, `[]`)
+	_, err := sprintProvider(f, 12, "created").AddToSprint(context.Background(), "PROJ-1", milestoneCreated)
+	if err == nil || !strings.Contains(err.Error(), "board 12") || !strings.Contains(err.Error(), "backlog") {
+		t.Fatalf("err = %v", err)
+	}
+	for _, r := range f.requests() {
+		if strings.HasPrefix(r, "POST") {
+			t.Fatalf("unexpected add: %v", f.requests())
+		}
+	}
+}
+
+func TestAddToSprintChoosesLatestStart(t *testing.T) {
+	tests := []struct {
+		name, active string
+		want         string
+	}{
+		{"later start", `[{"id":9,"state":"active","startDate":"2026-01-01T00:00:00.000Z"},{"id":4,"state":"active","startDate":"2026-02-01T00:00:00.000Z"}]`, "4"},
+		{"equal dates", `[{"id":4,"state":"active","startDate":"2026-01-01T00:00:00.000Z"},{"id":9,"state":"active","startDate":"2026-01-01T00:00:00.000Z"}]`, "9"},
+		{"missing dates", `[{"id":9,"state":"active"},{"id":4,"state":"active"}]`, "9"},
+		{"one missing", `[{"id":9,"state":"active"},{"id":4,"state":"active","startDate":"2026-02-01T00:00:00.000Z"}]`, "4"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newSprintJira(t, `null`, tt.active)
+			if _, err := sprintProvider(f, 12, "created").AddToSprint(context.Background(), "PROJ-1", milestoneCreated); err != nil {
+				t.Fatal(err)
+			}
+			got := f.requests()
+			if want := "POST /rest/agile/1.0/sprint/" + tt.want + "/issue"; got[len(got)-1] != want {
+				t.Fatalf("requests = %v, want last %s", got, want)
+			}
+		})
+	}
+}
+
+func TestAddToSprintSkipsWithoutRequest(t *testing.T) {
+	tests := []struct {
+		name  string
+		board int
+		when  string
+		req   taskmanager.SprintRequest
+	}{
+		{"task", 12, "created", taskmanager.SprintRequest{Kind: domain.KindTask, Moment: "created"}},
+		{"initiative", 12, "created", taskmanager.SprintRequest{Kind: domain.KindInitiative, Moment: "created"}},
+		{"other moment", 12, "created", taskmanager.SprintRequest{Kind: domain.KindMilestone, Moment: "started"}},
+		{"board off", 0, "created", milestoneCreated},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newSprintJira(t, `null`, `[{"id":7,"state":"active"}]`)
+			note, err := sprintProvider(f, tt.board, tt.when).AddToSprint(context.Background(), "PROJ-1", tt.req)
+			if note != "" || err != nil {
+				t.Fatalf("got %q, %v", note, err)
+			}
+			if got := f.requests(); len(got) != 0 {
+				t.Fatalf("requests = %v", got)
+			}
+		})
+	}
+}
+
+func TestAddToSprintAPIError(t *testing.T) {
+	f := newSprintJira(t, `null`, `[]`)
+	f.status = http.StatusForbidden
+	_, err := sprintProvider(f, 12, "created").AddToSprint(context.Background(), "PROJ-1", milestoneCreated)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusForbidden {
+		t.Fatalf("err = %v", err)
+	}
+}
