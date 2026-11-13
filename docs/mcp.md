@@ -24,6 +24,11 @@ therefore launch it from the repository; Claude Code does this for project-scope
 - **Annotations.** Read tools are marked read-only, and tools that can undo recorded work, such as
   `milestone_reconcile`, are marked destructive. No tool reaches outside the project except through the configured task manager, which `cards_sync` is marked open-world for.
 - **Logging.** Logs go to stderr only.
+- **Integration files notice.** When ralph updated the repository's integration files in this command, or they are out
+  of date in `manual` mode, the server instructions end with a notice naming the files and telling the agent to tell the
+  user to commit them, or run `ralph init`, before running any loop. The same text goes to standard error. While a loop
+  holds the project lock, the instructions get no notice, so a headless agent is not prompted to touch the repository.
+  See [Keeping the integration files current](claude-code.md#keeping-the-integration-files-current).
 
 ## Prompts
 

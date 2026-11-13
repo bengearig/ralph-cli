@@ -60,8 +60,8 @@ The check that warns about out-of-date integration files was added in a later mi
   touched. Without the list the warning could never be silenced for a file kept on purpose.
 - **An MCP entry's `command` is not compared.** `--ralph-command` writes an absolute path on purpose, and comparing it
   would report that choice as stale on every command.
-- **The setting is `init.update`, `auto` or `manual`,** with `auto` the default. Both values warn until the update
-  behavior lands.
+- **The setting is `init.update`, `auto` or `manual`,** with `auto` the default. `manual` only warns; `auto` updates the
+  files, as described below.
 - **The check never fails a command.** It runs once per process before every command that finds a project except
   `init`, `version`, `help`, and `completion`, and reports on standard error only. A dry run that errors becomes a
   warning.
@@ -69,7 +69,30 @@ The check that warns about out-of-date integration files was added in a later mi
 Alternatives considered: a version stamp (rejected above), and checking only when asked, which leaves a stale
 repository unnoticed.
 
-## Later
+## Automatic update, the loop, and the MCP server
 
-Updating the files automatically, and how `ralph loop` and `ralph mcp` react to an update, follow in a later
-milestone of the same initiative, and this record will be extended with those decisions.
+In `auto` mode the same pre-run hook applies the update instead of only warning.
+
+- **The update is `ralph init` without `--force`.** It calls `setup.Run` with `KeepMCPCommand` and the configured ignore
+  list, limited to the integration files, so it creates missing files and updates stale ones but never overwrites a
+  customized file, and never touches the config file or the database. Customized files are still listed. It reports the
+  changed files on standard error and says to review and commit them. A write failure is a warning, never an error.
+- **It is skipped under `--dry-run`.** A dry run promises to change nothing, and a preview that rewrote files would break
+  that. The command warns as in manual mode.
+- **It is skipped while a loop holds the project lock.** Rewriting files under a running loop would dirty the working
+  tree it commits into, so the command warns instead. A lock that cannot be probed counts as held for the MCP notice
+  and as not available for the update.
+- **The update dirties the working tree, so a person commits it.** Ralph does not commit the files itself: the change
+  belongs in a commit someone has reviewed.
+- **`ralph loop` stops with exit code `3` after an update.** The loop needs a clean tree and commits per task, so the
+  rewritten files would be swept into the first task's commit. It prints what was updated and the command to rerun, and
+  does not start. `--dry-run` is not stopped. Exit code `3` is the existing "a person is needed" code.
+- **`ralph mcp` adds a notice to the server instructions and to standard error.** Standard output stays the protocol
+  stream. The agent is told to tell the user to commit the files (or run `ralph init` in manual mode) before running any
+  loop. While a loop holds the lock, the instructions get no notice, so a headless agent started by the loop is never
+  prompted to touch the repository; the standard error line may still be written.
+- **Opting out is `init.update: manual`; keeping a customized file is `init.ignore`.**
+
+Alternatives considered: updating while a loop runs (it dirties the loop's tree), letting the loop continue after an
+update (the files would join the first task's commit), and committing the files for the person (out of scope; ralph does
+not commit work nobody reviewed).

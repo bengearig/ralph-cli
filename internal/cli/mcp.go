@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
@@ -33,11 +34,16 @@ Logs go to stderr because stdout carries the protocol.`,
 			if err != nil {
 				return err
 			}
+			instr, line := integrationNotice(a.integration, a.loopLockHeld(p.Root))
+			if line != "" {
+				fmt.Fprintln(a.streams.Err, "ralph: "+line)
+			}
 			srv := mcpserver.New(svc, version.Get().Version, a.logger(), mcpserver.Options{
 				ConfirmOutline:     l.Config.Receive.ConfirmOutline,
 				TaskManagerError:   a.tmErr,
 				ProjectRoot:        p.Root,
 				ImportMaxFileBytes: l.Config.Import.MaxFileBytes,
+				Notice:             instr,
 				DriftInput: func(ctx context.Context, milestoneID int64) (drift.Input, error) {
 					return loop.DriftInput(ctx, svc, l.Config, p.Root, milestoneID)
 				},

@@ -132,8 +132,8 @@ commands, so their overrides take effect once ralph launches those sessions itse
 
 | Key | Default | Meaning |
 |---|---|---|
-| `init.update` | `auto` | `auto` or `manual`. Controls how ralph keeps the integration files that `ralph init` writes current after a ralph upgrade. Every project command checks them and warns on standard error when they are out of date. Auto mode is described with the update behavior in [Claude Code integration](claude-code.md#keeping-the-integration-files-current). Override with `RALPH_INIT_UPDATE`. |
-| `init.ignore` | `[]` | Project-relative paths, with forward slashes, of integration files you customized on purpose, such as `.claude/commands/ralph/receive.md`. The check leaves them alone and does not report them. Each entry must be relative and must not contain `..`. |
+| `init.update` | `auto` | `auto` or `manual`. Controls how ralph keeps the integration files that `ralph init` writes current after a ralph upgrade. Every project command checks them. In `auto` mode the command updates stale files, as `ralph init` without `--force` does, never overwriting a customized file or touching the config file or database, and reports on standard error; you then commit the files, and `ralph loop` exits with code `3` after an update until you do. The update is skipped under `--dry-run` and while a loop holds the lock. In `manual` mode the command only warns on standard error. See [Claude Code integration](claude-code.md#keeping-the-integration-files-current). Override with `RALPH_INIT_UPDATE`. |
+| `init.ignore` | `[]` | Project-relative paths, with forward slashes, of integration files you customized on purpose, such as `.claude/commands/ralph/receive.md`. Neither the update nor the check touches or reports them. Each entry must be relative and must not contain `..`. |
 
 ```yaml
 init:

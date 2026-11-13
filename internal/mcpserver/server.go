@@ -51,12 +51,18 @@ type Options struct {
 	ProjectRoot string
 	// ImportMaxFileBytes is import.max_file_bytes.
 	ImportMaxFileBytes int
+	// Notice is appended to the server instructions when non-empty.
+	Notice string
 }
 
 // New builds an MCP server over svc.
 func New(svc *service.Service, version string, log *slog.Logger, opts Options) *mcp.Server {
+	ins := instructions
+	if opts.Notice != "" {
+		ins += "\n\n" + opts.Notice
+	}
 	s := mcp.NewServer(&mcp.Implementation{Name: Name, Title: "RALPH workflow store", Version: version}, &mcp.ServerOptions{
-		Instructions: instructions,
+		Instructions: ins,
 		Logger:       log,
 	})
 	t := &tools{svc: svc, tmErr: opts.TaskManagerError, confirmOutline: opts.ConfirmOutline, newDriftInput: opts.DriftInput, projectRoot: opts.ProjectRoot, importMaxBytes: opts.ImportMaxFileBytes}

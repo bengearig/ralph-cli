@@ -943,3 +943,14 @@ func TestInitiativeArchiveSchemaAllowsArrayOrKeywords(t *testing.T) {
 	}
 	t.Fatal("initiative_archive not listed")
 }
+
+func TestNoticeAppendedToInstructions(t *testing.T) {
+	base := connect(t).InitializeResult().Instructions
+	got := connectWith(t, Options{Notice: "N"}).InitializeResult().Instructions
+	if got != base+"\n\nN" {
+		t.Errorf("instructions = %q", got)
+	}
+	if !strings.HasSuffix(got, "\n\nN") {
+		t.Errorf("notice missing: %q", got)
+	}
+}
