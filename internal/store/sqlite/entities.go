@@ -18,12 +18,12 @@ type scanner interface{ Scan(dest ...any) error }
 
 const archivedInitiativeIDs = `SELECT id FROM initiatives WHERE archived_at <> ''`
 
-const initiativeCols = `id, slug, title, brief, created_at, updated_at, archived_at, parent_card`
+const initiativeCols = `id, slug, title, brief, created_at, updated_at, archived_at, parent_card, sprint`
 
 func scanInitiative(sc scanner) (domain.Initiative, error) {
 	var i domain.Initiative
 	var created, updated, archived string
-	if err := sc.Scan(&i.ID, &i.Slug, &i.Title, &i.Brief, &created, &updated, &archived, &i.ParentCard); err != nil {
+	if err := sc.Scan(&i.ID, &i.Slug, &i.Title, &i.Brief, &created, &updated, &archived, &i.ParentCard, &i.Sprint); err != nil {
 		return i, err
 	}
 	var err error
@@ -73,8 +73,8 @@ func (s *Store) setArchived(ctx context.Context, table string, kind domain.Kind,
 func (s *Store) CreateInitiative(ctx context.Context, i *domain.Initiative) error {
 	now := s.now()
 	res, err := s.q.ExecContext(ctx,
-		`INSERT INTO initiatives (slug, title, brief, parent_card, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		i.Slug, i.Title, i.Brief, i.ParentCard, formatTime(now), formatTime(now))
+		`INSERT INTO initiatives (slug, title, brief, parent_card, sprint, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		i.Slug, i.Title, i.Brief, i.ParentCard, i.Sprint, formatTime(now), formatTime(now))
 	if err != nil {
 		return mapErr(err, "creating initiative "+i.Slug)
 	}
@@ -105,8 +105,8 @@ func (s *Store) ListInitiatives(ctx context.Context, excludeArchived bool) ([]do
 func (s *Store) UpdateInitiative(ctx context.Context, i *domain.Initiative) error {
 	now := s.now()
 	res, err := s.q.ExecContext(ctx,
-		`UPDATE initiatives SET slug = ?, title = ?, brief = ?, parent_card = ?, updated_at = ? WHERE id = ?`,
-		i.Slug, i.Title, i.Brief, i.ParentCard, formatTime(now), i.ID)
+		`UPDATE initiatives SET slug = ?, title = ?, brief = ?, parent_card = ?, sprint = ?, updated_at = ? WHERE id = ?`,
+		i.Slug, i.Title, i.Brief, i.ParentCard, i.Sprint, formatTime(now), i.ID)
 	what := domain.FormatID(domain.KindInitiative, i.ID)
 	if err != nil {
 		return mapErr(err, "updating "+what)

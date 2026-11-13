@@ -1073,6 +1073,10 @@ func TestPermanentIDsUpgradePreservesData(t *testing.T) {
 		if strings.HasPrefix(line, "initiatives [") {
 			wantRows[n] = strings.TrimSuffix(wantRows[n], "]") + " ]"
 		}
+		// Migration 0013 appends an empty sprint to initiatives.
+		if strings.HasPrefix(line, "initiatives [") {
+			wantRows[n] = strings.TrimSuffix(wantRows[n], "]") + " ]"
+		}
 		// Migration 0009 appends the empty pull request record to milestones.
 		if strings.HasPrefix(line, "milestones [") {
 			wantRows[n] = strings.TrimSuffix(line, "]") + "    0]"

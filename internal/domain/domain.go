@@ -89,8 +89,10 @@ type Initiative struct {
 	Brief string
 	// ParentCard is the Jira key of the card this initiative's card is attached to; empty means none.
 	ParentCard string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// Sprint is the name of the sprint this initiative's milestone cards are added to; empty means none.
+	Sprint    string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 	// ArchivedAt is zero when the initiative is not archived.
 	ArchivedAt time.Time
 }
