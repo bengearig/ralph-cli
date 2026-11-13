@@ -180,7 +180,7 @@ func TestCommitSubjects(t *testing.T) {
 		{"  {{.Task.ID}}  \n{{.Task.Title}}\n\nbody", "T-3 Add route"},
 		{"{{if false}}x{{end}}", "T-3: Add route"},
 	} {
-		subjects, err := CommitSubjects(tc.tmpl, i, m)
+		subjects, err := CommitSubjects(tc.tmpl, "", i, m)
 		if err != nil {
 			t.Fatalf("%q: %v", tc.tmpl, err)
 		}
@@ -188,10 +188,10 @@ func TestCommitSubjects(t *testing.T) {
 			t.Errorf("%q: subjects = %q, want %q", tc.tmpl, got, tc.want)
 		}
 	}
-	if _, err := CommitSubjects("{{.Task", i, m); err == nil || !strings.Contains(err.Error(), "loop.commit_template") {
+	if _, err := CommitSubjects("{{.Task", "", i, m); err == nil || !strings.Contains(err.Error(), "loop.commit_template") {
 		t.Errorf("bad template: err = %v", err)
 	}
-	subjects, err := CommitSubjects("{{.Task.Nope}}", i, m)
+	subjects, err := CommitSubjects("{{.Task.Nope}}", "", i, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestCommitSubjectsCardKey(t *testing.T) {
 		{"key not in subject", "{{.Task.ID}}: {{.Task.Title}}\n\nCard {{.Task.CardKey}}", keyed, []string{"T-12: Add X"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			subjects, err := CommitSubjects(tc.tmpl, i, m)
+			subjects, err := CommitSubjects(tc.tmpl, "", i, m)
 			if err != nil {
 				t.Fatal(err)
 			}

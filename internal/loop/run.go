@@ -582,7 +582,8 @@ func (r Runner) runSession(ctx context.Context, plan Plan, task service.TaskView
 }
 
 func (r Runner) commit(ctx context.Context, repo git.Repo, tmpl *commitTemplate, plan Plan, task service.TaskView, f feed) (*Commit, error) {
-	msg, err := commitMessage(tmpl, commitData{Task: commitTask(task), Initiative: plan.Initiative, Milestone: plan.Milestone})
+	ct := commitTask(task, plan.MilestoneCardKey)
+	msg, err := commitMessage(tmpl, commitData{Task: ct, Initiative: plan.Initiative, Milestone: plan.Milestone})
 	if err != nil {
 		return nil, err
 	}
@@ -590,8 +591,8 @@ func (r Runner) commit(ctx context.Context, repo git.Repo, tmpl *commitTemplate,
 	if r.Config.Loop.CommitTrailer {
 		trailers = append(trailers, "Ralph-Task: "+task.ID)
 	}
-	if key := commitTask(task).CardKey; r.Config.Loop.CommitCardTrailer && key != "" {
-		trailers = append(trailers, drift.CardTrailerKey+": "+key)
+	if r.Config.Loop.CommitCardTrailer && ct.CardKey != "" {
+		trailers = append(trailers, drift.CardTrailerKey+": "+ct.CardKey)
 	}
 	hash, committed, err := repo.CommitAll(ctx, msg, trailers...)
 	if err != nil {
