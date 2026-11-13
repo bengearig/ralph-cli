@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-13
-- Refines: [22. Create cards when resources are created](0022-create-cards-when-resources-are-created.md), [24. Sync cards one way with explicit backfill](0024-sync-cards-one-way-with-explicit-backfill.md)
+- Refines: [22. Create cards when resources are created](0022-create-cards-when-resources-are-created.md), [24. Sync cards one way with explicit backfill](0024-sync-cards-one-way-with-explicit-backfill.md), [26. Card keys in commit messages](0026-card-keys-in-commit-messages.md), [40. Assign Jira cards to the token's user](0040-assign-jira-cards-to-the-tokens-user.md)
 
 ## Context
 
@@ -29,6 +29,17 @@ provider, and say what happens to cards that already exist.
   so its card has no key, is not retried and is not shown as pending. `ralph cards sync` skips such resources with the
   reason `kind not in task_manager.card_kinds`, and creates their cards only after the kind is listed.
 
+### Tasks without a card
+
+A task whose kind is not listed has no card of its own, so it uses its milestone's card for Jira.
+
+- **Commit key and trailer.** `.Task.CardKey`, `.Task.CardKeyPrefix`, and the `Card:` trailer hold the task's own card key,
+  else its milestone's, else nothing. The cleaning rule applies when neither exists. The drift check's subject matcher
+  tries the task's key, then the milestone's, then none. See
+  [Card keys in commits](../loop.md#card-keys-in-commits).
+- **Assignment.** `assign_on_start` already follows the milestone card: it is assigned when the milestone's card moves
+  to in progress, and a holder other than the token's user blocks the loop. This decision adds no behavior there.
+
 ## Alternatives considered
 
 - **A boolean per kind.** Rejected: it spreads one concept across several settings, and each one needs its own
@@ -49,5 +60,4 @@ provider, and say what happens to cards that already exist.
 - Task cards that are no longer wanted are closed or deleted in Jira by hand.
 - Adding a kind later does not create the missing cards by itself. `ralph cards sync` does, as it does for any work
   that predates the task manager.
-- What a commit and the in-progress assignment use for a task that has no card of its own is recorded in the next
-  milestone's decision, not here.
+- A Jira card for a milestone collects the commits of all its tasks when task cards are off.

@@ -106,13 +106,14 @@ loop:
   # Go text/template for those commits; fields: .Task (.ID, .Title, ...,
   # .CardKey, and .CardKeyPrefix, which is "[ABC-1235] " or empty), .Initiative
   # and .Milestone (each with .ID, .Slug, .Title). .CardKey and .CardKeyPrefix
-  # come from the task's own card and are empty without one.
+  # are the task's own card key, else its milestone's, and are empty when
+  # neither has a card.
   commit_template: "{{.Task.ID}}: {{.Task.Title}}"
   # Add a `Ralph-Task: <task ID>` trailer to those commits, so ralph can match
   # commits to tasks after history is rewritten (rebase, amend, squash).
   commit_trailer: true
-  # Add a `Card: <key>` trailer holding the task's own task manager card key,
-  # only when the task has a card. The key makes the commit searchable from the
+  # Add a `Card: <key>` trailer holding the task's card key, else its
+  # milestone's, only when there is one. The key makes the commit searchable from the
   # task manager and survives edits to the subject line.
   commit_card_trailer: false
   # Path to a custom iteration prompt template; empty uses the built-in one.
