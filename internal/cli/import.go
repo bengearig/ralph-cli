@@ -9,6 +9,7 @@ import (
 	"github.com/bengearig/ralph/internal/domain"
 	"github.com/bengearig/ralph/internal/errs"
 	"github.com/bengearig/ralph/internal/importer"
+	"github.com/bengearig/ralph/internal/progress"
 	"github.com/bengearig/ralph/internal/service"
 )
 
@@ -26,7 +27,7 @@ type importResult struct {
 
 func (a *app) newImportCommand() *cobra.Command {
 	var dirs, files []string
-	var asNew, again bool
+	var asNew, again, noProgress bool
 	var kind, initiative string
 	cmd := &cobra.Command{
 		Use:   "import",
@@ -35,7 +36,11 @@ func (a *app) newImportCommand() *cobra.Command {
 a directory contributes its tracked and untracked files minus ignored ones.
 Files that are too large (import.max_file_bytes), not UTF-8 text, symlinks, or
 outside the project are skipped with a reason. Skipped files do not change the
-exit status.`,
+exit status.
+
+Progress is shown on stderr while the files are queued or imported: a live bar
+on a terminal, otherwise one line per file. --no-progress, --json and the
+ui.progress setting "never" turn it off.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if len(dirs)+len(files) == 0 {
@@ -79,10 +84,14 @@ exit status.`,
 			if err != nil {
 				return err
 			}
+			rep := a.newProgress(noProgress)
+			defer rep.Finish()
 			if asNew {
-				return a.runAsNew(cmd, svc, collected, skipped, warnings, opts)
+				opts.Progress = importProgress(rep, "importing files")
+				return a.runAsNew(cmd, svc, rep, collected, skipped, warnings, opts)
 			}
-			outcomes, err := svc.QueueImports(cmd.Context(), collected, nil)
+			outcomes, err := svc.QueueImports(cmd.Context(), collected, importProgress(rep, "queueing files"))
+			rep.Finish()
 			if err != nil {
 				return err
 			}
@@ -108,11 +117,23 @@ exit status.`,
 	cmd.Flags().StringVar(&kind, "kind", string(domain.DocReference), "with --as-new: document kind")
 	cmd.Flags().StringVar(&initiative, "initiative", "", "with --as-new: scope documents to an initiative (default: project-wide)")
 	cmd.Flags().BoolVar(&again, "again", false, "with --as-new: create a new document even for files already imported")
+	addNoProgressFlag(cmd, &noProgress)
 	return cmd
 }
 
-func (a *app) runAsNew(cmd *cobra.Command, svc *service.Service, files []service.ImportFile, skipped []importer.Skipped, warnings []string, opts service.AsNewOptions) error {
+func importProgress(rep *progress.Reporter, label string) service.ImportProgress {
+	return func(done, total int, path string) {
+		if done == 0 && path == "" {
+			rep.Start(label, total)
+			return
+		}
+		rep.Step(path)
+	}
+}
+
+func (a *app) runAsNew(cmd *cobra.Command, svc *service.Service, rep *progress.Reporter, files []service.ImportFile, skipped []importer.Skipped, warnings []string, opts service.AsNewOptions) error {
 	outcomes, err := svc.ImportAsNew(cmd.Context(), files, opts)
+	rep.Finish()
 	if err != nil {
 		return err
 	}
