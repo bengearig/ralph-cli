@@ -27,7 +27,11 @@ Iteration {{.Iteration}} of at most {{.MaxIterations}}.
 1. The task is already IN_PROGRESS. Call `task_get` for {{.Task.ID}} and `milestone_get` for {{.Milestone.ID}} to see
    the latest state, then `search` and `doc_get` for the architecture and design that apply.
 2. Implement only this task. Keep the change small and consistent with the documented design.
-3. Verify every acceptance criterion, running the tests and checks that prove it.
+3. Verify every acceptance criterion, running the tests and checks that prove it. Keep the checks fast:
+   - While implementing, run the narrowest command that exercises the change, not the whole suite.
+   - When a test fails, re-run that test alone, by name or filter, until it passes; do not re-run everything.
+   - Run the full commands the acceptance criteria name once, at the end, before marking the task DONE. Never mark
+     it DONE on a narrower run than the criteria require.
 4. Finish by calling `task_set_status` exactly once:
    - `DONE`, with a one-line reason, only when every acceptance criterion is verified.
    - `TODO`, with a reason, if you made progress but are not done. First add an `ITERATION` note with
