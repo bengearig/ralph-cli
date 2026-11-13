@@ -122,11 +122,34 @@ Editing an initiative's title or brief, a milestone's title or description, or a
 acceptance criteria updates
 the card's summary and description. Ralph sends only those two fields, and the sync is one way: Jira is never read
 back, so an edit made in Jira to the summary or description is overwritten the next time ralph pushes. Labels and
-parents are set when the card is created and are not changed afterward. The assignee is left alone too, unless
+parents are set when the card is created and are not changed afterward, with one exception: an initiative's
+[parent card](#attaching-an-initiatives-card-to-a-parent-card), which is moved when it changes. The assignee is left alone too, unless
 [`assign_on_start`](#assigning-cards) is on.
 
 Only cards that already exist, or whose creation was attempted and failed, are touched. An edit never creates a card
 for work that predates Jira; see [Syncing existing work](#syncing-existing-work).
+
+## Attaching an initiative's card to a parent card
+
+An initiative can be given the key of an existing card, its `parent_card`, and its card is created under that card.
+It is set per initiative, with the `--parent-card` flag of `ralph initiative create` and `ralph initiative update`, or
+the `parent_card` field of the `initiative_create` and `initiative_update` MCP tools, so it can be said in any prompt,
+such as the Receive command. It is stored with the initiative in ralph's store and is not a configuration setting,
+because it can differ from one initiative to the next. Milestone and task cards are unchanged: they stay under the
+initiative's card and the milestone's card.
+
+- **The key format is checked and nothing else.** The key must look like `PROJ-123`: uppercase project letters, digits
+  or underscore, a dash, and a number. Anything else is refused before anything is stored. Ralph does not look the
+  parent up; Jira accepts or rejects it.
+- **Creation.** The initiative's card is created under the parent, including by `ralph cards sync`.
+- **Existing cards.** Setting, changing, or clearing the parent on an initiative whose card already exists moves the
+  card on the next update or sync. An empty value removes the parent. Ralph records the parent last sent on the card
+  record, so only an initiative whose parent changed sends anything about the parent.
+- **Failures.** A failure is a pending update with Jira's message, never a failed command.
+
+Jira requires the parent's issue type to sit exactly one hierarchy level above the initiative card's type; see
+[Hierarchy levels](#hierarchy-levels). With the default `issue_types` the initiative card is an Epic, so the parent has
+to be a type above Epic. A project without one sets `issue_types.initiative` to match.
 
 ## Pull request links
 
@@ -445,13 +468,14 @@ drift check copes with keys that appear later.
 
 ## Card types and why
 
-Ralph fixes the hierarchy: an initiative's card is the top level, a milestone's card is its child, and a task's card
+Ralph fixes the hierarchy: an initiative's card is the top level unless the initiative names a
+[parent card](#attaching-an-initiatives-card-to-a-parent-card), a milestone's card is its child, and a task's card
 is a child of its milestone's card. Which kinds get a card is set by
 [`task_manager.card_kinds`](#choosing-which-kinds-get-cards); the Jira type names are configurable too:
 
 | Setting | Default | Parent |
 |---|---|---|
-| `task_manager.jira.issue_types.initiative` | `Epic` | none |
+| `task_manager.jira.issue_types.initiative` | `Epic` | none, or the initiative's parent card |
 | `task_manager.jira.issue_types.milestone` | `Task` | the initiative's card |
 | `task_manager.jira.issue_types.task` | `Sub-task` | the milestone's card |
 

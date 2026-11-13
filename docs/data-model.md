@@ -19,7 +19,8 @@ automatically when the database is opened. Applied versions are tracked in `sche
 
 ### Initiative (`I-n`)
 
-One received set of instructions. `brief` holds them verbatim. `slug` is unique. `archived_at` is empty until the
+One received set of instructions. `brief` holds them verbatim. `slug` is unique. `parent_card` is the Jira key of an existing card the initiative's card is attached to, empty for none; see
+[Attaching an initiative's card to a parent card](jira.md#attaching-an-initiatives-card-to-a-parent-card). `archived_at` is empty until the
 initiative is [archived](#archiving).
 
 ### Milestone (`M-n`)
@@ -128,7 +129,7 @@ in git. The loop page describes when each one is written: at
 The `cards` table records an initiative's, milestone's, or task's card in an external task manager. It is keyed by
 (`kind`, `entity_id`, `provider`), so each resource has at most one row per provider. Columns: `card_key` and `url`
 (the provider's key and link), `content_hash` (what was last pushed), `last_error` and `attempted_at` (the latest
-failure and attempt), and `synced_at` (the last success). Empty strings mean unset.
+failure and attempt), `synced_at` (the last success), and `parent_key` (the parent card key last sent, empty when none was sent). Empty strings mean unset.
 
 - A row with an empty `card_key` means creation has been tried and has not succeeded. A failed update keeps the key,
   URL, hash, and `synced_at`.
