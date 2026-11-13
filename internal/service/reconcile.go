@@ -29,11 +29,13 @@ type ReconcileOptions struct {
 }
 
 // ReconcileItem is the outcome for one candidate card. ID is the ralph ID
-// parsed from the summary, empty when none parsed. Reason explains a skip.
+// parsed from the summary, empty when none parsed. Store is the store
+// stamp from the summary, empty when unstamped. Reason explains a skip.
 type ReconcileItem struct {
 	Key     string `json:"key"`
 	URL     string `json:"url,omitempty"`
 	ID      string `json:"id,omitempty"`
+	Store   string `json:"store,omitempty"`
 	Summary string `json:"summary"`
 	Status  string `json:"status,omitempty"`
 	Outcome string `json:"outcome"`
@@ -56,19 +58,20 @@ const (
 	reconcileFailed    = "failed"
 )
 
-var summaryID = regexp.MustCompile(`^(?:\[[a-z0-9]{2,6}\] )?([IMT])-([0-9]+): `)
+var summaryID = regexp.MustCompile(`^(?:\[([a-z0-9]{2,6})\] )?([IMT])-([0-9]+): `)
 
-// parseSummaryID returns the normalized ralph ID leading a card summary.
-func parseSummaryID(summary string) string {
+// parseSummary returns the store stamp and the normalized ralph ID leading a
+// card summary. Each is empty when absent; a malformed stamp yields neither.
+func parseSummary(summary string) (stamp, id string) {
 	m := summaryID.FindStringSubmatch(summary)
 	if m == nil {
-		return ""
+		return "", ""
 	}
-	n, err := strconv.ParseInt(m[2], 10, 64)
+	n, err := strconv.ParseInt(m[3], 10, 64)
 	if err != nil {
-		return ""
+		return "", ""
 	}
-	return m[1] + "-" + strconv.FormatInt(n, 10)
+	return m[1], m[2] + "-" + strconv.FormatInt(n, 10)
 }
 
 func (r *ReconcileReport) add(it ReconcileItem) {
@@ -114,7 +117,8 @@ func (s *Service) ReconcileCards(ctx context.Context, opts ReconcileOptions) (Re
 		return report, err
 	}
 	for _, c := range cands {
-		it := ReconcileItem{Key: c.Key, URL: c.URL, ID: parseSummaryID(c.Summary), Summary: c.Summary, Status: c.Status}
+		stamp, id := parseSummary(c.Summary)
+		it := ReconcileItem{Key: c.Key, URL: c.URL, ID: id, Store: stamp, Summary: c.Summary, Status: c.Status}
 		switch {
 		case recorded[c.Key] != "":
 			it.Outcome, it.Reason = reconcileSkipped, "key is recorded for "+recorded[c.Key]

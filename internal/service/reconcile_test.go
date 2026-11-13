@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -331,13 +332,34 @@ func TestReconcileApplyContextCancelled(t *testing.T) {
 	}
 }
 
-func TestParseSummaryIDStoreID(t *testing.T) {
-	for in, want := range map[string]string{
-		"[ab] T-12: Title": "T-12", "T-12: Title": "T-12", "[abcdef] M-3: x": "M-3",
-		"[a] T-12: x": "", "[ab]T-12: x": "", "Fix the thing": "",
+func TestParseSummaryReconcileStamp(t *testing.T) {
+	for in, want := range map[string][2]string{
+		"[ab] T-12: Title": {"ab", "T-12"}, "T-12: Title": {"", "T-12"}, "[abcdef] M-3: x": {"abcdef", "M-3"},
+		"[a] T-12: x": {}, "[ab]T-12: x": {}, "[AB] T-12: x": {}, "Fix the thing": {},
 	} {
-		if got := parseSummaryID(in); got != want {
-			t.Errorf("%q: got %q want %q", in, got, want)
+		if stamp, id := parseSummary(in); stamp != want[0] || id != want[1] {
+			t.Errorf("%q: got (%q, %q) want %v", in, stamp, id, want)
+		}
+	}
+}
+
+func TestReconcileStampReported(t *testing.T) {
+	e, p, _, _, _ := reconcileFixture(t)
+	p.SetCandidates([]taskmanager.CardCandidate{cand("ZZ-1", "[ab] T-99: Gone"), cand("ZZ-2", "T-98: Gone")})
+	r, err := e.svc.ReconcileCards(context.Background(), ReconcileOptions{})
+	if err != nil || len(r.Items) != 2 {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if r.Items[0].Store != "ab" || r.Items[1].Store != "" {
+		t.Errorf("%+v", r.Items)
+	}
+	for n, wantKey := range []bool{true, false} {
+		b, err := json.Marshal(r.Items[n])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(string(b), `"store"`); got != wantKey {
+			t.Errorf("item %d: %s", n, b)
 		}
 	}
 }
